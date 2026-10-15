@@ -3,6 +3,7 @@ SMT Stencil Design & Verification Engine
 Hochperformante Geometrieverarbeitung, Multi-Layer Management, IPC-7525 Prüfung, Stufenzonen & Slicing.
 """
 
+import copy
 import math
 import os
 import re
@@ -122,7 +123,7 @@ class PackageRule:
     rule_type: str = "simple_rect"  # simple_rect, house_builder, inverted_house_builder, elongated_pitch, array_slicing, donut, take_existing, ignore
     undersize_w: float = 0.025      # mm (Reduktion in Breite)
     undersize_h: float = 0.025      # mm (Reduktion in Höhe)
-    corner_radius: float = 0.075    # mm
+    corner_radius: float = 0.0      # mm (Standard: eckig / 0.0 mm)
     offset_x: float = 0.0           # mm
     offset_y: float = 0.0           # mm
     offset_move_away: float = 0.0   # mm
@@ -222,7 +223,9 @@ class StencilEngine:
         self.squeegee_clearance = 1.2  # mm Mindestabstand zur Stufenkante in Druckrichtung
         self.transverse_clearance = 0.8  # mm Querabstand
 
-        self.apertures: List[ApertureItem] = []
+        self.current_side = "top"  # 'top' oder 'bot'
+        self.original_apertures: List[ApertureItem] = []  # Unberührter Kunden-Original-Layer
+        self.apertures: List[ApertureItem] = []            # Zwischenspeicher / Arbeits-Aperturen
         self.pads: List[Dict[str, Any]] = []
         self.components: List[ComponentItem] = []
         self.packages: Dict[str, PackageTemplate] = {}
@@ -703,6 +706,7 @@ class StencilEngine:
 
         scale = 25.4
         current_pkg = None
+        current_pin = None
 
         try:
             with open(eda_file, "r", encoding="utf-8", errors="ignore") as f:
@@ -735,6 +739,7 @@ class StencilEngine:
                                 "pins": []
                             }
                             packages_list.append(current_pkg)
+                            current_pin = None
                         continue
 
                     if line.startswith('PIN ') and current_pkg is not None:
@@ -744,39 +749,88 @@ class StencilEngine:
                                 pin_idx = int(parts[1]) if parts[1].isdigit() else len(current_pkg["pins"]) + 1
                                 pin_x = float(parts[3]) * scale
                                 pin_y = float(parts[4]) * scale
-                                current_pkg["pins"].append({
+                                current_pin = {
                                     "pin": pin_idx,
                                     "cx": round(pin_x, 3),
                                     "cy": round(pin_y, 3),
-                                    "w": round(min(current_pkg["w"] / 2.5, 0.8), 3),
-                                    "h": round(min(current_pkg["h"] / 2.5, 0.8), 3),
-                                    "facing": "right" if pin_x > 0 else "left"
-                                })
+                                    "w": 0.8,
+                                    "h": 0.8,
+                                    "facing": "right" if pin_x > 0 else "left",
+                                    "_pts": []
+                                }
+                                current_pkg["pins"].append(current_pin)
                             except Exception:
-                                pass
+                                current_pin = None
+                        continue
 
-            # In self.packages als Templates registrieren
+                    if current_pin is not None:
+                        if line.startswith(('OB ', 'OS ', 'OC ')):
+                            pts_parts = line.split()
+                            if len(pts_parts) >= 3:
+                                try:
+                                    current_pin["_pts"].append((float(pts_parts[1]) * scale, float(pts_parts[2]) * scale))
+                                except Exception:
+                                    pass
+                        elif line.startswith('RC '):
+                            rparts = line.split()
+                            if len(rparts) >= 5:
+                                try:
+                                    rw = float(rparts[3]) * scale
+                                    rh = float(rparts[4]) * scale
+                                    if rw > 0.05 and rh > 0.05:
+                                        current_pin["w"] = round(rw, 3)
+                                        current_pin["h"] = round(rh, 3)
+                                except Exception:
+                                    pass
+                        elif line.startswith('CR '):
+                            cparts = line.split()
+                            if len(cparts) >= 4:
+                                try:
+                                    cr = float(cparts[3]) * scale
+                                    if cr > 0.02:
+                                        current_pin["w"] = round(2 * cr, 3)
+                                        current_pin["h"] = round(2 * cr, 3)
+                                except Exception:
+                                    pass
+                        elif line.startswith('PIN ') or line.startswith('PKG ') or line.startswith('TOP') or line.startswith('BOT'):
+                            current_pin = None
+
+            # In self.packages als Templates registrieren mit echten Pin-Dimensionen
             for p in packages_list:
+                for pin in p["pins"]:
+                    pts = pin.pop("_pts", [])
+                    if pts:
+                        xs = [pt[0] for pt in pts]
+                        ys = [pt[1] for pt in pts]
+                        pw = max(xs) - min(xs)
+                        ph = max(ys) - min(ys)
+                        if pw > 0.05 and ph > 0.05:
+                            pin["w"] = round(pw, 3)
+                            pin["h"] = round(ph, 3)
+
                 name = p["name"]
                 pins = p["pins"]
                 pin_cnt = len(pins) if pins else 2
                 pitch = p["pitch"] if p["pitch"] > 0 else 1.0
 
-                rule = PackageRule(name="Simple Rectangle Surface", undersize_w=0.025, undersize_h=0.025, corner_radius=0.075)
+                p_w = pins[0]["w"] if pins else 1.0
+                p_h = pins[0]["h"] if pins else 1.0
+
+                rule = PackageRule(name="Simple Rectangle Surface", undersize_w=0.025, undersize_h=0.025, corner_radius=0.0)
                 if "qfn" in name.lower():
-                    rule = PackageRule(name="HouseBuilder", rule_type="house_builder", undersize_w=0.025, undersize_h=0.025, house_cut_pct=35.0)
+                    rule = PackageRule(name="HouseBuilder", rule_type="house_builder", undersize_w=0.025, undersize_h=0.025, corner_radius=0.0, house_cut_pct=35.0)
 
                 self.packages[name] = PackageTemplate(
                     name=name,
                     pin_count=pin_cnt,
                     pitch=pitch,
-                    pad_width=round(p["w"] / 3.0, 2),
-                    pad_height=round(p["h"] / 3.0, 2),
+                    pad_width=p_w,
+                    pad_height=p_h,
                     category=self._categorize_package_name(name),
                     outline={"w": p["w"], "h": p["h"]},
                     pads_relative=pins if pins else [
-                        {"pin": 1, "cx": round(-pitch/2, 3), "cy": 0.0, "w": 0.5, "h": 0.8, "facing": "right"},
-                        {"pin": 2, "cx": round(pitch/2, 3), "cy": 0.0, "w": 0.5, "h": 0.8, "facing": "left"}
+                        {"pin": 1, "cx": round(-pitch/2, 3), "cy": 0.0, "w": p_w, "h": p_h, "facing": "right"},
+                        {"pin": 2, "cx": round(pitch/2, 3), "cy": 0.0, "w": p_w, "h": p_h, "facing": "left"}
                     ],
                     rule=rule
                 )
@@ -897,9 +951,8 @@ class StencilEngine:
                 lt = ltype_raw.upper()
 
                 if "PASTE" in lt or name in ("spt", "spb", "top_paste", "bottom_paste"):
-                    ltype = "paste"
-                    color = "#c084fc"
-                    lside = "bot" if ("bot" in name or "b" in name) else "top"
+                    # Paste-Lagen werden unten als Original- und Zwischenspeicher-Layer dediziert erzeugt
+                    continue
                 elif "MASK" in lt or name in ("smt", "smb", "top_solder", "bottom_solder"):
                     ltype = "mask"
                     color = "#06b6d4"
@@ -979,19 +1032,65 @@ class StencilEngine:
                 layers.append(layer)
 
             # 5. Aktive Pasten-Lage als Aperturen für das Schablonendesign laden
+            self.current_side = side
             active_paste_name = f"top_paste" if side == "top" else f"bottom_paste"
             paste_feat_file = os.path.join(layers_base, active_paste_name, "features")
             if not os.path.exists(paste_feat_file):
                 # Fallback Suche nach einer Paste-Lage
-                for l in layers:
-                    if l.layer_type == "paste" and side in l.side:
-                        cand = os.path.join(layers_base, l.filename, "features")
-                        if os.path.exists(cand):
-                            paste_feat_file = cand
-                            break
+                if os.path.exists(layers_base):
+                    for l in os.listdir(layers_base):
+                        if "paste" in l.lower() or l.lower() in ("spt", "spb"):
+                            if side in l.lower() or (side == "top" and "t" in l.lower()) or (side == "bot" and "b" in l.lower()):
+                                cand = os.path.join(layers_base, l, "features")
+                                if os.path.exists(cand):
+                                    paste_feat_file = cand
+                                    break
 
             if os.path.exists(paste_feat_file):
                 self._load_odb_paste_apertures(paste_feat_file)
+
+            # Zwischenspeicher & Kunden-Original als getrennte Lagen für Non-Destructive Editing
+            orig_layer_id = f"paste_orig_{side}"
+            stencil_mod_id = f"stencil_mod_{side}"
+
+            orig_prims = []
+            for ap in self.original_apertures:
+                if ap.shape_type == "circle":
+                    orig_prims.append({"t": "c", "x": ap.cx, "y": ap.cy, "r": ap.width / 2.0})
+                else:
+                    orig_prims.append({"t": "r", "x": ap.cx, "y": ap.cy, "w": ap.width, "h": ap.height})
+
+            # 1. Unberührter Original-Layer des Kunden
+            orig_layer = BoardLayer(
+                id=orig_layer_id,
+                name=f"{side.upper()}_PASTE (Kunde / Original)",
+                filename=f"{side}_paste_orig",
+                layer_type="paste_orig",
+                side=side,
+                color="#ec4899",
+                visible=False,
+                opacity=0.80,
+                object_count=len(orig_prims),
+                primitives=orig_prims
+            )
+            self.layers[orig_layer_id] = orig_layer
+            layers.append(orig_layer)
+
+            # 2. Schablonen-Zwischenspeicher (aktive Bearbeitung)
+            mod_layer = BoardLayer(
+                id=stencil_mod_id,
+                name=f"Schablone {side.upper()} (Zwischenspeicher)",
+                filename=f"stencil_{side}_working_buffer",
+                layer_type="paste",
+                side=side,
+                color="#c084fc",
+                visible=True,
+                opacity=0.90,
+                object_count=len(self.apertures),
+                primitives=[]
+            )
+            self.layers[stencil_mod_id] = mod_layer
+            layers.append(mod_layer)
 
             if overall_min_x < overall_max_x:
                 self.bounds = (overall_min_x, overall_min_y, overall_max_x, overall_max_y)
@@ -1086,6 +1185,7 @@ class StencilEngine:
                 min_y = min(a.cy - a.height/2 for a in self.apertures)
                 max_y = max(a.cy + a.height/2 for a in self.apertures)
                 self.bounds = (min_x - 5, min_y - 5, max_x + 5, max_y + 5)
+            self.original_apertures = copy.deepcopy(self.apertures)
         except Exception as e:
             print(f"Fehler beim Erzeugen der ODB Aperturen: {e}")
 
@@ -1279,6 +1379,8 @@ class StencilEngine:
                 self.apertures.append(item)
                 self.spatial_index.insert(item_id, bbox)
                 item_id += 1
+
+        self.original_apertures = copy.deepcopy(self.apertures)
 
     def _load_pads_gerber(self, path: str):
         """Lade Kupfer-Pads für Überlagerungsprüfung (Pad vs Paste)."""
@@ -1507,6 +1609,13 @@ class StencilEngine:
             targets = [a for a in self.apertures if a.package_group == target.package_group]
         for ap in targets:
             ap.custom_slices = None
+            ap.is_manually_overridden = False
+            if ap.id < len(self.original_apertures):
+                orig = self.original_apertures[ap.id]
+                ap.width = orig.width
+                ap.height = orig.height
+                ap.shape_type = orig.shape_type
+                ap.points = copy.deepcopy(orig.points)
 
     def apply_elongated_narrowing(self, 
                                   target_id: int, 
@@ -1737,7 +1846,7 @@ class StencilEngine:
                 {"pin": 1, "cx": -0.25, "cy": 0.0, "w": 0.30, "h": 0.30, "facing": "right"},
                 {"pin": 2, "cx": 0.25, "cy": 0.0, "w": 0.30, "h": 0.30, "facing": "left"}
             ],
-            rule=PackageRule(name="Simple Rectangle Surface", undersize_w=0.015, undersize_h=0.015, corner_radius=0.04)
+            rule=PackageRule(name="Simple Rectangle Surface", undersize_w=0.015, undersize_h=0.015, corner_radius=0.0)
         )
 
         self.packages["0402"] = PackageTemplate(
@@ -1747,7 +1856,7 @@ class StencilEngine:
                 {"pin": 1, "cx": -0.45, "cy": 0.0, "w": 0.50, "h": 0.50, "facing": "right"},
                 {"pin": 2, "cx": 0.45, "cy": 0.0, "w": 0.50, "h": 0.50, "facing": "left"}
             ],
-            rule=PackageRule(name="Simple Rectangle Surface", undersize_w=0.02, undersize_h=0.02, corner_radius=0.05)
+            rule=PackageRule(name="Simple Rectangle Surface", undersize_w=0.02, undersize_h=0.02, corner_radius=0.0)
         )
 
         self.packages["0603"] = PackageTemplate(
@@ -1757,7 +1866,7 @@ class StencilEngine:
                 {"pin": 1, "cx": -0.65, "cy": 0.0, "w": 0.80, "h": 0.80, "facing": "right"},
                 {"pin": 2, "cx": 0.65, "cy": 0.0, "w": 0.80, "h": 0.80, "facing": "left"}
             ],
-            rule=PackageRule(name="Simple Rectangle Surface", undersize_w=0.025, undersize_h=0.025, corner_radius=0.06)
+            rule=PackageRule(name="Simple Rectangle Surface", undersize_w=0.025, undersize_h=0.025, corner_radius=0.0)
         )
 
         self.packages["0805"] = PackageTemplate(
@@ -1767,7 +1876,7 @@ class StencilEngine:
                 {"pin": 1, "cx": -0.851, "cy": 0.0, "w": 1.20, "h": 1.30, "facing": "right"},
                 {"pin": 2, "cx": 0.851, "cy": 0.0, "w": 1.20, "h": 1.30, "facing": "left"}
             ],
-            rule=PackageRule(name="Simple Rectangle Surface", undersize_w=0.025, undersize_h=0.025, corner_radius=0.075)
+            rule=PackageRule(name="Simple Rectangle Surface", undersize_w=0.025, undersize_h=0.025, corner_radius=0.0)
         )
 
         self.packages["1206"] = PackageTemplate(
@@ -1777,7 +1886,7 @@ class StencilEngine:
                 {"pin": 1, "cx": -1.40, "cy": 0.0, "w": 1.60, "h": 1.50, "facing": "right"},
                 {"pin": 2, "cx": 1.40, "cy": 0.0, "w": 1.60, "h": 1.50, "facing": "left"}
             ],
-            rule=PackageRule(name="Simple Rectangle Surface", undersize_w=0.03, undersize_h=0.03, corner_radius=0.10)
+            rule=PackageRule(name="Simple Rectangle Surface", undersize_w=0.03, undersize_h=0.03, corner_radius=0.0)
         )
 
         self.packages["SOT-23"] = PackageTemplate(
@@ -1788,7 +1897,7 @@ class StencilEngine:
                 {"pin": 2, "cx": 0.95, "cy": -1.0, "w": 0.60, "h": 0.80, "facing": "up"},
                 {"pin": 3, "cx": 0.0, "cy": 1.0, "w": 0.60, "h": 0.80, "facing": "down"}
             ],
-            rule=PackageRule(name="Simple Rectangle Surface", undersize_w=0.02, undersize_h=0.02, corner_radius=0.05)
+            rule=PackageRule(name="Simple Rectangle Surface", undersize_w=0.02, undersize_h=0.02, corner_radius=0.0)
         )
 
         soic8_pads = []
@@ -1802,7 +1911,7 @@ class StencilEngine:
             name="SOIC-8", pin_count=8, pitch=1.27, pad_width=0.60, pad_height=1.50,
             category="ICs & Transistors", outline={"w": 4.90, "h": 3.90},
             pads_relative=soic8_pads,
-            rule=PackageRule(name="Länglich & Schmal (Pitch-Schutz)", rule_type="elongated_pitch", pitch_reduction_pct=20.0, length_usage_pct=95.0, corner_radius=0.08)
+            rule=PackageRule(name="Länglich & Schmal (Pitch-Schutz)", rule_type="elongated_pitch", pitch_reduction_pct=20.0, length_usage_pct=95.0, corner_radius=0.0)
         )
 
         soic16_pads = []
@@ -1816,7 +1925,7 @@ class StencilEngine:
             name="SOIC-16", pin_count=16, pitch=1.27, pad_width=0.60, pad_height=1.50,
             category="ICs & Transistors", outline={"w": 9.90, "h": 3.90},
             pads_relative=soic16_pads,
-            rule=PackageRule(name="Länglich & Schmal (Pitch-Schutz)", rule_type="elongated_pitch", pitch_reduction_pct=20.0, length_usage_pct=95.0, corner_radius=0.08)
+            rule=PackageRule(name="Länglich & Schmal (Pitch-Schutz)", rule_type="elongated_pitch", pitch_reduction_pct=20.0, length_usage_pct=95.0, corner_radius=0.0)
         )
 
         tssop16_pads = []
@@ -1830,7 +1939,7 @@ class StencilEngine:
             name="TSSOP-16", pin_count=16, pitch=0.65, pad_width=0.35, pad_height=1.20,
             category="ICs & Transistors", outline={"w": 5.00, "h": 4.40},
             pads_relative=tssop16_pads,
-            rule=PackageRule(name="Länglich & Schmal (Pitch-Schutz)", rule_type="elongated_pitch", pitch_reduction_pct=20.0, length_usage_pct=95.0, corner_radius=0.06)
+            rule=PackageRule(name="Länglich & Schmal (Pitch-Schutz)", rule_type="elongated_pitch", pitch_reduction_pct=20.0, length_usage_pct=95.0, corner_radius=0.0)
         )
 
         qfn48_pads = []
@@ -1857,7 +1966,7 @@ class StencilEngine:
             name="QFN-48", pin_count=49, pitch=0.50, pad_width=0.28, pad_height=0.80,
             category="ICs & Transistors", outline={"w": 7.00, "h": 7.00},
             pads_relative=qfn48_pads,
-            rule=PackageRule(name="HouseBuilder", rule_type="house_builder", undersize_w=0.025, undersize_h=0.025, house_cut_pct=35.0)
+            rule=PackageRule(name="HouseBuilder", rule_type="house_builder", undersize_w=0.025, undersize_h=0.025, corner_radius=0.0, house_cut_pct=35.0)
         )
 
         bga_pads = []
@@ -1877,7 +1986,7 @@ class StencilEngine:
             name="BGA-201", pin_count=len(bga_pads), pitch=0.65, pad_width=0.25, pad_height=0.25,
             category="BGA & Arrays", outline={"w": 10.0, "h": 10.0},
             pads_relative=bga_pads,
-            rule=PackageRule(name="Simple Rectangle Surface", undersize_w=0.015, undersize_h=0.015, corner_radius=0.05)
+            rule=PackageRule(name="Simple Rectangle Surface", undersize_w=0.015, undersize_h=0.015, corner_radius=0.0)
         )
 
         self.package_aliases = {

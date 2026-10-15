@@ -314,6 +314,27 @@ select:focus, input:focus {
     box-shadow: 0 0 12px rgba(56, 189, 248, 0.55);
 }
 
+.zoom-toolbar button.btn-tool-del,
+.preview-cta button.btn-tool-del {
+    width: auto;
+    padding: 0 10px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    gap: 4px;
+    background: rgba(239, 68, 68, 0.25) !important;
+    border: 1px solid rgba(239, 68, 68, 0.6) !important;
+    color: #fca5a5 !important;
+    transition: all 0.2s ease;
+}
+
+.zoom-toolbar button.btn-tool-del:hover,
+.preview-cta button.btn-tool-del:hover {
+    background: #ef4444 !important;
+    border-color: #ef4444 !important;
+    color: #ffffff !important;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.55);
+}
+
 /* Measure Banner */
 .measure-banner {
     position: absolute;

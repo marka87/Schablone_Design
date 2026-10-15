@@ -176,8 +176,11 @@ function pkgWorldToScreen(x, y) {
     const rect = pCanvas.getBoundingClientRect();
     const centerX = rect.width / 2 + pkgState.panX;
     const centerY = rect.height / 2 + pkgState.panY;
-    const sx = centerX + x * pkgState.zoom;
-    const sy = centerY - y * pkgState.zoom; // Y invertiert im CAD
+    const rotRad = ((pkgState.rotation || 0) * Math.PI) / 180;
+    const rx = x * Math.cos(rotRad) - y * Math.sin(rotRad);
+    const ry = x * Math.sin(rotRad) + y * Math.cos(rotRad);
+    const sx = centerX + rx * pkgState.zoom;
+    const sy = centerY - ry * pkgState.zoom; // Y invertiert im CAD
     return { x: sx, y: sy };
 }
 
@@ -459,10 +462,25 @@ function toggleMeasureTool(forceState = null) {
     renderPkgPreview();
 }
 
+function updateMeasureButtonsVisibility() {
+    const hasMeasurements = measureState.measurements && measureState.measurements.length > 0;
+    const btnBoard = document.getElementById("btnClearMeasureBoard");
+    const btnPkg = document.getElementById("btnClearMeasurePkg");
+    if (btnBoard) {
+        if (hasMeasurements) btnBoard.classList.remove("hidden");
+        else btnBoard.classList.add("hidden");
+    }
+    if (btnPkg) {
+        if (hasMeasurements) btnPkg.classList.remove("hidden");
+        else btnPkg.classList.add("hidden");
+    }
+}
+
 function clearMeasurements() {
     measureState.measurements = [];
     measureState.startPoint = null;
     measureState.currentPoint = null;
+    updateMeasureButtonsVisibility();
     showToast("Messungen gelöscht");
     render();
     renderPkgPreview();
@@ -590,8 +608,8 @@ function renderBackgroundGrid(rect) {
 function renderCustomLayers() {
     if (!state.layers || state.layers.length === 0) return;
 
-    // Layer types render order: outline -> copper -> mask -> zone -> component -> other -> fiducial
-    const typeOrder = { 'profile': 0, 'copper': 1, 'mask': 2, 'zone': 3, 'component': 4, 'other': 5, 'fiducial': 6, 'paste': 7 };
+    // Layer types render order: outline -> copper -> mask -> zone -> component -> other -> fiducial -> paste_orig
+    const typeOrder = { 'profile': 0, 'copper': 1, 'mask': 2, 'zone': 3, 'component': 4, 'other': 5, 'fiducial': 6, 'paste_orig': 7, 'paste': 8 };
     const sorted = [...state.layers].sort((a, b) => (typeOrder[a.type] ?? 5) - (typeOrder[b.type] ?? 5));
 
     for (const layer of sorted) {
@@ -1303,6 +1321,7 @@ function setupEventListeners() {
                             dx: dx,
                             dy: dy
                         });
+                        updateMeasureButtonsVisibility();
                     }
                     measureState.startPoint = null;
                     measureState.currentPoint = null;
@@ -1362,6 +1381,7 @@ function setupEventListeners() {
 
         let targetPkg = null;
         let targetPin = null;
+        let targetRot = 0;
 
         // 1. Suche nach Apertur (Paste / Pad)
         if (state.apertures) {
@@ -1371,6 +1391,10 @@ function setupEventListeners() {
                 if (dx <= (ap.w / 2 + 0.3) && dy <= (ap.h / 2 + 0.3)) {
                     targetPkg = ap.pkg_name || ap.package_name || ap.package || ap.pkg;
                     targetPin = ap.pin_number ?? ap.pin;
+                    if (ap.component_id && state.components) {
+                        const comp = state.components.find(c => c.refdes === ap.component_id);
+                        if (comp) targetRot = comp.rot || comp.rotation || 0;
+                    }
                     break;
                 }
             }
@@ -1383,6 +1407,7 @@ function setupEventListeners() {
                 const halfH = (c.height || 2.0) / 2 + 0.5;
                 if (Math.abs(c.cx - w.x) <= halfW && Math.abs(c.cy - w.y) <= halfH) {
                     targetPkg = c.package || c.pkg_name;
+                    targetRot = c.rot || c.rotation || 0;
                     break;
                 }
             }
@@ -1397,13 +1422,17 @@ function setupEventListeners() {
                     closestDist = dist;
                     targetPkg = ap.pkg_name || ap.package_name || ap.package || ap.pkg;
                     targetPin = ap.pin_number ?? ap.pin;
+                    if (ap.component_id && state.components) {
+                        const comp = state.components.find(c => c.refdes === ap.component_id);
+                        if (comp) targetRot = comp.rot || comp.rotation || 0;
+                    }
                 }
             }
         }
 
         if (targetPkg) {
-            switchWorkspace("package", targetPkg);
-            showToast(`📦 Package "${targetPkg}" im Stencil Generator geöffnet`);
+            switchWorkspace("package", targetPkg, targetRot);
+            showToast(`📦 Package "${targetPkg}" im Stencil Generator geöffnet (${targetRot}°)`);
             if (targetPin !== null && targetPin !== undefined) {
                 setTimeout(() => {
                     if (pkgState.activePackageData && pkgState.activePackageData.pads) {
@@ -1415,12 +1444,22 @@ function setupEventListeners() {
         }
     });
 
+    // Rechtsklick auf Platine -> Messungen sofort löschen
+    container.addEventListener("contextmenu", (e) => {
+        if ((measureState.measurements && measureState.measurements.length > 0) || measureState.active) {
+            e.preventDefault();
+            clearMeasurements();
+            if (measureState.active) toggleMeasureTool(false);
+        }
+    });
+
     // Measurement Tool Toolbar & Banner Controls
     document.getElementById("btnMeasureBoard")?.addEventListener("click", () => toggleMeasureTool());
     document.getElementById("btnCancelMeasureBoard")?.addEventListener("click", () => toggleMeasureTool(false));
     document.getElementById("btnClearMeasurementsBoard")?.addEventListener("click", clearMeasurements);
+    document.getElementById("btnClearMeasureBoard")?.addEventListener("click", clearMeasurements);
 
-    // Global Key Listener für [M], [ESC], [DEL]
+    // Global Key Listener für [M], [ESC], [DEL], [C]
     window.addEventListener("keydown", (e) => {
         const tag = document.activeElement ? document.activeElement.tagName.toLowerCase() : "";
         if (tag === "input" || tag === "textarea" || tag === "select") return;
@@ -1429,7 +1468,9 @@ function setupEventListeners() {
             e.preventDefault();
             toggleMeasureTool();
         } else if (e.key === "Escape") {
-            if (measureState.startPoint) {
+            if (measureState.measurements.length > 0) {
+                clearMeasurements();
+            } else if (measureState.startPoint) {
                 measureState.startPoint = null;
                 measureState.currentPoint = null;
                 render();
@@ -2040,8 +2081,9 @@ if (btnOpenInStencilGen) {
     });
 }
 
-function switchWorkspace(mode, targetPkg = null) {
+function switchWorkspace(mode, targetPkg = null, targetRot = 0) {
     currentWorkspaceMode = mode;
+    updateMeasureButtonsVisibility();
     if (mode === "board") {
         btnViewBoard.classList.add("active");
         btnViewPackage.classList.remove("active");
@@ -2054,7 +2096,7 @@ function switchWorkspace(mode, targetPkg = null) {
         btnViewBoard.classList.remove("active");
         packageWorkspace.classList.remove("hidden");
         boardWorkspace.classList.add("hidden");
-        initPackageMode(targetPkg);
+        initPackageMode(targetPkg, targetRot);
     }
 }
 
@@ -2070,6 +2112,7 @@ const pkgState = {
     searchQuery: "",
     currentCustomer: "Standard",
     selectedPin: null,
+    rotation: 0, // 0, 90, 180, 270 Grad
 
     // Transform fuer Package Canvas
     zoom: 60.0, // Pixel pro mm
@@ -2094,11 +2137,17 @@ const pkgContainer = document.getElementById("pkgPreviewContainer");
 
 let pkgInitialized = false;
 
-async function initPackageMode(targetPkg = null) {
+async function initPackageMode(targetPkg = null, targetRot = 0) {
     if (!pkgInitialized) {
         setupPkgCanvas();
         setupPkgEventListeners();
         pkgInitialized = true;
+    }
+
+    if (targetRot !== undefined && targetRot !== null) {
+        pkgState.rotation = targetRot;
+    } else {
+        pkgState.rotation = 0;
     }
 
     await loadLibraries();
@@ -2131,11 +2180,14 @@ function setupPkgCanvas() {
         const clickX = e.clientX - rect.left;
         const clickY = e.clientY - rect.top;
 
-        // In Package-Koordinaten umrechnen (mm)
+        // In Package-Koordinaten umrechnen (mm) unter Berücksichtigung der Ansichtsdrehung
         const centerX = rect.width / 2 + pkgState.panX;
         const centerY = rect.height / 2 + pkgState.panY;
-        let mmX = (clickX - centerX) / pkgState.zoom;
-        let mmY = -(clickY - centerY) / pkgState.zoom; // Y invertiert
+        const rotRad = -((pkgState.rotation || 0) * Math.PI) / 180;
+        const dx = (clickX - centerX) / pkgState.zoom;
+        const dy = -(clickY - centerY) / pkgState.zoom; // Y invertiert
+        let mmX = dx * Math.cos(rotRad) - dy * Math.sin(rotRad);
+        let mmY = dx * Math.sin(rotRad) + dy * Math.cos(rotRad);
 
         // Messmodus in Stencil Generator
         if (measureState.active && e.button === 0) {
@@ -2148,9 +2200,9 @@ function setupPkgCanvas() {
                 measureState.currentPoint = { x: mmX, y: mmY };
             } else {
                 const endPt = { x: mmX, y: mmY };
-                const dx = endPt.x - measureState.startPoint.x;
-                const dy = endPt.y - measureState.startPoint.y;
-                const dist = Math.hypot(dx, dy);
+                const mdx = endPt.x - measureState.startPoint.x;
+                const mdy = endPt.y - measureState.startPoint.y;
+                const dist = Math.hypot(mdx, mdy);
                 if (dist > 0.005) {
                     measureState.measurements.push({
                         id: Date.now(),
@@ -2158,9 +2210,10 @@ function setupPkgCanvas() {
                         start: measureState.startPoint,
                         end: endPt,
                         dist: dist,
-                        dx: dx,
-                        dy: dy
+                        dx: mdx,
+                        dy: mdy
                     });
+                    updateMeasureButtonsVisibility();
                 }
                 measureState.startPoint = null;
                 measureState.currentPoint = null;
@@ -2201,8 +2254,11 @@ function setupPkgCanvas() {
             if (clickX >= 0 && clickX <= rect.width && clickY >= 0 && clickY <= rect.height) {
                 const centerX = rect.width / 2 + pkgState.panX;
                 const centerY = rect.height / 2 + pkgState.panY;
-                const mmX = (clickX - centerX) / pkgState.zoom;
-                const mmY = -(clickY - centerY) / pkgState.zoom;
+                const rotRad = -((pkgState.rotation || 0) * Math.PI) / 180;
+                const dx = (clickX - centerX) / pkgState.zoom;
+                const dy = -(clickY - centerY) / pkgState.zoom;
+                const mmX = dx * Math.cos(rotRad) - dy * Math.sin(rotRad);
+                const mmY = dx * Math.sin(rotRad) + dy * Math.cos(rotRad);
                 measureState.hoverSnap = findSnapPointPkg(mmX, mmY);
                 measureState.currentPoint = measureState.hoverSnap ? { x: measureState.hoverSnap.x, y: measureState.hoverSnap.y } : { x: mmX, y: mmY };
                 renderPkgPreview();
@@ -2214,6 +2270,15 @@ function setupPkgCanvas() {
         pkgState.isDragging = false;
     });
 
+    // Rechtsklick im Stencil Generator -> Messungen sofort löschen
+    pkgContainer.addEventListener("contextmenu", (e) => {
+        if ((measureState.measurements && measureState.measurements.length > 0) || measureState.active) {
+            e.preventDefault();
+            clearMeasurements();
+            if (measureState.active) toggleMeasureTool(false);
+        }
+    });
+
     // Doppelklick auf Pad im Package-Modus -> Pin auswählen und Eingabe fokussieren
     pkgContainer.addEventListener("dblclick", (e) => {
         if (measureState.active) return;
@@ -2222,8 +2287,11 @@ function setupPkgCanvas() {
         const clickY = e.clientY - rect.top;
         const centerX = rect.width / 2 + pkgState.panX;
         const centerY = rect.height / 2 + pkgState.panY;
-        const mmX = (clickX - centerX) / pkgState.zoom;
-        const mmY = -(clickY - centerY) / pkgState.zoom;
+        const rotRad = -((pkgState.rotation || 0) * Math.PI) / 180;
+        const dx = (clickX - centerX) / pkgState.zoom;
+        const dy = -(clickY - centerY) / pkgState.zoom;
+        const mmX = dx * Math.cos(rotRad) - dy * Math.sin(rotRad);
+        const mmY = dx * Math.sin(rotRad) + dy * Math.cos(rotRad);
 
         if (pkgState.activePackageData && pkgState.activePackageData.pads) {
             for (const p of pkgState.activePackageData.pads) {
@@ -2565,6 +2633,9 @@ function renderPkgPreview() {
     const centerX = w / 2 + pkgState.panX;
     const centerY = h / 2 + pkgState.panY;
     pkgCtx.translate(centerX, centerY);
+    if (pkgState.rotation) {
+        pkgCtx.rotate((pkgState.rotation * Math.PI) / 180);
+    }
     pkgCtx.scale(pkgState.zoom, -pkgState.zoom); // Y nach oben wie in CAD
 
     const data = pkgState.activePackageData;
@@ -2747,6 +2818,14 @@ function setupPkgEventListeners() {
     document.getElementById("btnMeasurePkg")?.addEventListener("click", () => toggleMeasureTool());
     document.getElementById("btnCancelMeasurePkg")?.addEventListener("click", () => toggleMeasureTool(false));
     document.getElementById("btnClearMeasurementsPkg")?.addEventListener("click", clearMeasurements);
+    document.getElementById("btnClearMeasurePkg")?.addEventListener("click", clearMeasurements);
+
+    // Package 90° drehen
+    document.getElementById("btnRotatePkg")?.addEventListener("click", () => {
+        pkgState.rotation = ((pkgState.rotation || 0) + 90) % 360;
+        showToast(`⟳ Package gedreht: ${pkgState.rotation}°`);
+        renderPkgPreview();
+    });
 
     // Layer Toggles
     document.getElementById("chkPrevMask").addEventListener("change", e => { pkgState.showMask = e.target.checked; renderPkgPreview(); });

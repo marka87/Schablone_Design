@@ -173,6 +173,7 @@
                 <div class="canvas-overlay bottom-right">
                     <div class="zoom-toolbar">
                         <button id="btnMeasureBoard" class="btn-measure" title="Lineal / Messwerkzeug (Taste: M)">📏 Messen (M)</button>
+                        <button id="btnClearMeasureBoard" class="btn-tool-del hidden" title="Messungen löschen (Taste: Entf / C)">🗑️ Messung löschen</button>
                         <button id="btnZoomIn" title="Vergrößern">+</button>
                         <button id="btnZoomOut" title="Verkleinern">-</button>
                         <button id="btnFitScreen" title="Gesamten Nutzen anzeigen">Fit</button>
@@ -462,7 +463,7 @@
                     <div class="rule-property-grid">
                         <div class="prop-item">
                             <label>Corner Radius (MM):</label>
-                            <input type="number" id="propCornerRadius" value="0.075" step="0.005" min="0" max="1.0">
+                            <input type="number" id="propCornerRadius" value="0.0" step="0.005" min="0" max="1.0">
                         </div>
                         <div class="prop-item">
                             <label>Undersize Value (MM):</label>
@@ -563,8 +564,14 @@
                         </div>
 
                         <div class="preview-cta">
+                            <button id="btnRotatePkg" class="btn btn-sm btn-secondary" title="Package um 90° drehen">
+                                <span>⟳</span> 90° Drehen
+                            </button>
                             <button id="btnMeasurePkg" class="btn btn-sm btn-secondary btn-measure-pkg" title="Lineal / Messwerkzeug (Taste: M)">
                                 <span>📏</span> Messen (M)
+                            </button>
+                            <button id="btnClearMeasurePkg" class="btn btn-sm btn-tool-del hidden" title="Messungen löschen (Taste: Entf / C)">
+                                <span>🗑️</span> Messung löschen
                             </button>
                             <button id="btnGenerateStencilPads" class="btn btn-primary btn-generate">
                                 <span>⚡</span> Generate Stencil Pads

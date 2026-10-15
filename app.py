@@ -474,18 +474,24 @@ def api_export():
     out_dir = r"A:\Schablone\Export"
     os.makedirs(out_dir, exist_ok=True)
 
-    side_prefix = "top" if "Top" in current_dataset_name else "bot"
-    stencil_file = os.path.join(out_dir, f"stencil_modified_{side_prefix}.ger")
-    zones_file = os.path.join(out_dir, f"stencil_zones_{side_prefix}.ger")
+    data = request.json or {}
+    req_side = data.get("side", "").lower()
+    side = req_side if req_side in ("top", "bot", "bottom") else getattr(engine, "current_side", "top")
+    if side == "bottom":
+        side = "bot"
+
+    stencil_file = os.path.join(out_dir, f"stencil_{side}.ger")
+    zones_file = os.path.join(out_dir, f"stencil_{side}_zones.ger")
 
     engine.export_modified_gerber(stencil_file)
     engine.export_zones_gerber(zones_file)
 
     return jsonify({
         "status": "ok",
+        "side": side,
         "stencil_file": stencil_file,
         "zones_file": zones_file,
-        "message": f"Dateien erfolgreich exportiert nach: {out_dir}"
+        "message": f"Separate Schablonen-Dateien für {side.upper()} exportiert: {os.path.basename(stencil_file)}"
     })
 
 
