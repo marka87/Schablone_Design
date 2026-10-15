@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMT Stencil Craft - Schablonendesign, Package Generator & IPC</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Top Header -->
+    <header class="app-header">
+        <div class="header-left">
+            <div class="logo">
+                <span class="logo-icon">⚡</span>
+                <span class="logo-text">SMT Stencil<span class="accent">Craft</span></span>
+            </div>
+
+            <!-- Workspace Mode Switcher -->
+            <div class="mode-switcher-group">
+                <button id="btnViewBoard" class="mode-tab-btn active" title="Gesamte Platine analysieren">
+                    <span>🗺️</span> Board View
+                </button>
+                <button id="btnViewPackage" class="mode-tab-btn" title="Stencil Generator & Package-Regeln">
+                    <span>📦</span> Stencil Generator
+                </button>
+            </div>
+
+            <button id="btnOpenDataset" class="btn btn-sm btn-primary" title="ODB++ Archiv (.zip/.tgz/Ordner) oder Gerber-Dateien öffnen">
+                <span>📂</span> ODB++ / Gerber öffnen
+            </button>
+        </div>
+
+        <div class="header-center">
+            <div class="ipc-control">
+                <label for="ipcModeSelect">IPC-Klasse:</label>
+                <select id="ipcModeSelect">
+                    <option value="standard">IPC-7525 Standard (AR ≥ 0.66, Asp ≥ 1.5)</option>
+                    <option value="nano">Nano-Coated / E-Polish (AR ≥ 0.55, Asp ≥ 1.3)</option>
+                    <option value="custom">Benutzerdefiniert...</option>
+                </select>
+            </div>
+
+            <div class="squeegee-control">
+                <label for="squeegeeDir">Rakelrichtung:</label>
+                <select id="squeegeeDir">
+                    <option value="Y">Y (Vertikal)</option>
+                    <option value="X">X (Horizontal)</option>
+                </select>
+            </div>
+
+            <button id="btnOpenCalculator" class="btn btn-sm btn-secondary highlight-btn" title="Auslösekalkulator für Schablonendicken öffnen">
+                <span>📊</span> Auslösekalkulator
+            </button>
+        </div>
+
+        <div class="header-right">
+            <div class="stats-pills">
+                <div class="pill total" title="Gesamtzahl Pastenöffnungen">
+                    <span class="pill-label">Pads:</span>
+                    <span id="statTotal" class="pill-val">0</span>
+                </div>
+                <div class="pill ok" title="IPC konform">
+                    <span class="pill-label">🟢 OK:</span>
+                    <span id="statOk" class="pill-val">0</span>
+                </div>
+                <div class="pill warn" title="Grenzwertig (Pastenauslösung schwankend)">
+                    <span class="pill-label">🟡 Warn:</span>
+                    <span id="statWarn" class="pill-val">0</span>
+                </div>
+                <div class="pill crit" id="critPill" title="Kritisch! Pastenabriss-Risiko (Klicken zum Filtern)">
+                    <span class="pill-label">🔴 Kritisch:</span>
+                    <span id="statCrit" class="pill-val">0</span>
+                </div>
+            </div>
+
+            <button id="btnNewZone" class="btn btn-secondary">
+                <span>➕</span> Zone
+            </button>
+            <button id="btnExport" class="btn btn-primary">
+                <span>💾</span> Gerber Export
+            </button>
+            <button id="btnCloseDataset" class="btn btn-ghost btn-sm" title="Aktuellen Datensatz schließen" style="color: #f87171; border-color: rgba(248,113,113,0.3);">
+                <span>✕</span> Schließen
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="app-main">
+        <!-- ========================================================= -->
+        <!-- WORKSPACE 1: BOARD VIEW (NUTZEN-ANSICHT)                   -->
+        <!-- ========================================================= -->
+        <div id="boardWorkspace" class="board-workspace">
+            <!-- Left: Layer Manager Panel (PCB Investigator Style mit Checkboxen / Haken) -->
+            <aside class="layer-panel" id="layerPanel">
+                <div class="layer-panel-header">
+                    <div class="layer-panel-title">
+                        <span>📑</span> <strong>Lagen-Manager</strong> <span class="layer-count-badge" id="layerCountBadge">0</span>
+                    </div>
+                    <div class="layer-header-actions">
+                        <button id="btnAllLayersOn" class="btn-icon-sm" title="Alle Lagen einblenden (Haken an)">👁️</button>
+                        <button id="btnAllLayersOff" class="btn-icon-sm" title="Alle Lagen ausblenden (Haken aus)">🕶️</button>
+                        <button id="btnRefreshLayers" class="btn-icon-sm" title="Lagen neu laden">🔄</button>
+                    </div>
+                </div>
+
+                <!-- Lagen Import Actions -->
+                <div class="layer-import-section">
+                    <button id="btnAddMoreLayers" class="btn btn-sm btn-secondary" style="width: 100%; justify-content: center;" title="Weitere Gerber- oder ODB++ Lagen hinzufügen">
+                        <span>➕</span> Lage hinzufügen...
+                    </button>
+                    <input type="file" id="browserFileInput" multiple accept=".zip,.ger,.gbr,.pho,.tgz,.tar.gz" style="display:none;">
+                </div>
+
+                <!-- Drag & Drop Zone Hint -->
+                <div id="layerDropZone" class="layer-dropzone" title="Dateien oder ZIP hier ablegen">
+                    <span>📥 Dateien / ZIP hier ablegen</span>
+                </div>
+
+                <!-- Layer List Table with Checkboxes (Haken) -->
+                <div class="layer-table-container">
+                    <table class="layer-table" id="layerTable">
+                        <thead>
+                            <tr>
+                                <th class="col-chk" title="Sichtbarkeit (Haken)">👁️</th>
+                                <th class="col-color" title="Lagenfarbe">Farbe</th>
+                                <th class="col-name">Name</th>
+                                <th class="col-type">Typ</th>
+                                <th class="col-count">Objekte</th>
+                                <th class="col-del"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="layerTableBody">
+                            <!-- Dynamisch per JS befüllt -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Layer Panel Footer -->
+                <div class="layer-panel-footer">
+                    <div class="layer-opacity-row">
+                        <span>Deckkraft:</span>
+                        <input type="range" id="layerGlobalOpacity" min="0.1" max="1.0" step="0.05" value="0.85">
+                        <span id="layerGlobalOpacityVal">85%</span>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- CAD Canvas Viewport -->
+            <div class="canvas-container" id="canvasContainer">
+                <canvas id="cadCanvas"></canvas>
+
+                <!-- Floating Controls (Oben links im Canvas) -->
+                <div class="canvas-overlay top-left">
+                    <div class="view-mode">
+                        <label>Farbmodus:</label>
+                        <select id="colorModeSelect">
+                            <option value="ipc">IPC-7525 Status (Heatmap)</option>
+                            <option value="layers" selected>Lagengetreu (Originalfarben)</option>
+                            <option value="thickness">Schablonendicke</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="canvas-overlay bottom-left">
+                    <div class="coords-display" id="coordsDisplay">
+                        X: 0.00 mm | Y: 0.00 mm | Zoom: 100%
+                    </div>
+                </div>
+
+                <div class="canvas-overlay bottom-right">
+                    <div class="zoom-toolbar">
+                        <button id="btnMeasureBoard" class="btn-measure" title="Lineal / Messwerkzeug (Taste: M)">📏 Messen (M)</button>
+                        <button id="btnZoomIn" title="Vergrößern">+</button>
+                        <button id="btnZoomOut" title="Verkleinern">-</button>
+                        <button id="btnFitScreen" title="Gesamten Nutzen anzeigen">Fit</button>
+                    </div>
+                </div>
+
+                <!-- Mode Notice / Drawing Banner -->
+                <div id="drawingBanner" class="drawing-banner hidden">
+                    <span>✏️ Klicken und ziehen Sie auf der Platine, um eine neue Stufenzone zu zeichnen.</span>
+                    <button id="btnCancelDrawing" class="btn btn-sm btn-ghost">Abbrechen</button>
+                </div>
+
+                <!-- Mode Notice / Measure Banner (Board View) -->
+                <div id="measureBanner" class="measure-banner hidden">
+                    <span>📏 <strong>Messwerkzeug aktiv:</strong> 1. Punkt klicken, 2. Zielpunkt klicken. [M] oder [ESC] zum Beenden.</span>
+                    <button id="btnClearMeasurementsBoard" class="btn btn-xs btn-ghost" title="Messungen löschen">Löschen</button>
+                    <button id="btnCancelMeasureBoard" class="btn btn-xs btn-ghost">&times;</button>
+                </div>
+            </div>
+
+            <!-- Sidebar Inspector & Tools -->
+            <aside class="sidebar">
+                <div class="sidebar-tabs">
+                    <button class="tab-btn active" data-tab="tabPad">Pad Inspector</button>
+                    <button class="tab-btn" data-tab="tabZones">Stufenzonen (<span id="zonesCount">0</span>)</button>
+                    <button class="tab-btn" data-tab="tabCritical">Kritische Bauteile</button>
+                </div>
+
+                <!-- TAB 1: PAD INSPECTOR -->
+                <div id="tabPad" class="tab-content active">
+                    <div id="noSelectionMsg" class="empty-state">
+                        <div class="empty-icon">🔍</div>
+                        <p>Klicken Sie auf ein Pad oder Bauteil im Viewer, um es zu untersuchen und zu bearbeiten.</p>
+                        <p class="empty-hint">Tipp: Im <strong>Stencil Generator</strong> können Sie Package-Regeln global definieren.</p>
+                    </div>
+
+                    <div id="selectionDetails" class="selection-details hidden">
+                        <div class="section-title">
+                            <span>Apertur #<span id="padId">-</span> (<span id="padPkgNameBadge">0805</span>)</span>
+                            <span id="padStatusBadge" class="badge ok">OK</span>
+                        </div>
+
+                        <!-- Geometrie Grid -->
+                        <div class="data-grid">
+                            <div class="data-cell">
+                                <span class="data-label">Abmessung:</span>
+                                <span id="padDim" class="data-val">2.40 x 2.40 mm</span>
+                            </div>
+                            <div class="data-cell">
+                                <span class="data-label">Position:</span>
+                                <span id="padPos" class="data-val">X: 120.5 | Y: 154.2</span>
+                            </div>
+                            <div class="data-cell">
+                                <span class="data-label">Foliendicke:</span>
+                                <span id="padThick" class="data-val highlight">120 µm (Basis)</span>
+                            </div>
+                            <div class="data-cell">
+                                <span class="data-label">Identische Pads:</span>
+                                <span id="padIdentical" class="data-val">16 auf Platine</span>
+                            </div>
+                        </div>
+
+                        <!-- IPC Ratio Gauge -->
+                        <div class="ipc-gauge-box">
+                            <div class="gauge-header">
+                                <span>Area Ratio (IPC-7525):</span>
+                                <span id="padArVal" class="gauge-number">0.72</span>
+                            </div>
+                            <div class="gauge-bar-bg">
+                                <div id="gaugeBarFill" class="gauge-bar-fill ok" style="width: 75%;"></div>
+                                <div class="gauge-marker limit" title="IPC Grenzwert" style="left: 66%;"></div>
+                            </div>
+                            <div class="gauge-footer">
+                                <span>0.0</span>
+                                <span class="marker-text">Min: <span id="lblMinAr">0.66</span></span>
+                                <span>1.0+</span>
+                            </div>
+                            <div style="margin-top: 8px; display: flex; justify-content: space-between; align-items: center;">
+                                <button id="btnOpenInStencilGen" class="btn btn-xs btn-secondary" style="color: var(--accent);">
+                                    📦 Im Stencil Generator öffnen &rarr;
+                                </button>
+                                <button id="btnSendToCalc" class="btn btn-xs btn-ghost" style="color: var(--text-secondary);">
+                                    📊 In Kalkulator
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- CLEARANCE WARN (FALLS NAH AN STUFE) -->
+                        <div id="clearanceAlert" class="alert-box warn hidden">
+                            ⚠️ <strong>Rakelabstand kritisch:</strong> Diese Öffnung liegt zu nah an der Stufenkante (<span id="clearanceDist">1.2 mm</span>)!
+                        </div>
+
+                        <!-- AKTION 1: LÄNGLICH & SCHMAL (PITCH-SCHUTZ) -->
+                        <div class="action-card highlight-card">
+                            <div class="card-badge">Praxis-Vorschlag</div>
+                            <h3>✨ Länglich & Schmal (Pitch-Schutz)</h3>
+                            <p class="tool-desc">
+                                Schmälert in Pitch-Richtung zur <strong>Lötbrückenvermeidung</strong> und nutzt die volle Padlänge mit Verrundung.
+                            </p>
+
+                            <div class="form-row">
+                                <label>Breitenreduktion (%):</label>
+                                <input type="number" id="elongateWidthRed" value="20" step="5" min="5" max="40">
+                            </div>
+                            <div class="form-row">
+                                <label>Längennutzung (%):</label>
+                                <input type="number" id="elongateLengthUse" value="95" step="5" min="70" max="100">
+                            </div>
+                            <div class="form-row">
+                                <label>Eckverrundung R (mm):</label>
+                                <input type="number" id="elongateRadius" value="0.08" step="0.02" min="0.0" max="0.3">
+                            </div>
+
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="chkElongateAll" checked>
+                                Auf alle <span class="lblIdenticalCount">16</span> identischen Pads anwenden
+                            </label>
+
+                            <button id="btnApplyElongate" class="btn btn-action primary">
+                                ✨ Länglich & Schmal anwenden
+                            </button>
+                        </div>
+
+                        <!-- AKTION 2: THERMAL-PAD SLICING -->
+                        <div class="action-card">
+                            <h3>✂️ Thermal-Pad Slicing (Fensterung)</h3>
+                            <p class="tool-desc">Teilt große Flächen in Einzelfenster mit definierten Stegbreiten.</p>
+                            
+                            <div class="quick-presets">
+                                <button class="btn-preset active" data-grid="2x2">2 x 2</button>
+                                <button class="btn-preset" data-grid="3x3">3 x 3</button>
+                                <button class="btn-preset" data-grid="4x4">4 x 4</button>
+                                <button class="btn-preset" data-grid="1x2">1 x 2</button>
+                                <button class="btn-preset" data-grid="2x1">2 x 1</button>
+                            </div>
+
+                            <div class="form-row">
+                                <label>Stegbreite (mm):</label>
+                                <input type="number" id="sliceWeb" value="0.25" step="0.05" min="0.1" max="1.0">
+                            </div>
+                            <div class="form-row">
+                                <label>Randreduktion (mm):</label>
+                                <input type="number" id="sliceEdge" value="0.05" step="0.02" min="0.0" max="0.5">
+                            </div>
+
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="chkSliceAll" checked>
+                                Auf alle <span class="lblIdenticalCount">16</span> identischen Pads anwenden
+                            </label>
+
+                            <button id="btnApplySlice" class="btn btn-action secondary">
+                                Fensterung anwenden
+                            </button>
+                        </div>
+
+                        <!-- AKTION 3: REDUKTION -->
+                        <div class="action-card">
+                            <h3>📐 Flächenreduktion (Undersize)</h3>
+                            <p class="tool-desc">Prozentuale Verkleinerung gegen Lötbrücken und Perlenbildung.</p>
+                            
+                            <div class="form-row">
+                                <label>Flächenreduktion (%):</label>
+                                <input type="number" id="reducePercent" value="10" step="5" min="5" max="50">
+                            </div>
+
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="chkReduceAll" checked>
+                                Auf alle identischen Pads anwenden
+                            </label>
+
+                            <button id="btnApplyReduce" class="btn btn-action secondary">
+                                Reduktion anwenden
+                            </button>
+                        </div>
+
+                        <!-- ZURÜCKSETZEN -->
+                        <div class="action-card reset-card">
+                            <button id="btnResetAperture" class="btn btn-sm btn-danger">
+                                🔄 Auf Original zurücksetzen
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 2: STUFENZONEN -->
+                <div id="tabZones" class="tab-content">
+                    <div class="section-title">
+                        <span>Definierte Stufenzonen</span>
+                        <button id="btnAddZoneTab" class="btn btn-sm btn-secondary">+ Neu</button>
+                    </div>
+                    <div id="zonesList" class="zones-list">
+                        <!-- Dynamisch -->
+                    </div>
+                </div>
+
+                <!-- TAB 3: KRITISCHE BAUTEILE -->
+                <div id="tabCritical" class="tab-content">
+                    <div class="section-title">
+                        <span>Top Problem-Packages (IPC Violations)</span>
+                    </div>
+                    <p class="section-desc">Klicken Sie auf ein Package, um direkt zu den betroffenen Stellen zu springen:</p>
+                    <div id="criticalList" class="critical-list">
+                        <!-- Dynamisch -->
+                    </div>
+                </div>
+            </aside>
+        </div>
+
+        <!-- ========================================================= -->
+        <!-- WORKSPACE 2: STENCIL GENERATOR (PACKAGE-MODUS)            -->
+        <!-- Genau wie PCB Investigator Screenshots 1, 2 & 3           -->
+        <!-- ========================================================= -->
+        <div id="packageWorkspace" class="package-workspace hidden">
+            <!-- Left Column: Customer Library & Package Tree -->
+            <div class="pkg-sidebar">
+                <!-- Customer Library Toolbar -->
+                <div class="library-header">
+                    <div class="lib-selector-row">
+                        <span class="lib-icon">📚</span>
+                        <select id="selectCustomerLib" title="Kunden-Bibliothek auswählen">
+                            <option value="Standard">Standard (Inhouse)</option>
+                            <option value="Kunde_A">Kunde_A</option>
+                        </select>
+                        <button id="btnOpenNewLibModal" class="btn btn-xs btn-secondary" title="Neue Bibliothek anlegen">+ Neu</button>
+                        <button id="btnSaveCurrentLib" class="btn btn-xs btn-primary" title="Bibliothek speichern">💾 Speichern</button>
+                    </div>
+                </div>
+
+                <!-- Search Input -->
+                <div class="pkg-search-box">
+                    <input type="text" id="pkgSearchInput" placeholder="🔍 Package suchen (z. B. 0805, QFN)...">
+                    <button id="btnClearPkgSearch" class="btn-clear-search">&times;</button>
+                </div>
+
+                <!-- Category Filters -->
+                <div class="pkg-category-bar">
+                    <button class="cat-pill active" data-cat="">Alle (<span id="countAllPkgs">0</span>)</button>
+                    <button class="cat-pill" data-cat="SMD Passives">Passives</button>
+                    <button class="cat-pill" data-cat="ICs & Transistors">ICs</button>
+                    <button class="cat-pill" data-cat="BGA & Arrays">BGA</button>
+                </div>
+
+                <!-- Package Tree List -->
+                <div class="pkg-tree-list" id="pkgTreeList">
+                    <!-- Dynamisch aus /api/packages befüllt -->
+                </div>
+            </div>
+
+            <!-- Right Column: Rule Config (Top) & CAD Preview (Bottom) -->
+            <div class="pkg-main-content">
+                <!-- Top Section: Rule Table / Grid (Matching PCB Investigator Screenshot 1) -->
+                <div class="rule-config-card">
+                    <div class="rule-top-bar">
+                        <div class="rule-dropdown-group">
+                            <label for="selectPkgRule">Select Rule:</label>
+                            <select id="selectPkgRule">
+                                <option value="simple_rect">Simple Rectangle Surface</option>
+                                <option value="house_builder">HouseBuilder</option>
+                                <option value="inverted_house_builder">InvertedHouseBuilder</option>
+                                <option value="elongated_pitch">Länglich & Schmal (Pitch-Schutz)</option>
+                                <option value="array_slicing">Array Pads (Thermal Slicing)</option>
+                                <option value="donut">Donut Creation</option>
+                                <option value="take_existing">Take Existing Paste Elements</option>
+                                <option value="ignore">Ignore</option>
+                            </select>
+                        </div>
+
+                        <!-- Pin Selector Dropdown -->
+                        <div class="rule-dropdown-group">
+                            <label for="selectPinDropdown">Pin bearbeiten:</label>
+                            <select id="selectPinDropdown">
+                                <option value="all">Alle Pins (Ganzes Package)</option>
+                            </select>
+                        </div>
+
+                        <div class="pkg-status-summary">
+                            <span>Package: <strong id="lblActivePkgName" class="pkg-title">0805</strong>
+                                <button id="btnRenamePackage" class="btn btn-xs btn-ghost" title="Package umbenennen" style="padding: 1px 6px; margin-left: 4px; font-size: 0.72rem; border: 1px solid var(--border);">✏️ Umbenennen</button>
+                            </span>
+                            <span>Pins: <strong id="lblActivePkgPins">2</strong></span>
+                            <span>Pitch: <strong id="lblActivePkgPitch">1.702 mm</strong></span>
+                            <span>Auf Platine: <span id="lblActivePkgBoardCount" class="badge-count">101x</span></span>
+                        </div>
+                    </div>
+
+                    <!-- Rule Property Grid (Exact PCB Investigator Parameters) -->
+                    <div class="rule-property-grid">
+                        <div class="prop-item">
+                            <label>Corner Radius (MM):</label>
+                            <input type="number" id="propCornerRadius" value="0.075" step="0.005" min="0" max="1.0">
+                        </div>
+                        <div class="prop-item">
+                            <label>Undersize Value (MM):</label>
+                            <input type="number" id="propUndersize" value="0.025" step="0.005" min="-0.2" max="0.5">
+                        </div>
+                        <div class="prop-item">
+                            <label>House distance cut size (%):</label>
+                            <input type="number" id="propHouseCut" value="35" step="5" min="5" max="75">
+                        </div>
+                        <div class="prop-item">
+                            <label>Pitch Reduction (%):</label>
+                            <input type="number" id="propPitchRed" value="20" step="5" min="0" max="60">
+                        </div>
+                        <div class="prop-item">
+                            <label>Length Usage (%):</label>
+                            <input type="number" id="propLengthUse" value="95" step="5" min="50" max="110">
+                        </div>
+                        <div class="prop-item">
+                            <label>Offset move away distance (MM):</label>
+                            <input type="number" id="propOffsetMoveAway" value="0.0" step="0.02" min="0" max="1.0">
+                        </div>
+                        <div class="prop-item">
+                            <label>Offset to Center X / Y (MM):</label>
+                            <div class="dual-row">
+                                <input type="number" id="propOffsetX" value="0.0" step="0.01" placeholder="X">
+                                <input type="number" id="propOffsetY" value="0.0" step="0.01" placeholder="Y">
+                            </div>
+                        </div>
+                        <div class="prop-item">
+                            <label>Bridge Count X / Y (Stege):</label>
+                            <div class="dual-row">
+                                <input type="number" id="propBridgeX" value="0" step="1" min="0" max="6" placeholder="X">
+                                <input type="number" id="propBridgeY" value="0" step="1" min="0" max="6" placeholder="Y">
+                            </div>
+                        </div>
+                        <div class="prop-item">
+                            <label>Bridge Width (MM):</label>
+                            <input type="number" id="propBridgeWidth" value="0.30" step="0.05" min="0.1" max="1.5">
+                        </div>
+                        <div class="prop-item checkbox-prop">
+                            <label><input type="checkbox" id="propRotate45"> Rotate Bridges 45°</label>
+                            <label><input type="checkbox" id="propTryDirection" checked> Try Find Direction</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bottom Section: CAD Preview Canvas (Matching Screenshots 1 & 3) -->
+                <div class="pkg-preview-card">
+                    <div class="preview-canvas-container" id="pkgPreviewContainer">
+                        <canvas id="pkgPreviewCanvas"></canvas>
+                        
+                        <!-- Overlay Pitch & Name -->
+                        <div class="pkg-overlay-info">
+                            <div id="canvasPkgTitle" class="canvas-title">0805</div>
+                            <div id="canvasPkgPitch" class="canvas-pitch">Pitch: 1.702 mm</div>
+                        </div>
+
+                        <!-- Single Pad Override Bar -->
+                        <div id="singlePadBar" class="single-pad-bar hidden">
+                            <div class="pad-bar-info">
+                                <span>🎯 <strong>Pin <span id="lblSelectedPin">1</span></strong>:</span>
+                            </div>
+                            <div class="pad-bar-inputs">
+                                <select id="selectPinRule" title="Regel für diesen Pin" style="font-size: 0.75rem; padding: 3px 6px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border); border-radius: 4px;">
+                                    <option value="inherit">Regel: Vom Package erben</option>
+                                    <option value="simple_rect">Simple Rect</option>
+                                    <option value="house_builder">HouseBuilder</option>
+                                    <option value="inverted_house_builder">InvertedHouse</option>
+                                    <option value="elongated_pitch">Länglich & Schmal</option>
+                                    <option value="array_slicing">Array Slicing</option>
+                                    <option value="ignore">Ignore</option>
+                                </select>
+                                <input type="number" id="inputPadCustomW" placeholder="B (mm)" step="0.05" style="width: 70px;">
+                                <input type="number" id="inputPadCustomH" placeholder="H (mm)" step="0.05" style="width: 70px;">
+                                <input type="number" id="inputPadCustomUndersize" placeholder="Red. (mm)" step="0.005" style="width: 75px;" title="Undersize (mm)">
+                                <button id="btnSavePadOverride" class="btn btn-xs btn-primary">Anpassen</button>
+                                <button id="btnResetPadOverride" class="btn btn-xs btn-ghost">Reset</button>
+                                <button id="btnClosePadBar" class="btn-close-sm">&times;</button>
+                            </div>
+                        </div>
+                        <!-- Measure Banner in Package View -->
+                        <div id="measureBannerPkg" class="measure-banner hidden">
+                            <span>📏 <strong>Messwerkzeug aktiv:</strong> 1. Punkt klicken, 2. Zielpunkt klicken. [M] oder [ESC] zum Beenden.</span>
+                            <button id="btnClearMeasurementsPkg" class="btn btn-xs btn-ghost" title="Messungen löschen">Löschen</button>
+                            <button id="btnCancelMeasurePkg" class="btn btn-xs btn-ghost">&times;</button>
+                        </div>
+                    </div>
+
+                    <!-- Bottom Toolbar under Canvas (Matching Screenshot 3) -->
+                    <div class="pkg-preview-toolbar">
+                        <div class="preview-toggles">
+                            <label><input type="checkbox" id="chkPrevMask" checked> Show Mask</label>
+                            <label><input type="checkbox" id="chkPrevCopper" checked> <span class="dot-copper"></span> Show Copper (Pad)</label>
+                            <label><input type="checkbox" id="chkPrevPaste" checked> <span class="dot-paste"></span> Show Paste (Schablone)</label>
+                            <label><input type="checkbox" id="chkPrevComponent" checked> <span class="dot-comp"></span> Show Component</label>
+                            <label><input type="checkbox" id="chkPrevRuler" checked> Show Ruler</label>
+                            <label><input type="checkbox" id="chkPrevPinLabels"> Show Pin Labels</label>
+                        </div>
+
+                        <div class="preview-cta">
+                            <button id="btnMeasurePkg" class="btn btn-sm btn-secondary btn-measure-pkg" title="Lineal / Messwerkzeug (Taste: M)">
+                                <span>📏</span> Messen (M)
+                            </button>
+                            <button id="btnGenerateStencilPads" class="btn btn-primary btn-generate">
+                                <span>⚡</span> Generate Stencil Pads
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- ========================================================= -->
+    <!-- MODALS                                                    -->
+    <!-- ========================================================= -->
+
+    <!-- New Customer Library Modal -->
+    <div id="newLibModal" class="modal hidden">
+        <div class="modal-box">
+            <h3>Neue Kunden-Bibliothek anlegen</h3>
+            <p class="modal-desc">Erstellen Sie eine eigene Schablonenregel-Bibliothek für einen Kunden:</p>
+            
+            <div class="form-row">
+                <label>Kundenname:</label>
+                <input type="text" id="inputNewCustName" placeholder="z. B. Kunde_Automotive, Kunde_XYZ">
+            </div>
+
+            <div class="modal-actions">
+                <button id="btnCancelNewLib" class="btn btn-ghost">Abbrechen</button>
+                <button id="btnConfirmNewLib" class="btn btn-primary">Bibliothek Erstellen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Zone Modal (Freie Zahleneingabe für Dicke!) -->
+    <div id="zoneModal" class="modal hidden">
+        <div class="modal-box">
+            <h3>Neue Stufenzone konfigurieren</h3>
+            <p class="modal-desc">Geben Sie eine beliebige Dicke in µm ein (oder nutzen Sie die Schnellauswahl):</p>
+            
+            <div class="form-row">
+                <label>Zonendicke (µm):</label>
+                <div class="input-with-unit">
+                    <input type="number" id="modalZoneThickUm" value="100" step="5" min="40" max="300">
+                    <span class="unit-badge">µm</span>
+                </div>
+            </div>
+
+            <div class="quick-pills-row">
+                <span class="pill-btn" data-thick="80">80 µm</span>
+                <span class="pill-btn" data-thick="90">90 µm</span>
+                <span class="pill-btn active" data-thick="100">100 µm</span>
+                <span class="pill-btn" data-thick="110">110 µm</span>
+                <span class="pill-btn" data-thick="130">130 µm</span>
+                <span class="pill-btn" data-thick="150">150 µm</span>
+            </div>
+
+            <div class="form-row" style="margin-top: 14px;">
+                <label>Zonenname (optional):</label>
+                <input type="text" id="modalZoneName" placeholder="z.B. QFN Step-Down 100um">
+            </div>
+
+            <div class="modal-actions">
+                <button id="btnCancelModal" class="btn btn-ghost">Abbrechen</button>
+                <button id="btnSaveZoneModal" class="btn btn-primary">Zone Speichern</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Auslösekalkulator Modal (Analog Inhouse Excel) -->
+    <div id="calculatorModal" class="modal hidden">
+        <div class="modal-box calc-modal-box">
+            <div class="modal-header">
+                <h3>📊 Auslösekalkulator & Pastenvolumen</h3>
+                <button id="btnCloseCalcModal" class="btn-close">&times;</button>
+            </div>
+            <p class="modal-desc">Multi-Dicken-Vergleich & Transfer Efficiency für Pastenschablonen:</p>
+
+            <div class="calc-inputs-bar">
+                <div class="calc-input-group">
+                    <label>Apertur-Breite:</label>
+                    <input type="number" id="calcWidth" value="11.8" step="0.1">
+                </div>
+                <div class="calc-input-group">
+                    <label>Apertur-Länge:</label>
+                    <input type="number" id="calcHeight" value="11.8" step="0.1">
+                </div>
+                <div class="calc-input-group">
+                    <label>Einheit:</label>
+                    <div class="unit-toggle">
+                        <button class="btn-unit active" data-unit="mil">mil</button>
+                        <button class="btn-unit" data-unit="mm">mm</button>
+                    </div>
+                </div>
+                <button id="btnRecalc" class="btn btn-primary" style="align-self: flex-end;">Neu berechnen</button>
+            </div>
+
+            <!-- Vergleichs-Grid (wie in Excel) -->
+            <div class="calc-results-container" id="calcResultsGrid">
+                <!-- Dynamisch generiert -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Datensatz Schließen Bestätigungsmodal -->
+    <div id="closeModal" class="modal hidden">
+        <div class="modal-box">
+            <h3>⚠️ Aktuellen Datensatz schließen?</h3>
+            <p class="modal-desc" style="margin: 12px 0;">Möchten Sie vor dem Schließen die bearbeiteten Schablonenöffnungen als Gerber exportieren?</p>
+            <div class="modal-actions" style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button id="btnCancelCloseModal" class="btn btn-ghost">Abbrechen</button>
+                <button id="btnDiscardAndClose" class="btn btn-secondary" style="color: #f87171;">Ohne Speichern schließen</button>
+                <button id="btnExportAndClose" class="btn btn-primary">Exportieren & Schließen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Modal -->
+    <div id="exportModal" class="modal hidden">
+        <div class="modal-box">
+            <h3>Gerber Export erfolgreich! 🎉</h3>
+            <p id="exportMsg">Die Dateien wurden im Ordner <code>A:\Schablone\Export\</code> gespeichert.</p>
+            <div class="export-file-list" id="exportFileList"></div>
+            <div class="modal-actions">
+                <button id="btnCloseExportModal" class="btn btn-primary">Schließen</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
