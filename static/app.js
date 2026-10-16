@@ -46,8 +46,12 @@ const state = {
     showProfile: true,
     showFiducials: true,
 
-    // Calculator State
-    calcUnit: "mil"
+    // Calculator & DFM State
+    calcUnit: "mil",
+    pasteType: "type4",
+    minBridge: 0.10,
+    bridgeViolations: [],
+    pipShape: "rectangle"
 };
 
 // DOM Elements
@@ -123,6 +127,23 @@ async function refreshApertureData() {
         state.fiducials = data.fiducials;
         state.profile = data.profile;
 
+        if (data.paste_type) {
+            state.pasteType = data.paste_type;
+            const ptSelect = document.getElementById("selectPasteType");
+            if (ptSelect && ptSelect.value !== data.paste_type) {
+                ptSelect.value = data.paste_type;
+            }
+        }
+        if (data.min_bridge !== undefined) {
+            state.minBridge = data.min_bridge;
+            const lblMb = document.getElementById("lblMinBridge");
+            if (lblMb) lblMb.innerText = data.min_bridge.toFixed(2);
+        }
+        if (data.bridge_violations) {
+            state.bridgeViolations = data.bridge_violations;
+            updateBridgeViolationsBadge();
+        }
+
         await updateStats();
         render();
 
@@ -145,6 +166,14 @@ async function updateStats() {
     document.getElementById("statCrit").innerText = state.stats.crit_count.toLocaleString();
     document.getElementById("zonesCount").innerText = state.stats.zones_count;
     document.getElementById("lblMinAr").innerText = state.stats.ipc_min_ar.toFixed(2);
+
+    if (state.stats.paste_type) {
+        const ptEl = document.getElementById("selectPasteType");
+        if (ptEl) ptEl.value = state.stats.paste_type;
+    }
+    if (state.stats.bridge_violations_count !== undefined) {
+        updateBridgeViolationsBadge(state.stats.bridge_violations_count);
+    }
 
     renderZonesList();
     renderCriticalList();
@@ -565,6 +594,9 @@ function render() {
         renderSelectionHighlight();
     }
 
+    // 9b. DFM Bridge Violations Overlay (Kollisionswarnung für Laserschnitt)
+    renderBridgeViolations();
+
     // 10. Zone Drawing Preview
     if (state.isDrawingZone && state.drawStartWorld && state.drawCurrentWorld) {
         renderZoneDrawingPreview();
@@ -889,6 +921,67 @@ function renderSelectionHighlight() {
     ctx.setLineDash([]);
 }
 
+function renderBridgeViolations() {
+    if (!state.bridgeViolations || state.bridgeViolations.length === 0) return;
+
+    ctx.save();
+    for (const v of state.bridgeViolations) {
+        if (!v.p1 || !v.p2) continue;
+        const p1 = worldToScreen(v.p1[0], v.p1[1]);
+        const p2 = worldToScreen(v.p2[0], v.p2[1]);
+
+        const isCrit = v.severity === "CRIT";
+        const strokeColor = isCrit ? "#ef4444" : "#f59e0b";
+        const glowColor = isCrit ? "rgba(239, 68, 68, 0.35)" : "rgba(245, 158, 11, 0.35)";
+
+        // Warning Glow line
+        ctx.strokeStyle = glowColor;
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+
+        // Dashed line
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 2.0;
+        ctx.setLineDash([4, 2]);
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // End points
+        ctx.fillStyle = strokeColor;
+        ctx.beginPath();
+        ctx.arc(p1.x, p1.y, 2.5, 0, Math.PI * 2);
+        ctx.arc(p2.x, p2.y, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Label if sufficiently zoomed in
+        if (state.zoom > 10) {
+            const midX = (p1.x + p2.x) / 2;
+            const midY = (p1.y + p2.y) / 2;
+            const text = `! ${v.dist.toFixed(3)} mm`;
+
+            ctx.font = "bold 9px monospace";
+            const tw = ctx.measureText(text).width;
+            ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
+            ctx.fillRect(midX - tw / 2 - 3, midY - 12, tw + 6, 14);
+            ctx.strokeStyle = strokeColor;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(midX - tw / 2 - 3, midY - 12, tw + 6, 14);
+
+            ctx.fillStyle = strokeColor;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(text, midX, midY - 5);
+        }
+    }
+    ctx.restore();
+}
+
 function renderZoneDrawingPreview() {
     const p0 = worldToScreen(
         Math.min(state.drawStartWorld.x, state.drawCurrentWorld.x),
@@ -964,6 +1057,17 @@ function updateInspectorUI(ap) {
         clAlert.classList.remove("hidden");
     } else {
         clAlert.classList.add("hidden");
+    }
+
+    const grAlert = document.getElementById("grainAlert");
+    if (grAlert) {
+        if (ap.ipc && ap.ipc.grain_warn) {
+            grAlert.classList.remove("hidden");
+            const msgEl = document.getElementById("grainAlertMsg");
+            if (msgEl) msgEl.innerText = ap.ipc.grain_msg || "Mindest-Aperturbreite für Pastentyp unterschritten!";
+        } else {
+            grAlert.classList.add("hidden");
+        }
     }
 }
 
@@ -1823,6 +1927,85 @@ function setupEventListeners() {
         runCalculator(w, h, state.calcUnit);
     });
 
+    // PASTENTYP (IPC-7525 5-BALL REGEL)
+    document.getElementById("selectPasteType")?.addEventListener("change", async (e) => {
+        const ptype = e.target.value;
+        try {
+            const res = await fetch("/api/set_paste_type", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ paste_type: ptype })
+            });
+            const data = await res.json();
+            state.pasteType = data.paste_type;
+            showToast(`Pastentyp gewechselt auf ${data.paste_type.toUpperCase()} (5-Ball-Regel aktiv)`);
+            await refreshApertureData();
+        } catch (err) {
+            console.error("Fehler beim Wechsel des Pastentyps:", err);
+        }
+    });
+
+    // SCHABLONENSTEG-PRÜFUNG (BRIDGE / WEB CHECK)
+    const bridgeModal = document.getElementById("bridgeModal");
+    document.getElementById("btnCheckBridges")?.addEventListener("click", () => {
+        if (bridgeModal) bridgeModal.classList.remove("hidden");
+        runBridgeCheck();
+    });
+    document.getElementById("btnCloseBridgeModal")?.addEventListener("click", () => bridgeModal?.classList.add("hidden"));
+    document.getElementById("btnCloseBridgeModalBtn")?.addEventListener("click", () => bridgeModal?.classList.add("hidden"));
+    document.getElementById("btnRunBridgeCheckNow")?.addEventListener("click", () => {
+        const minB = parseFloat(document.getElementById("inputMinBridgeVal").value) || 0.10;
+        runBridgeCheck(minB);
+    });
+
+    // PIN-IN-PASTE (PiP) MODAL & CONTROLS
+    const pipModal = document.getElementById("pipModal");
+    document.getElementById("btnOpenPipModal")?.addEventListener("click", () => {
+        if (pipModal) {
+            pipModal.classList.remove("hidden");
+            if (state.selectedAperture) {
+                document.getElementById("pipTargetInfo").innerText = `Ziel: Apertur #${state.selectedAperture.id} (${state.selectedAperture.width.toFixed(2)} × ${state.selectedAperture.height.toFixed(2)} mm)`;
+            } else {
+                document.getElementById("pipTargetInfo").innerText = `Hinweis: Kein Pad gewählt (Vorschau-Modus)`;
+            }
+            calculatePip();
+        }
+    });
+    document.getElementById("btnClosePipModal")?.addEventListener("click", () => pipModal?.classList.add("hidden"));
+    document.getElementById("btnCancelPip")?.addEventListener("click", () => pipModal?.classList.add("hidden"));
+
+    document.getElementById("pipPinShape")?.addEventListener("change", (e) => {
+        const isRect = e.target.value === "rect";
+        const gH = document.getElementById("groupPipPinH");
+        if (gH) gH.style.display = isRect ? "block" : "none";
+        const lbl = document.getElementById("lblPipPinDim");
+        if (lbl) lbl.innerText = isRect ? "Pin-Breite (mm):" : "Pin-Ø (mm):";
+        calculatePip();
+    });
+
+    [
+        "pipDrill", "pipPinW", "pipPinH", "pipPcbThick", "pipMetalRatio", "pipMeniscus", "pipStencilThick"
+    ].forEach(id => {
+        document.getElementById(id)?.addEventListener("input", calculatePip);
+    });
+
+    document.querySelectorAll("[data-pip-shape]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            document.querySelectorAll("[data-pip-shape]").forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            state.pipShape = btn.dataset.pipShape;
+            calculatePip();
+        });
+    });
+
+    document.getElementById("btnApplyPipAperture")?.addEventListener("click", async () => {
+        if (state.selectedApertureId === null) {
+            alert("Bitte wählen Sie zuerst eine Apertur / ein Pad auf der Platine aus!");
+            return;
+        }
+        await applyPipToAperture();
+    });
+
     // ZIP MODAL EVENTS (Fallback)
     const zipModal = document.getElementById("zipModal");
     document.getElementById("btnOpenZipModal")?.addEventListener("click", () => {
@@ -2469,7 +2652,7 @@ function autoFitPackagePreview(data) {
 function populateRuleInputs(rule) {
     if (!rule) return;
     document.getElementById("selectPkgRule").value = rule.rule_type || "simple_rect";
-    document.getElementById("propCornerRadius").value = rule.corner_radius ?? 0.075;
+    document.getElementById("propCornerRadius").value = rule.corner_radius ?? 0.0;
     document.getElementById("propUndersize").value = rule.undersize_w ?? 0.025;
     document.getElementById("propHouseCut").value = rule.house_cut_pct ?? 35;
     document.getElementById("propPitchRed").value = rule.pitch_reduction_pct ?? 20;
@@ -2482,6 +2665,14 @@ function populateRuleInputs(rule) {
     document.getElementById("propBridgeWidth").value = rule.bridge_width ?? 0.30;
     document.getElementById("propRotate45").checked = Boolean(rule.rotate_bridges_45);
     document.getElementById("propTryDirection").checked = Boolean(rule.try_find_direction);
+    const thEl = document.getElementById("propToeHeelShift");
+    if (thEl) thEl.value = rule.toe_heel_shift ?? 0.0;
+    const csEl = document.getElementById("propChamferSize");
+    if (csEl) csEl.value = rule.chamfer_size ?? 0.0;
+    const cmEl = document.getElementById("propChamferMode");
+    if (cmEl) cmEl.value = rule.chamfer_mode || "all";
+    const pmmEl = document.getElementById("propPinMinusMask");
+    if (pmmEl) pmmEl.checked = Boolean(rule.pin_minus_mask);
 }
 
 function collectRuleFromInputs() {
@@ -2500,7 +2691,11 @@ function collectRuleFromInputs() {
         bridge_count_y: parseInt(document.getElementById("propBridgeY").value) || 0,
         bridge_width: parseFloat(document.getElementById("propBridgeWidth").value) || 0.3,
         rotate_bridges_45: document.getElementById("propRotate45").checked,
-        try_find_direction: document.getElementById("propTryDirection").checked
+        try_find_direction: document.getElementById("propTryDirection").checked,
+        toe_heel_shift: parseFloat(document.getElementById("propToeHeelShift")?.value) || 0,
+        chamfer_size: parseFloat(document.getElementById("propChamferSize")?.value) || 0,
+        chamfer_mode: document.getElementById("propChamferMode")?.value || "all",
+        pin_minus_mask: Boolean(document.getElementById("propPinMinusMask")?.checked)
     };
 }
 
@@ -2791,7 +2986,8 @@ function setupPkgEventListeners() {
     document.getElementById("selectPkgRule").addEventListener("change", onRuleParamChanged);
     [
         "propCornerRadius", "propUndersize", "propHouseCut", "propPitchRed", "propLengthUse",
-        "propOffsetMoveAway", "propOffsetX", "propOffsetY", "propBridgeX", "propBridgeY", "propBridgeWidth"
+        "propOffsetMoveAway", "propOffsetX", "propOffsetY", "propBridgeX", "propBridgeY", "propBridgeWidth",
+        "propToeHeelShift", "propChamferSize"
     ].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -2799,8 +2995,42 @@ function setupPkgEventListeners() {
             el.addEventListener("change", onRuleParamChanged);
         }
     });
-    document.getElementById("propRotate45").addEventListener("change", onRuleParamChanged);
-    document.getElementById("propTryDirection").addEventListener("change", onRuleParamChanged);
+    document.getElementById("propRotate45")?.addEventListener("change", onRuleParamChanged);
+    document.getElementById("propPinMinusMask")?.addEventListener("change", onRuleParamChanged);
+    document.getElementById("propChamferMode")?.addEventListener("change", onRuleParamChanged);
+    document.getElementById("propTryDirection")?.addEventListener("change", onRuleParamChanged);
+
+    // Auto-Klassifizierung
+    async function triggerAutoClassify(btnElement) {
+        const orig = btnElement ? btnElement.innerHTML : "";
+        if (btnElement) {
+            btnElement.innerHTML = `<span>⏳</span> Klassifiziere...`;
+            btnElement.disabled = true;
+        }
+        try {
+            const res = await fetch("/api/auto_classify", { method: "POST" });
+            const data = await res.json();
+            if (data.status === "ok") {
+                const c = data.classification;
+                showToast(`⚡ Auto-Klassifizierung abgeschlossen! ${c.chips} Chips, ${c.soic} SOIC, ${c.qfn} QFN, ${c.bga} BGA, ${c.tht} THT`);
+                await loadPackagesList();
+                await refreshApertureData();
+                if (pkgState.activePkgName) {
+                    selectPackage(pkgState.activePkgName);
+                }
+            }
+        } catch (e) {
+            console.error("Auto-Klassifizierung Fehler:", e);
+        } finally {
+            if (btnElement) {
+                btnElement.innerHTML = orig;
+                btnElement.disabled = false;
+            }
+        }
+    }
+
+    document.getElementById("btnAutoClassify")?.addEventListener("click", (e) => triggerAutoClassify(e.currentTarget));
+    document.getElementById("btnHeaderAutoClassify")?.addEventListener("click", (e) => triggerAutoClassify(e.currentTarget));
 
     // Single Pad Live Inputs (0ms Live-Update beim Hoch/Runter-Klicken der Spinner!)
     [
@@ -3038,4 +3268,178 @@ function setupPkgEventListeners() {
         renderPkgPreview();
     });
 }
+
+// -------------------------------------------------------------
+// DFM Bridge Check & Pin-in-Paste (PiP) Implementation
+// -------------------------------------------------------------
+let currentPipData = null;
+
+async function calculatePip() {
+    const dDrill = parseFloat(document.getElementById("pipDrill")?.value) || 1.0;
+    const pinShape = document.getElementById("pipPinShape")?.value || "round";
+    const pinW = parseFloat(document.getElementById("pipPinW")?.value) || 0.6;
+    const pinH = parseFloat(document.getElementById("pipPinH")?.value) || 0.6;
+    const hPcb = parseFloat(document.getElementById("pipPcbThick")?.value) || 1.6;
+    const metalRatio = parseFloat(document.getElementById("pipMetalRatio")?.value) || 50;
+    const vMeniscus = parseFloat(document.getElementById("pipMeniscus")?.value) || 0.0;
+    const stencilThick = parseFloat(document.getElementById("pipStencilThick")?.value) || 0.120;
+    const shape = state.pipShape || "rectangle";
+
+    try {
+        const res = await fetch("/api/pip/calculate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                d_drill: dDrill,
+                pin_shape: pinShape,
+                pin_w: pinW,
+                pin_h: pinH,
+                h_pcb: hPcb,
+                metal_ratio: metalRatio / 100.0,
+                v_meniscus: vMeniscus,
+                stencil_thick: stencilThick,
+                overprint_shape: shape
+            })
+        });
+        const data = await res.json();
+        currentPipData = data;
+
+        const elHole = document.getElementById("pipResHoleNet");
+        const elPaste = document.getElementById("pipResPasteReq");
+        const elArea = document.getElementById("pipResAreaReq");
+        if (elHole) elHole.innerText = `${data.v_hole_net_mm3.toFixed(3)} mm³`;
+        if (elPaste) elPaste.innerText = `${data.v_paste_soll_mm3.toFixed(3)} mm³`;
+        if (elArea) elArea.innerText = `${data.a_aperture_req_mm2.toFixed(2)} mm²`;
+
+        if (data.geometries.rectangle) {
+            const elR = document.getElementById("pipDimRect");
+            if (elR) elR.innerText = `${data.geometries.rectangle.w.toFixed(2)} × ${data.geometries.rectangle.h.toFixed(2)} mm`;
+        }
+        if (data.geometries.donut) {
+            const elD = document.getElementById("pipDimDonut");
+            if (elD) elD.innerText = `${data.geometries.donut.d_outer.toFixed(2)} mm`;
+        }
+        if (data.geometries.cross) {
+            const elC = document.getElementById("pipDimCross");
+            if (elC) elC.innerText = `${data.geometries.cross.total_span.toFixed(2)} mm`;
+        }
+    } catch (e) {
+        console.error("Fehler bei PiP-Berechnung:", e);
+    }
+}
+
+async function applyPipToAperture() {
+    if (!currentPipData || state.selectedApertureId === null) return;
+    const shape = state.pipShape || "rectangle";
+    const geom = currentPipData.geometries[shape];
+
+    try {
+        const res = await fetch("/api/pip/apply", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                ap_id: state.selectedApertureId,
+                pip_data: geom
+            })
+        });
+        const data = await res.json();
+        if (data.status === "ok") {
+            document.getElementById("pipModal")?.classList.add("hidden");
+            showToast(`⚡ PiP Overprint (${shape}) auf Apertur #${state.selectedApertureId} angewendet!`);
+            await refreshApertureData();
+        }
+    } catch (e) {
+        console.error("Fehler beim Anwenden der PiP-Apertur:", e);
+    }
+}
+
+async function runBridgeCheck(minBridge = null) {
+    const minB = minBridge !== null ? minBridge : (parseFloat(document.getElementById("inputMinBridgeVal")?.value) || state.minBridge || 0.10);
+    try {
+        const res = await fetch("/api/dfm/bridge_check", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ min_bridge: minB })
+        });
+        const data = await res.json();
+        state.bridgeViolations = data.violations || [];
+        state.minBridge = data.min_bridge;
+        const lblMb = document.getElementById("lblMinBridge");
+        if (lblMb) lblMb.innerText = data.min_bridge.toFixed(2);
+        const inMb = document.getElementById("inputMinBridgeVal");
+        if (inMb) inMb.value = data.min_bridge.toFixed(2);
+
+        updateBridgeViolationsBadge(data.count);
+
+        const summary = document.getElementById("bridgeResultsSummary");
+        if (summary) {
+            if (data.count === 0) {
+                summary.innerHTML = `🟢 <strong>Perfekt:</strong> Keine Stegunterschreitungen unter ${data.min_bridge.toFixed(2)} mm gefunden! Schablone ist laser-fertigungsgerecht.`;
+                summary.style.color = "#4ade80";
+            } else {
+                summary.innerHTML = `⚠️ <strong>${data.count} Steg-Konflikte gefunden!</strong> Mindestabstand ${data.min_bridge.toFixed(2)} mm wird unterschritten (Kollisionsgefahr beim Laserschneiden).`;
+                summary.style.color = "#f87171";
+            }
+        }
+
+        const tbody = document.getElementById("bridgeViolationsTableBody");
+        if (tbody) {
+            if (data.count === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding: 16px; color: var(--text-secondary);">Keine Stegunterschreitungen gefunden.</td></tr>`;
+            } else {
+                tbody.innerHTML = data.violations.map(v => `
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                        <td style="padding: 6px 10px;">
+                            <span class="badge ${v.severity === 'CRIT' ? 'crit' : 'warn'}" style="font-size:0.7rem; padding: 2px 6px;">
+                                ${v.severity === 'CRIT' ? '🔴 Kritisch' : '🟡 Warn'}
+                            </span>
+                        </td>
+                        <td style="padding: 6px 10px; font-weight: 700; color: ${v.severity === 'CRIT' ? '#f87171' : '#fbbf24'};">
+                            ${v.dist.toFixed(3)} mm
+                        </td>
+                        <td style="padding: 6px 10px; color: var(--text-secondary);">
+                            #${v.ap_id_1} (${v.pkg_1}) &harr; #${v.ap_id_2} (${v.pkg_2})
+                        </td>
+                        <td style="padding: 6px 10px; text-align: right;">
+                            <button class="btn btn-xs btn-secondary" onclick="zoomToBridgeViolation(${v.p1[0]}, ${v.p1[1]})">
+                                🔍 Zu Stelle
+                            </button>
+                        </td>
+                    </tr>
+                `).join("");
+            }
+        }
+
+        render();
+    } catch (e) {
+        console.error("Fehler bei Stegprüfung:", e);
+    }
+}
+
+function updateBridgeViolationsBadge(count = null) {
+    const badge = document.getElementById("badgeBridgeViolations");
+    const num = count !== null ? count : (state.bridgeViolations ? state.bridgeViolations.length : 0);
+    if (!badge) return;
+    if (num > 0) {
+        badge.innerText = num;
+        badge.classList.remove("hidden");
+        const icon = document.getElementById("bridgeWarnIcon");
+        if (icon) icon.innerText = "⚠️";
+    } else {
+        badge.classList.add("hidden");
+        const icon = document.getElementById("bridgeWarnIcon");
+        if (icon) icon.innerText = "🔬";
+    }
+}
+
+window.zoomToBridgeViolation = function(x, y) {
+    document.getElementById("bridgeModal")?.classList.add("hidden");
+    state.zoom = Math.max(state.zoom, 35);
+    const rect = container.getBoundingClientRect();
+    state.panX = rect.width / 2 - x * state.zoom;
+    state.panY = rect.height / 2 - y * state.zoom;
+    render();
+    showToast(`Fokussiert auf Steg bei X: ${x.toFixed(2)}, Y: ${y.toFixed(2)} mm`);
+};
+
 

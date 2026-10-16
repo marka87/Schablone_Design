@@ -1,0 +1,6 @@
+# Rust/Tauri Build-Artefakte
+stencilcraft-desktop/src-tauri/target/
+stencilcraft-desktop/node_modules/
+
+# Generierte Schablonen-Exporte
+Export/

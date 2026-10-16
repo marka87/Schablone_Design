@@ -1,0 +1,14 @@
+[package]
+name = "stencil_core"
+version = "2.6.0"
+description = "SMT Stencil Engine: ODB++/Gerber Import, Regelgeometrie, IPC-7525 DFM, Gerber Export"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rayon = "1.10"
+rstar = "0.12"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+flate2 = "1.0"
+tar = "0.4"

@@ -1,0 +1,50 @@
+{
+  "customer": "Kunde_A",
+  "version": "1.0",
+  "packages": {
+    "0805": {
+      "name": "HouseBuilder",
+      "rule_type": "house_builder",
+      "undersize_w": 0.03,
+      "undersize_h": 0.03,
+      "corner_radius": 0.075,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "offset_move_away": 0.05,
+      "house_cut_pct": 35.0,
+      "pitch_reduction_pct": 20.0,
+      "length_usage_pct": 95.0,
+      "bridge_count_x": 0,
+      "bridge_count_y": 0,
+      "bridge_width": 0.3,
+      "donut_inner_dia": 0.0,
+      "rotate_bridges_45": false,
+      "try_find_direction": true
+    },
+    "0603": {
+      "name": "HouseBuilder",
+      "rule_type": "house_builder",
+      "undersize_w": 0.025,
+      "undersize_h": 0.025,
+      "corner_radius": 0.06,
+      "offset_x": 0.0,
+      "offset_y": 0.0,
+      "offset_move_away": 0.03,
+      "house_cut_pct": 35.0,
+      "pitch_reduction_pct": 20.0,
+      "length_usage_pct": 95.0,
+      "bridge_count_x": 0,
+      "bridge_count_y": 0,
+      "bridge_width": 0.3,
+      "donut_inner_dia": 0.0,
+      "rotate_bridges_45": false,
+      "try_find_direction": true
+    }
+  },
+  "aliases": {
+    "R_0805_SPEC": "0805",
+    "C_0805_SPEC": "0805",
+    "R_0603_SPEC": "0603"
+  }
+}
+

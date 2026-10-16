@@ -18,6 +18,10 @@ from gerbonara.graphic_objects import Flash, Region
 from gerbonara.apertures import RectangleAperture, CircleAperture
 from gerbonara.utils import MM
 from rtree import index
+import shapely.geometry as sg
+import shapely.affinity as sa
+import shapely.ops as so
+import shapely
 
 
 @dataclass
@@ -136,6 +140,10 @@ class PackageRule:
     donut_inner_dia: float = 0.0    # mm
     rotate_bridges_45: bool = False
     try_find_direction: bool = True
+    toe_heel_shift: float = 0.0     # mm (Systematische Verschiebung entlang Bauteilachse: >0 Toe / außen, <0 Heel / innen)
+    chamfer_size: float = 0.0       # mm (45° Eck-Anfasung)
+    chamfer_mode: str = "all"       # "all", "pin1", "toe", "heel"
+    pin_minus_mask: bool = False    # SMD Pin-minus-Mask Operation
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -155,7 +163,11 @@ class PackageRule:
             "bridge_width": self.bridge_width,
             "donut_inner_dia": self.donut_inner_dia,
             "rotate_bridges_45": self.rotate_bridges_45,
-            "try_find_direction": self.try_find_direction
+            "try_find_direction": self.try_find_direction,
+            "toe_heel_shift": self.toe_heel_shift,
+            "chamfer_size": self.chamfer_size,
+            "chamfer_mode": self.chamfer_mode,
+            "pin_minus_mask": self.pin_minus_mask
         }
 
 
@@ -242,8 +254,27 @@ class StencilEngine:
         self.spatial_index = index.Index()
         self.bounds = (0.0, 0.0, 0.0, 0.0)
 
+        # DFM & Pastenkorn-Validierung
+        self.paste_type: str = "type4"  # 'type3' (45µm), 'type4' (38µm), 'type5' (25µm)
+        self.min_bridge_width: float = 0.10  # mm Mindest-Stegbreite im Schablonenblech
+        self.bridge_violations: List[Dict[str, Any]] = []
+
         # Initialisiere Standard-Packages
         self.init_standard_packages()
+
+    def set_paste_type(self, ptype: str) -> str:
+        clean = str(ptype).lower().strip()
+        if "3" in clean:
+            self.paste_type = "type3"
+        elif "5" in clean:
+            self.paste_type = "type5"
+        else:
+            self.paste_type = "type4"
+        return self.paste_type
+
+    def set_min_bridge_width(self, width: float) -> float:
+        self.min_bridge_width = max(0.04, float(width))
+        return self.min_bridge_width
 
     def set_ipc_mode(self, mode: str, custom_ar: float = 0.66, custom_aspect: float = 1.50):
         self.ipc_mode = mode
@@ -1467,13 +1498,44 @@ class StencilEngine:
                     if dx < self.squeegee_clearance or dy < self.transverse_clearance:
                         clearance_warn = True
 
+        # Pastenkorn-Validierung (5-Ball-Regel nach IPC-7525)
+        # Type 3: 45 µm (0.045 mm) -> Mindestöffnung 0.225 mm
+        # Type 4: 38 µm (0.038 mm) -> Mindestöffnung 0.190 mm
+        # Type 5: 25 µm (0.025 mm) -> Mindestöffnung 0.125 mm
+        grain_sizes = {"type3": 0.045, "type4": 0.038, "type5": 0.025}
+        grain_dia = grain_sizes.get(self.paste_type, 0.038)
+        min_required_w = 5.0 * grain_dia
+
+        if item.custom_slices and len(item.custom_slices) > 0:
+            min_ap_dim = min(min(s.get("w", item.width), s.get("h", item.height)) for s in item.custom_slices)
+        elif item.shape_type == 'circle':
+            min_ap_dim = item.width
+        else:
+            min_ap_dim = min(item.width, item.height)
+
+        grain_warn = min_ap_dim < min_required_w
+        if grain_warn:
+            grain_status = "WARN_GRAIN"
+            grain_msg = f"5-Ball-Regel: {min_ap_dim:.3f}mm < {min_required_w:.3f}mm ({self.paste_type.upper()})"
+            if status == "OK":
+                status = "WARN"
+        else:
+            grain_status = "OK"
+            grain_msg = f"5-Ball-Regel OK ({min_ap_dim:.3f}mm >= {min_required_w:.3f}mm)"
+
         return {
             "effective_thickness": T,
             "zone_id": zone_id,
             "area_ratio": round(ar, 3),
             "aspect_ratio": round(aspect, 2),
             "status": status,
-            "clearance_warn": clearance_warn
+            "clearance_warn": clearance_warn,
+            "min_ap_dim": round(min_ap_dim, 3),
+            "paste_type": self.paste_type,
+            "grain_warn": grain_warn,
+            "grain_status": grain_status,
+            "grain_msg": grain_msg,
+            "min_required_w": round(min_required_w, 3)
         }
 
     def get_panel_statistics(self) -> Dict[str, Any]:
@@ -1483,6 +1545,7 @@ class StencilEngine:
             "ok_count": 0,
             "warn_count": 0,
             "crit_count": 0,
+            "grain_warn_count": 0,
             "min_ar": 99.0,
             "base_thickness": self.base_thickness,
             "zones_count": len(self.zones),
@@ -1490,6 +1553,9 @@ class StencilEngine:
             "ipc_mode": self.ipc_mode,
             "ipc_min_ar": self.ipc_min_ar,
             "ipc_min_aspect": self.ipc_min_aspect,
+            "paste_type": self.paste_type,
+            "min_bridge_width": self.min_bridge_width,
+            "bridge_violations_count": len(self.bridge_violations),
             "squeegee_dir": self.squeegee_dir,
             "bounds": [round(b, 2) for b in self.bounds]
         }
@@ -1500,6 +1566,8 @@ class StencilEngine:
         for item in self.apertures:
             ipc = self.calculate_aperture_ipc(item)
             package_groups[item.package_group] += 1
+            if ipc.get("grain_warn"):
+                stats["grain_warn_count"] += 1
             if ipc["status"] == "OK":
                 stats["ok_count"] += 1
             elif ipc["status"] == "WARN":
@@ -2230,8 +2298,8 @@ class StencilEngine:
                     )
                 self.packages[grp_name].component_count += 1
 
-    def generate_rule_aperture_geometry(self, pad_w: float, pad_h: float, pad_cx: float, pad_cy: float, rule: PackageRule, facing_dir: str = 'right') -> Optional[List[Dict[str, Any]]]:
-        """Erzeugt Apertur-Geometrie für Simple Rectangle, HouseBuilder, InvertedHouseBuilder, etc."""
+    def generate_rule_aperture_geometry(self, pad_w: float, pad_h: float, pad_cx: float, pad_cy: float, rule: PackageRule, facing_dir: str = 'right', mask_w: Optional[float] = None, mask_h: Optional[float] = None) -> Optional[List[Dict[str, Any]]]:
+        """Erzeugt Apertur-Geometrie für Simple Rectangle, HouseBuilder, Chamfered, Array Slicing 45°, etc."""
         rtype = rule.rule_type
 
         if rtype == "take_existing":
@@ -2240,8 +2308,16 @@ class StencilEngine:
         if rtype == "ignore":
             return []
 
-        w_eff = max(0.04, pad_w - 2.0 * rule.undersize_w)
-        h_eff = max(0.04, pad_h - 2.0 * rule.undersize_h)
+        # Pin-minus-Mask Operation für SMD-Pads (Solder Mask Defined)
+        if rule.pin_minus_mask and mask_w is not None and mask_h is not None and mask_w > 0 and mask_h > 0:
+            effective_pad_w = min(pad_w, mask_w)
+            effective_pad_h = min(pad_h, mask_h)
+        else:
+            effective_pad_w = pad_w
+            effective_pad_h = pad_h
+
+        w_eff = max(0.04, effective_pad_w - 2.0 * rule.undersize_w)
+        h_eff = max(0.04, effective_pad_h - 2.0 * rule.undersize_h)
 
         cx = pad_cx + rule.offset_x
         cy = pad_cy + rule.offset_y
@@ -2251,6 +2327,58 @@ class StencilEngine:
             elif facing_dir == "left": cx += rule.offset_move_away
             elif facing_dir == "up": cy -= rule.offset_move_away
             elif facing_dir == "down": cy += rule.offset_move_away
+
+        # Toe-/Heel-Shift: Systematische Verschiebung entlang der Bauteilachse
+        # > 0: Verschiebung nach außen zur Spitze (Toe)
+        # < 0: Verschiebung nach innen zur Ferse unter das Gehäuse (Heel)
+        if rule.toe_heel_shift != 0.0:
+            shift = rule.toe_heel_shift
+            if facing_dir == "right": cx += shift
+            elif facing_dir == "left": cx -= shift
+            elif facing_dir == "up": cy += shift
+            elif facing_dir == "down": cy -= shift
+
+        # Chamfered Rectangle (Eck-Anfasung bei 45°)
+        if rule.chamfer_size > 0.005 and rtype in ("simple_rect", "chamfered_rect"):
+            c = min(rule.chamfer_size, w_eff / 2.1, h_eff / 2.1)
+            hw = w_eff / 2.0
+            hh = h_eff / 2.0
+            mode = getattr(rule, "chamfer_mode", "all") or "all"
+
+            chamfer_tl = mode in ("all", "pin1") or (mode == "toe" and facing_dir in ("left", "up")) or (mode == "heel" and facing_dir in ("right", "down"))
+            chamfer_tr = mode == "all" or (mode == "toe" and facing_dir in ("right", "up")) or (mode == "heel" and facing_dir in ("left", "down"))
+            chamfer_br = mode == "all" or (mode == "toe" and facing_dir in ("right", "down")) or (mode == "heel" and facing_dir in ("left", "up"))
+            chamfer_bl = mode == "all" or (mode == "toe" and facing_dir in ("left", "down")) or (mode == "heel" and facing_dir in ("right", "up"))
+
+            poly_pts = []
+            if chamfer_bl:
+                poly_pts.append((cx - hw + c, cy - hh))
+                poly_pts.append((cx - hw, cy - hh + c))
+            else:
+                poly_pts.append((cx - hw, cy - hh))
+            if chamfer_tl:
+                poly_pts.append((cx - hw, cy + hh - c))
+                poly_pts.append((cx - hw + c, cy + hh))
+            else:
+                poly_pts.append((cx - hw, cy + hh))
+            if chamfer_tr:
+                poly_pts.append((cx + hw - c, cy + hh))
+                poly_pts.append((cx + hw, cy + hh - c))
+            else:
+                poly_pts.append((cx + hw, cy + hh))
+            if chamfer_br:
+                poly_pts.append((cx + hw, cy - hh + c))
+                poly_pts.append((cx + hw - c, cy - hh))
+            else:
+                poly_pts.append((cx + hw, cy - hh))
+
+            return [{
+                "cx": round(cx, 4), "cy": round(cy, 4),
+                "w": round(w_eff, 4), "h": round(h_eff, 4),
+                "radius": 0.0,
+                "pts": [(round(px, 4), round(py, 4)) for px, py in poly_pts],
+                "shape": "polygon", "type": "chamfered_rect"
+            }]
 
         if rtype == "simple_rect":
             r = min(rule.corner_radius, w_eff / 2.2, h_eff / 2.2)
@@ -2395,9 +2523,62 @@ class StencilEngine:
             }]
 
         elif rtype in ("array_slicing", "array_pads"):
+            # 45°-Diagonale Stege (Squeegee Scooping Prevention)
+            if getattr(rule, "rotate_bridges_45", False):
+                try:
+                    pad_poly = sg.box(cx - w_eff/2, cy - h_eff/2, cx + w_eff/2, cy + h_eff/2)
+                    web = max(0.08, rule.bridge_width)
+                    diag_span = math.hypot(w_eff, h_eff) * 1.5
+
+                    cut_boxes = []
+                    num_diag_x = max(1, rule.bridge_count_x if rule.bridge_count_x > 0 else 1)
+                    step_x = diag_span / (num_diag_x + 1)
+                    for i in range(1, num_diag_x + 1):
+                        offset = -diag_span / 2.0 + i * step_x
+                        strip = sg.box(cx - diag_span, cy + offset - web / 2.0, cx + diag_span, cy + offset + web / 2.0)
+                        cut_boxes.append(sa.rotate(strip, 45, origin=(cx, cy)))
+
+                    if rule.bridge_count_y > 0:
+                        num_diag_y = rule.bridge_count_y
+                        step_y = diag_span / (num_diag_y + 1)
+                        for i in range(1, num_diag_y + 1):
+                            offset = -diag_span / 2.0 + i * step_y
+                            strip = sg.box(cx - diag_span, cy + offset - web / 2.0, cx + diag_span, cy + offset + web / 2.0)
+                            cut_boxes.append(sa.rotate(strip, -45, origin=(cx, cy)))
+
+                    cut_union = so.unary_union(cut_boxes)
+                    diff = pad_poly.difference(cut_union)
+                    sub_polys = []
+                    if diff.geom_type == "Polygon":
+                        sub_polys = [diff]
+                    elif diff.geom_type == "MultiPolygon":
+                        sub_polys = list(diff.geoms)
+
+                    slices = []
+                    for p in sub_polys:
+                        if p.area < 0.005:
+                            continue
+                        b = p.bounds
+                        pts = [(round(coord[0], 4), round(coord[1], 4)) for coord in p.exterior.coords[:-1]]
+                        slices.append({
+                            "cx": round(p.centroid.x, 4),
+                            "cy": round(p.centroid.y, 4),
+                            "w": round(b[2] - b[0], 4),
+                            "h": round(b[3] - b[1], 4),
+                            "area": round(p.area, 5),
+                            "pts": pts,
+                            "shape": "polygon",
+                            "type": "array_slicing_45"
+                        })
+                    if slices:
+                        return slices
+                except Exception as e:
+                    print(f"Fehler bei 45° Diagonal Slicing: {e}")
+
+            # Standard Orthogonale Stege (0° / 90°)
             gx = max(1, rule.bridge_count_x + 1)
             gy = max(1, rule.bridge_count_y + 1)
-            web = max(0.1, rule.bridge_width)
+            web = max(0.08, rule.bridge_width)
             sub_w = (w_eff - (gx - 1) * web) / gx
             sub_h = (h_eff - (gy - 1) * web) / gy
             if sub_w <= 0 or sub_h <= 0:
@@ -2444,7 +2625,11 @@ class StencilEngine:
             bridge_width=float(pin_data.get("bridge_width", base_rule.bridge_width)),
             donut_inner_dia=float(pin_data.get("donut_inner_dia", base_rule.donut_inner_dia)),
             rotate_bridges_45=bool(pin_data.get("rotate_bridges_45", base_rule.rotate_bridges_45)),
-            try_find_direction=bool(pin_data.get("try_find_direction", base_rule.try_find_direction))
+            try_find_direction=bool(pin_data.get("try_find_direction", base_rule.try_find_direction)),
+            toe_heel_shift=float(pin_data.get("toe_heel_shift", base_rule.toe_heel_shift)),
+            chamfer_size=float(pin_data.get("chamfer_size", base_rule.chamfer_size)),
+            chamfer_mode=str(pin_data.get("chamfer_mode", base_rule.chamfer_mode)),
+            pin_minus_mask=bool(pin_data.get("pin_minus_mask", base_rule.pin_minus_mask))
         )
 
     def apply_package_rule(self, pkg_name: str, rule_dict: Dict[str, Any]) -> int:
@@ -2735,3 +2920,410 @@ class StencilEngine:
 
         self.current_customer = customer_name
         return lib_file
+
+    # -------------------------------------------------------------
+    # 1. DFM-Prüfung: Schablonenstegbreite (Web/Bridge Check)
+    # -------------------------------------------------------------
+    def check_stencil_bridges(self, min_bridge: float = 0.10) -> Dict[str, Any]:
+        """
+        Prüft den Mindestabstand benachbarter Aperturen im Schablonenblech (Web/Bridge Check).
+        Erkennt Stegunterschreitungen < min_bridge via R-Tree + Shapely Polygon-Distanzprüfung.
+        Vollständig non-destruktiv auf dem Arbeits-Layer.
+        """
+        self.min_bridge_width = max(0.04, float(min_bridge))
+        violations = []
+
+        geom_items = []
+        for ap in self.apertures:
+            if ap.custom_slices and len(ap.custom_slices) > 0:
+                for s_idx, sl in enumerate(ap.custom_slices):
+                    g = None
+                    if sl.get("shape") == "polygon" and "pts" in sl and len(sl["pts"]) >= 3:
+                        try:
+                            g = sg.Polygon(sl["pts"])
+                        except Exception:
+                            pass
+                    elif sl.get("shape") == "circle":
+                        r = sl.get("w", 0.1) / 2.0
+                        g = sg.Point(sl["cx"], sl["cy"]).buffer(r)
+                    if not g or not g.is_valid or g.is_empty:
+                        g = sg.box(sl["cx"] - sl["w"]/2, sl["cy"] - sl["h"]/2, sl["cx"] + sl["w"]/2, sl["cy"] + sl["h"]/2)
+
+                    if g and g.is_valid and not g.is_empty:
+                        geom_items.append({
+                            "ap_id": ap.id,
+                            "slice_idx": s_idx,
+                            "geom": g,
+                            "bounds": g.bounds,
+                            "comp_id": ap.component_id,
+                            "pkg": ap.package_name
+                        })
+            else:
+                g = None
+                if ap.shape_type == "polygon" and len(ap.points) >= 3:
+                    try:
+                        g = sg.Polygon(ap.points)
+                    except Exception:
+                        pass
+                elif ap.shape_type == "circle":
+                    g = sg.Point(ap.cx, ap.cy).buffer(ap.width / 2.0)
+                if not g or not g.is_valid or g.is_empty:
+                    g = sg.box(ap.cx - ap.width/2, ap.cy - ap.height/2, ap.cx + ap.width/2, ap.cy + ap.height/2)
+
+                if g and g.is_valid and not g.is_empty:
+                    geom_items.append({
+                        "ap_id": ap.id,
+                        "slice_idx": -1,
+                        "geom": g,
+                        "bounds": g.bounds,
+                        "comp_id": ap.component_id,
+                        "pkg": ap.package_name
+                    })
+
+        # Temporärer RTree Index für alle aktiven Geometrien
+        idx = index.Index()
+        for i, item in enumerate(geom_items):
+            idx.insert(i, item["bounds"])
+
+        checked_pairs = set()
+        for i, item in enumerate(geom_items):
+            b = item["bounds"]
+            query_box = (b[0] - self.min_bridge_width, b[1] - self.min_bridge_width,
+                         b[2] + self.min_bridge_width, b[3] + self.min_bridge_width)
+            for j in idx.intersection(query_box):
+                if j <= i:
+                    continue
+                pair_key = (i, j)
+                if pair_key in checked_pairs:
+                    continue
+                checked_pairs.add(pair_key)
+
+                other = geom_items[j]
+                # Wenn es zwei Slices desselben Pads sind und vom User definiert wurden, nur warnen wenn < 0.08
+                same_pad = (item["ap_id"] == other["ap_id"] and item["slice_idx"] >= 0 and other["slice_idx"] >= 0)
+                threshold = 0.08 if same_pad else self.min_bridge_width
+
+                dist = item["geom"].distance(other["geom"])
+                if 0.0005 < dist < threshold:
+                    try:
+                        p1, p2 = so.nearest_points(item["geom"], other["geom"])
+                        p1_coord = [round(p1.x, 3), round(p1.y, 3)]
+                        p2_coord = [round(p2.x, 3), round(p2.y, 3)]
+                    except Exception:
+                        p1_coord = [round((b[0] + b[2]) / 2, 3), round((b[1] + b[3]) / 2, 3)]
+                        p2_coord = [round((other["bounds"][0] + other["bounds"][2]) / 2, 3),
+                                    round((other["bounds"][1] + other["bounds"][3]) / 2, 3)]
+
+                    severity = "CRIT" if dist < (threshold * 0.75) else "WARN"
+                    violations.append({
+                        "id": len(violations) + 1,
+                        "ap_id_1": item["ap_id"],
+                        "ap_id_2": other["ap_id"],
+                        "pkg_1": item["pkg"],
+                        "pkg_2": other["pkg"],
+                        "dist": round(dist, 4),
+                        "min_bridge": round(threshold, 3),
+                        "severity": severity,
+                        "p1": p1_coord,
+                        "p2": p2_coord,
+                        "msg": f"Stegbreite {dist:.3f} mm < {threshold:.3f} mm ({severity})"
+                    })
+
+        violations.sort(key=lambda v: v["dist"])
+        self.bridge_violations = violations
+        return {
+            "status": "ok",
+            "count": len(violations),
+            "min_bridge": self.min_bridge_width,
+            "violations": violations[:200]
+        }
+
+    # -------------------------------------------------------------
+    # 3. Pin-in-Paste (PiP / Through-Hole Reflow) Berechnungsmodul
+    # -------------------------------------------------------------
+    def calculate_pip(self,
+                      d_drill: float,
+                      pin_shape: str,
+                      pin_w: float,
+                      pin_h: float,
+                      h_pcb: float,
+                      metal_ratio: float = 0.50,
+                      v_meniscus: float = 0.0,
+                      stencil_thick: Optional[float] = None,
+                      overprint_shape: str = "rectangle") -> Dict[str, Any]:
+        """
+        Berechnet erforderliche Pastenmenge und Apertur-Geometrie für Through-Hole Reflow (Pin-in-Paste).
+        Formeln:
+          V_Bohrung_Netto = ((pi * D_Bohrung^2) / 4 - A_Pin) * H_PCB
+          V_Paste_Soll = (V_Bohrung_Netto + V_Meniskus) / Metallanteil
+          Aperturfläche = V_Paste_Soll / Schablonendicke
+        """
+        t_stencil = stencil_thick if stencil_thick and stencil_thick > 0 else self.base_thickness
+
+        # Pin-Querschnittsfläche (A_Pin)
+        if pin_shape.lower() in ("round", "circle", "rund"):
+            a_pin = (math.pi * (pin_w ** 2)) / 4.0
+        else:
+            a_pin = pin_w * pin_h
+
+        # Bohrungsvolumen netto (V_Bohrung_Netto)
+        a_drill = (math.pi * (d_drill ** 2)) / 4.0
+        v_hole_net = max(0.0, (a_drill - a_pin) * h_pcb)
+
+        # Meniskus-Volumen (Default: IPC-7525 Meniskus für Oben + Unten)
+        if v_meniscus <= 0.0:
+            # Ca. 20% des Bohrungsnetto-Volumens für Lötkehlen (IPC Standardempfehlung)
+            v_meniscus_eff = 0.20 * v_hole_net if v_hole_net > 0 else 0.05
+        else:
+            v_meniscus_eff = v_meniscus
+
+        # Erforderliches Nasspasten-Volumen
+        metal_eff = max(0.10, min(1.0, metal_ratio if metal_ratio <= 1.0 else metal_ratio / 100.0))
+        v_paste_soll = (v_hole_net + v_meniscus_eff) / metal_eff
+
+        # Erforderliche Schablonenöffnungs-Fläche
+        a_aperture_req = v_paste_soll / t_stencil if t_stencil > 0 else 0.0
+
+        # Apertur-Geometrien generieren
+        geometries = {}
+
+        # 1. Rechteck-Overprint (Zentriert)
+        sq_side = math.sqrt(a_aperture_req)
+        geometries["rectangle"] = {
+            "shape": "rectangle",
+            "w": round(sq_side, 3),
+            "h": round(sq_side, 3),
+            "area": round(sq_side * sq_side, 4),
+            "overprint_factor": round((sq_side * sq_side) / a_drill, 2) if a_drill > 0 else 1.0
+        }
+
+        # 2. Donut / Annular Ring Overprint
+        d_inner = max(0.2, d_drill + 0.10)  # Lochfreistellung gegen vorzeitiges Hineinfallen
+        d_outer = math.sqrt((4.0 * a_aperture_req / math.pi) + (d_inner ** 2))
+        geometries["donut"] = {
+            "shape": "donut",
+            "d_inner": round(d_inner, 3),
+            "d_outer": round(d_outer, 3),
+            "area": round((math.pi / 4.0) * (d_outer ** 2 - d_inner ** 2), 4),
+            "overprint_factor": round(a_aperture_req / a_drill, 2) if a_drill > 0 else 1.0
+        }
+
+        # 3. Cross-Shape (Kreuzform Overprint zur Lötstoppmasken-Spreizung)
+        cross_core = max(0.4, d_drill + 0.20)
+        cross_arm_w = cross_core * 0.70
+        core_area = cross_core * cross_core
+        rem_area = max(0.0, a_aperture_req - core_area)
+        arm_len = rem_area / (4.0 * cross_arm_w) if cross_arm_w > 0 else 0.5
+        cross_total_w = cross_core + 2.0 * arm_len
+        geometries["cross"] = {
+            "shape": "cross",
+            "core_size": round(cross_core, 3),
+            "arm_width": round(cross_arm_w, 3),
+            "arm_length": round(arm_len, 3),
+            "total_span": round(cross_total_w, 3),
+            "area": round(core_area + 4.0 * cross_arm_w * arm_len, 4)
+        }
+
+        return {
+            "d_drill": d_drill,
+            "pin_shape": pin_shape,
+            "pin_w": pin_w,
+            "pin_h": pin_h,
+            "h_pcb": h_pcb,
+            "metal_ratio_pct": round(metal_eff * 100.0, 1),
+            "stencil_thickness": t_stencil,
+            "v_hole_net_mm3": round(v_hole_net, 4),
+            "v_meniscus_mm3": round(v_meniscus_eff, 4),
+            "v_paste_soll_mm3": round(v_paste_soll, 4),
+            "a_aperture_req_mm2": round(a_aperture_req, 4),
+            "geometries": geometries,
+            "selected_geometry": geometries.get(overprint_shape, geometries["rectangle"])
+        }
+
+    def apply_pip_aperture(self, ap_id: int, pip_data: Dict[str, Any]) -> bool:
+        """Wendet eine berechnete Pin-in-Paste Overprint-Apertur auf die Arbeits-Apertur an."""
+        if ap_id < 0 or ap_id >= len(self.apertures):
+            return False
+
+        ap = self.apertures[ap_id]
+        shape_type = pip_data.get("shape", "rectangle")
+        cx, cy = ap.cx, ap.cy
+
+        if shape_type == "rectangle":
+            w = float(pip_data.get("w", ap.width * 1.5))
+            h = float(pip_data.get("h", ap.height * 1.5))
+            ap.custom_slices = [{
+                "cx": cx, "cy": cy,
+                "w": round(w, 4), "h": round(h, 4),
+                "shape": "rectangle", "type": "pip_rectangle", "manual": True
+            }]
+        elif shape_type == "donut":
+            d_out = float(pip_data.get("d_outer", ap.width * 2.0))
+            d_in = float(pip_data.get("d_inner", ap.width * 0.8))
+            # Donut als Annular Polygon approximieren (16 Punkte)
+            pts = []
+            steps = 16
+            for i in range(steps):
+                a = (2.0 * math.pi * i) / steps
+                pts.append((round(cx + (d_out / 2.0) * math.cos(a), 4),
+                            round(cy + (d_out / 2.0) * math.sin(a), 4)))
+            ap.custom_slices = [{
+                "cx": cx, "cy": cy,
+                "w": round(d_out, 4), "h": round(d_out, 4),
+                "d_inner": round(d_in, 4),
+                "d_outer": round(d_out, 4),
+                "pts": pts,
+                "shape": "polygon", "type": "pip_donut", "manual": True
+            }]
+        elif shape_type == "cross":
+            core = float(pip_data.get("core_size", 1.2))
+            arm_w = float(pip_data.get("arm_width", 0.8))
+            arm_l = float(pip_data.get("arm_length", 0.6))
+            total_w = core + 2.0 * arm_l
+            # 12-Punkt Kreuzform Polygon
+            hw_core = core / 2.0
+            hw_arm = arm_w / 2.0
+            tot_h = hw_core + arm_l
+
+            cross_pts = [
+                (cx - hw_arm, cy + tot_h), (cx + hw_arm, cy + tot_h),
+                (cx + hw_arm, cy + hw_core), (cx + tot_h, cy + hw_core),
+                (cx + tot_h, cy - hw_core), (cx + hw_arm, cy - hw_core),
+                (cx + hw_arm, cy - tot_h), (cx - hw_arm, cy - tot_h),
+                (cx - hw_arm, cy - hw_core), (cx - tot_h, cy - hw_core),
+                (cx - tot_h, cy + hw_core), (cx - hw_arm, cy + hw_core)
+            ]
+            ap.custom_slices = [{
+                "cx": cx, "cy": cy,
+                "w": round(total_w, 4), "h": round(total_w, 4),
+                "pts": [(round(x, 4), round(y, 4)) for x, y in cross_pts],
+                "shape": "polygon", "type": "pip_cross", "manual": True
+            }]
+
+        ap.is_manually_overridden = True
+        return True
+
+    # -------------------------------------------------------------
+    # 4. Automatische Bauteil-Klassifizierung (Auto-Classifier Engine)
+    # -------------------------------------------------------------
+    def auto_classify_and_apply_rules(self) -> Dict[str, Any]:
+        """
+        Analysiert Bauteile & Aperturen und klassifiziert sie automatisch nach Geometrie-Heuristiken:
+        - 2 Pins symmetrisch, Abstand < 3.2 mm -> SMD Chip (0201 bis 1206) -> HouseBuilder
+        - 2 parallele Reihen, Pitch 0.5-1.27 mm -> SOIC / SOP / TSSOP -> Länglich & Schmal
+        - 4-seitig umlaufend mit zentralem Pad -> QFN / DFN -> 45° Array Slicing
+        - Matrixförmige runde Pins -> BGA -> 10% Flächenreduktion
+        - Durchkontaktierte Pads mit Bohrung -> THT / PiP
+        """
+        stats = {
+            "chips": 0,
+            "soic": 0,
+            "qfn": 0,
+            "bga": 0,
+            "tht": 0,
+            "other": 0,
+            "modified_apertures": 0,
+            "details": []
+        }
+
+        for pkg_name, pkg in self.packages.items():
+            pins = pkg.pin_count
+            pitch = pkg.pitch
+            pw = pkg.pad_width
+            ph = pkg.pad_height
+            assigned_rule = None
+            detected_class = "Other"
+
+            # 1. Heuristik: 2-Pin SMD Chip
+            if pins == 2 and pitch < 3.2:
+                detected_class = "SMD Chip"
+                stats["chips"] += pkg.component_count
+                if pitch < 0.8:  # 0201 / 0402
+                    assigned_rule = PackageRule(
+                        name="Simple Rectangle (Fine-Pitch Chip)",
+                        rule_type="simple_rect",
+                        undersize_w=0.015, undersize_h=0.015,
+                        corner_radius=0.0
+                    )
+                else:  # 0603 / 0805 / 1206
+                    assigned_rule = PackageRule(
+                        name="HouseBuilder (Anti-Tombstone)",
+                        rule_type="house_builder",
+                        undersize_w=0.025, undersize_h=0.025,
+                        corner_radius=0.0,
+                        house_cut_pct=30.0
+                    )
+
+            # 2. Heuristik: SOIC / SOP / TSSOP (Parallel-Reihen)
+            elif (6 <= pins <= 32) and (0.45 <= pitch <= 1.35) and not any(p.get("is_thermal") for p in pkg.pads_relative):
+                detected_class = "SOIC / SOP"
+                stats["soic"] += pkg.component_count
+                assigned_rule = PackageRule(
+                    name="Länglich & Schmal (Pitch-Schutz)",
+                    rule_type="elongated_pitch",
+                    pitch_reduction_pct=20.0,
+                    length_usage_pct=95.0,
+                    corner_radius=0.0
+                )
+
+            # 3. Heuristik: QFN / DFN (Zentrales Exposed Pad)
+            elif any(p.get("is_thermal") or (p.get("w", 0) >= 1.5 and p.get("h", 0) >= 1.5 and p.get("pin", 0) > 4) for p in pkg.pads_relative) or "QFN" in pkg_name.upper() or "DFN" in pkg_name.upper():
+                detected_class = "QFN / DFN"
+                stats["qfn"] += pkg.component_count
+                assigned_rule = PackageRule(
+                    name="QFN Peripheral (Pitch-Schutz)",
+                    rule_type="elongated_pitch",
+                    pitch_reduction_pct=15.0,
+                    length_usage_pct=95.0,
+                    corner_radius=0.0
+                )
+                # Finde das zentrale Thermal Pad und setze 45° Array Slicing
+                for p in pkg.pads_relative:
+                    if p.get("is_thermal") or (p.get("w", 0) >= 1.5 and p.get("h", 0) >= 1.5):
+                        pin_num = p.get("pin", 1)
+                        grid = 3 if max(p.get("w", 0), p.get("h", 0)) >= 3.0 else 2
+                        pkg.pad_overrides[pin_num] = {
+                            "rule_type": "array_slicing",
+                            "rotate_bridges_45": True,
+                            "bridge_count_x": grid,
+                            "bridge_count_y": grid,
+                            "bridge_width": 0.30,
+                            "w": p["w"], "h": p["h"]
+                        }
+
+            # 4. Heuristik: BGA / CSP Matrix
+            elif pins >= 16 and ("BGA" in pkg_name.upper() or (pw == ph and pw <= 0.60 and pitch <= 1.0)):
+                detected_class = "BGA / CSP"
+                stats["bga"] += pkg.component_count
+                assigned_rule = PackageRule(
+                    name="BGA Release Reduction",
+                    rule_type="simple_rect",
+                    undersize_w=0.02, undersize_h=0.02,
+                    corner_radius=0.0
+                )
+
+            # 5. Heuristik: THT / Through-Hole Connector
+            elif "THT" in pkg_name.upper() or "HEADER" in pkg_name.upper() or "PIN" in pkg_name.upper():
+                detected_class = "THT / Through-Hole"
+                stats["tht"] += pkg.component_count
+
+            else:
+                stats["other"] += pkg.component_count
+
+            if assigned_rule:
+                pkg.rule = assigned_rule
+                pkg.category = "SMD Passives" if detected_class == "SMD Chip" else ("ICs & Transistors" if "SOIC" in detected_class or "QFN" in detected_class else ("BGA & Arrays" if "BGA" in detected_class else "Other"))
+                stats["details"].append({
+                    "package": pkg_name,
+                    "class": detected_class,
+                    "rule": assigned_rule.name,
+                    "count": pkg.component_count
+                })
+
+        # Wende alle klassifizierten Regeln auf die Arbeits-Aperturen (non-destruktiv) an
+        for pkg_name, pkg in self.packages.items():
+            modified = self.apply_package_rule(pkg_name, pkg.rule.to_dict())
+            stats["modified_apertures"] += modified
+
+        return stats
+

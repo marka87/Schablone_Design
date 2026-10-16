@@ -101,6 +101,8 @@ def api_apertures():
             "comp_id": ap.component_id,
             "manual": ap.is_manually_overridden,
             "warn": ipc["clearance_warn"],
+            "grain_warn": ipc.get("grain_warn", False),
+            "grain_msg": ipc.get("grain_msg", ""),
             "sliced": bool(ap.custom_slices and len(ap.custom_slices) > 0)
         }
         if ap.custom_slices:
@@ -117,7 +119,10 @@ def api_apertures():
         "pads": engine.pads[:2000],  # Kupferpads (grün)
         "components": [c.to_dict() for c in engine.components],  # Bauteile (gelb/weiß)
         "fiducials": engine.fiducials,
-        "profile": engine.profile_paths[:1000]  # Erste 1000 Pfade für Kontur
+        "profile": engine.profile_paths[:1000],  # Erste 1000 Pfade für Kontur
+        "paste_type": engine.paste_type,
+        "min_bridge": engine.min_bridge_width,
+        "bridge_violations": engine.bridge_violations[:100]
     })
 
 
@@ -652,6 +657,90 @@ def api_save_library():
         "customer": engine.current_customer,
         "path": path
     })
+
+
+# -------------------------------------------------------------
+# DFM Bridge Check, PiP Calculator, Auto-Classifier, Paste Type API
+# -------------------------------------------------------------
+@app.route("/api/dfm/bridge_check", methods=["GET", "POST"])
+def api_bridge_check():
+    """Prüft Schablonenstegbreite auf Mindestabstand (Kollision / Web Check)."""
+    if request.method == "POST":
+        data = request.json or {}
+        min_bridge = float(data.get("min_bridge", engine.min_bridge_width))
+    else:
+        min_bridge = float(request.args.get("min_bridge", engine.min_bridge_width))
+
+    res = engine.check_stencil_bridges(min_bridge)
+    return jsonify(res)
+
+
+@app.route("/api/pip/calculate", methods=["POST"])
+def api_pip_calculate():
+    """Berechnet Schablonenpasten-Volumen und Overprint-Geometrien für Pin-in-Paste."""
+    data = request.json or {}
+    d_drill = float(data.get("d_drill", 1.0))
+    pin_shape = data.get("pin_shape", "round")
+    pin_w = float(data.get("pin_w", 0.6))
+    pin_h = float(data.get("pin_h", 0.6))
+    h_pcb = float(data.get("h_pcb", 1.6))
+    metal_ratio = float(data.get("metal_ratio", 0.50))
+    v_meniscus = float(data.get("v_meniscus", 0.0))
+    stencil_thick = float(data.get("stencil_thick", 0.0)) or None
+    shape = data.get("overprint_shape", "rectangle")
+
+    res = engine.calculate_pip(
+        d_drill=d_drill,
+        pin_shape=pin_shape,
+        pin_w=pin_w,
+        pin_h=pin_h,
+        h_pcb=h_pcb,
+        metal_ratio=metal_ratio,
+        v_meniscus=v_meniscus,
+        stencil_thick=stencil_thick,
+        overprint_shape=shape
+    )
+    return jsonify(res)
+
+
+@app.route("/api/pip/apply", methods=["POST"])
+def api_pip_apply():
+    """Wendet die berechnete PiP-Apertur auf eine ausgewählte Apertur an."""
+    data = request.json or {}
+    ap_id = int(data.get("ap_id", -1))
+    pip_data = data.get("pip_data", {})
+    success = engine.apply_pip_aperture(ap_id, pip_data)
+    return jsonify({
+        "status": "ok" if success else "error",
+        "ap_id": ap_id,
+        "stats": engine.get_panel_statistics()
+    })
+
+
+@app.route("/api/auto_classify", methods=["POST"])
+def api_auto_classify():
+    """Führt automatische Bauteil-Klassifizierung und Regelzuweisung durch."""
+    stats = engine.auto_classify_and_apply_rules()
+    return jsonify({
+        "status": "ok",
+        "classification": stats,
+        "panel_stats": engine.get_panel_statistics(),
+        "packages": [p.to_dict() for p in engine.packages.values()]
+    })
+
+
+@app.route("/api/set_paste_type", methods=["POST"])
+def api_set_paste_type():
+    """Setzt den Pastentyp für die IPC-7525 5-Ball-Regel (type3, type4, type5)."""
+    data = request.json or {}
+    ptype = data.get("paste_type", "type4")
+    active_type = engine.set_paste_type(ptype)
+    return jsonify({
+        "status": "ok",
+        "paste_type": active_type,
+        "stats": engine.get_panel_statistics()
+    })
+
 
 
 
