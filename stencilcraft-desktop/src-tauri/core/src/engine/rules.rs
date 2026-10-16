@@ -1,7 +1,7 @@
 //! Regelbasierte Apertur-Geometrie (Simple Rectangle, HouseBuilder, Inverted House, Chamfer,
 //! Länglich & Schmal, Array Slicing orthogonal und 45°-diagonal).
 
-use super::geometry::{bounds, centroid, clip_halfplane, polygon_area, rect_pts, rounded_rect_pts};
+use super::geometry::{bounds, centroid, circle_pts, clip_halfplane, polygon_area, rect_pts, rounded_rect_pts};
 use super::types::{r4, r5, round_pts, PackageRule, Pt, Slice};
 use serde_json::{Map, Value};
 
@@ -62,6 +62,7 @@ pub fn generate_rule_aperture_geometry(
     facing_dir: &str,
     mask_w: Option<f64>,
     mask_h: Option<f64>,
+    round: bool,
 ) -> Option<Vec<Slice>> {
     let rtype = rule.rule_type.as_str();
     if rtype == "take_existing" {
@@ -103,6 +104,22 @@ pub fn generate_rule_aperture_geometry(
             "down" => cy -= s,
             _ => {}
         }
+    }
+
+    // Runde Pads (Stecker, THT, BGA) bleiben rund: Undersize/Offsets wirken auf den Durchmesser.
+    // Rechteck-spezifische Formen (House, Chamfer, Länglich) sind für Kreise nicht sinnvoll.
+    if round && rtype != "array_slicing" && rtype != "array_pads" {
+        let d = w_eff.min(h_eff);
+        return Some(vec![Slice {
+            cx: r4(cx),
+            cy: r4(cy),
+            w: r4(d),
+            h: r4(d),
+            shape: Some("circle".into()),
+            kind: Some(rtype.to_string()),
+            pts: Some(round_pts(&circle_pts(cx, cy, d / 2.0, 36))),
+            ..Default::default()
+        }]);
     }
 
     // 45°-Eck-Anfasung
@@ -296,7 +313,7 @@ mod tests {
     #[test]
     fn diagonal_slicing_removes_web_area() {
         let rule = PackageRule { rule_type: "array_slicing".into(), rotate_bridges_45: true, bridge_count_x: 2, bridge_count_y: 2, bridge_width: 0.3, undersize_w: 0.0, undersize_h: 0.0, ..Default::default() };
-        let s = generate_rule_aperture_geometry(4.0, 4.0, 0.0, 0.0, &rule, "center", None, None).unwrap();
+        let s = generate_rule_aperture_geometry(4.0, 4.0, 0.0, 0.0, &rule, "center", None, None, false).unwrap();
         assert!(s.len() >= 4);
         let total: f64 = s.iter().map(|x| x.area.unwrap()).sum();
         assert!(total < 16.0 && total > 8.0, "Restfläche {total}");
@@ -305,7 +322,7 @@ mod tests {
     #[test]
     fn orthogonal_slicing_grid() {
         let rule = PackageRule { rule_type: "array_slicing".into(), bridge_count_x: 1, bridge_count_y: 1, bridge_width: 0.2, undersize_w: 0.0, undersize_h: 0.0, ..Default::default() };
-        let s = generate_rule_aperture_geometry(2.2, 2.2, 0.0, 0.0, &rule, "center", None, None).unwrap();
+        let s = generate_rule_aperture_geometry(2.2, 2.2, 0.0, 0.0, &rule, "center", None, None, false).unwrap();
         assert_eq!(s.len(), 4);
         assert!((s[0].w - 1.0).abs() < 1e-9);
     }
@@ -314,9 +331,18 @@ mod tests {
     fn take_existing_and_ignore() {
         let mut rule = PackageRule::default();
         rule.rule_type = "take_existing".into();
-        assert!(generate_rule_aperture_geometry(1.0, 1.0, 0.0, 0.0, &rule, "right", None, None).is_none());
+        assert!(generate_rule_aperture_geometry(1.0, 1.0, 0.0, 0.0, &rule, "right", None, None, false).is_none());
         rule.rule_type = "ignore".into();
-        assert!(generate_rule_aperture_geometry(1.0, 1.0, 0.0, 0.0, &rule, "right", None, None).unwrap().is_empty());
+        assert!(generate_rule_aperture_geometry(1.0, 1.0, 0.0, 0.0, &rule, "right", None, None, false).unwrap().is_empty());
+    }
+
+    #[test]
+    fn round_pads_stay_round() {
+        let rule = PackageRule { rule_type: "house_builder".into(), undersize_w: 0.05, undersize_h: 0.05, ..Default::default() };
+        let s = generate_rule_aperture_geometry(1.5, 1.5, 2.0, 3.0, &rule, "right", None, None, true).unwrap();
+        assert_eq!(s.len(), 1);
+        assert!(s[0].is_circle());
+        assert!((s[0].w - 1.4).abs() < 1e-9);
     }
 
     #[test]

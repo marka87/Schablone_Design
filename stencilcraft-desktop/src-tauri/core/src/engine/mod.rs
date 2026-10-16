@@ -400,9 +400,9 @@ impl StencilEngine {
             let rule = resolve_pin_rule(&pkg.rule, ov);
             let pw = ov.get("w").and_then(val_f64).unwrap_or(ap.width);
             let ph = ov.get("h").and_then(val_f64).unwrap_or(ap.height);
-            generate_rule_aperture_geometry(pw, ph, ap.cx, ap.cy, &rule, &ap.facing_dir, mw, mh)
+            generate_rule_aperture_geometry(pw, ph, ap.cx, ap.cy, &rule, &ap.facing_dir, mw, mh, ap.shape_type == "circle")
         } else {
-            generate_rule_aperture_geometry(ap.width, ap.height, ap.cx, ap.cy, &pkg.rule, &ap.facing_dir, mw, mh)
+            generate_rule_aperture_geometry(ap.width, ap.height, ap.cx, ap.cy, &pkg.rule, &ap.facing_dir, mw, mh, ap.shape_type == "circle")
         }
     }
 
@@ -643,9 +643,9 @@ impl StencilEngine {
                 let rule = resolve_pin_rule(&pkg.rule, ov);
                 let pw = ov.get("w").and_then(val_f64).unwrap_or(p.w);
                 let ph = ov.get("h").and_then(val_f64).unwrap_or(p.h);
-                generate_rule_aperture_geometry(pw, ph, p.cx, p.cy, &rule, &p.facing, None, None)
+                generate_rule_aperture_geometry(pw, ph, p.cx, p.cy, &rule, &p.facing, None, None, p.is_round())
             } else {
-                generate_rule_aperture_geometry(p.w, p.h, p.cx, p.cy, &pkg.rule, &p.facing, None, None)
+                generate_rule_aperture_geometry(p.w, p.h, p.cx, p.cy, &pkg.rule, &p.facing, None, None, p.is_round())
             };
             if let Some(g) = geom {
                 paste.extend(g);

@@ -2857,11 +2857,17 @@ function renderPkgPreview() {
         for (const p of data.pads) {
             const isSelected = pkgState.selectedPin === p.pin;
             pkgCtx.fillStyle = isSelected ? "rgba(250, 204, 21, 0.4)" : "#00a86b";
-            pkgCtx.fillRect(p.cx - p.w/2, p.cy - p.h/2, p.w, p.h);
-
             pkgCtx.strokeStyle = isSelected ? "#facc15" : "#047857";
             pkgCtx.lineWidth = 1.2 / pkgState.zoom;
-            pkgCtx.strokeRect(p.cx - p.w/2, p.cy - p.h/2, p.w, p.h);
+            if (p.shape === "circle") {
+                pkgCtx.beginPath();
+                pkgCtx.ellipse(p.cx, p.cy, p.w / 2, p.h / 2, 0, 0, Math.PI * 2);
+                pkgCtx.fill();
+                pkgCtx.stroke();
+            } else {
+                pkgCtx.fillRect(p.cx - p.w/2, p.cy - p.h/2, p.w, p.h);
+                pkgCtx.strokeRect(p.cx - p.w/2, p.cy - p.h/2, p.w, p.h);
+            }
         }
     }
 

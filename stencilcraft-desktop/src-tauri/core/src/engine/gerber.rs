@@ -801,10 +801,10 @@ pub fn write_stencil(apertures: &[ApertureItem], title: &str) -> String {
         match ap.custom_slices.as_ref().filter(|s| !s.is_empty()) {
             Some(slices) => {
                 for s in slices {
-                    if let Some(p) = s.polygon_pts() {
-                        items.push(Item::Region(p));
-                    } else if s.is_circle() {
+                    if s.is_circle() {
                         items.push(Item::Flash(s.cx, s.cy, key('C', s.w, s.w)));
+                    } else if let Some(p) = s.polygon_pts() {
+                        items.push(Item::Region(p));
                     } else if s.w > 0.0 && s.h > 0.0 {
                         items.push(Item::Flash(s.cx, s.cy, key('R', s.w, s.h)));
                     }

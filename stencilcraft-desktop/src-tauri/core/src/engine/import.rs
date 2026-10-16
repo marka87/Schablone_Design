@@ -511,7 +511,7 @@ impl StencilEngine {
                     } else {
                         "down"
                     };
-                    let mut pr = PadRel::new(pin.pin, pin.x, pin.y, pin.w, pin.h, facing);
+                    let mut pr = PadRel::new(pin.pin, pin.x, pin.y, pin.w, pin.h, facing).round(pin.round);
                     pr.is_thermal = facing == "center" && pin.w >= 1.0 && pin.h >= 1.0;
                     pr
                 })
@@ -603,7 +603,7 @@ impl StencilEngine {
                 let mut t = PackageTemplate::new(&ap.package_name, 1, 0.0, ap.width, ap.height);
                 t.category = "Other".into();
                 t.component_count = 0;
-                t.pads_relative = vec![PadRel::new(1, 0.0, 0.0, ap.width, ap.height, "center")];
+                t.pads_relative = vec![PadRel::new(1, 0.0, 0.0, ap.width, ap.height, "center").round(ap.shape_type == "circle")];
                 self.packages.insert(ap.package_name.clone(), t);
             }
         }

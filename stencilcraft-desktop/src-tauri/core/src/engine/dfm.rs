@@ -13,10 +13,10 @@ use std::f64::consts::PI;
 /// Fläche, Umfang, kleinste Kantenlänge einer Öffnung.
 fn slice_metrics(s: &Slice) -> (f64, f64, f64) {
     let min_dim = s.w.min(s.h);
-    if let Some(pts) = s.polygon_pts() {
-        (polygon_area(pts), polygon_perimeter(pts), min_dim)
-    } else if s.is_circle() {
+    if s.is_circle() {
         (PI * (s.w / 2.0).powi(2), PI * s.w, s.w)
+    } else if let Some(pts) = s.polygon_pts() {
+        (polygon_area(pts), polygon_perimeter(pts), min_dim)
     } else {
         (s.w * s.h, 2.0 * (s.w + s.h), min_dim)
     }

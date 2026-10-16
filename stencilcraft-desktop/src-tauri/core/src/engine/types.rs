@@ -403,11 +403,27 @@ pub struct PadRel {
     pub facing: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_thermal: bool,
+    /// Padform: "rect" oder "circle"
+    #[serde(default = "rect_shape")]
+    pub shape: String,
+}
+
+fn rect_shape() -> String {
+    "rect".into()
 }
 
 impl PadRel {
     pub fn new(pin: i64, cx: f64, cy: f64, w: f64, h: f64, facing: &str) -> Self {
-        PadRel { pin, cx, cy, w, h, facing: facing.into(), is_thermal: false }
+        PadRel { pin, cx, cy, w, h, facing: facing.into(), is_thermal: false, shape: rect_shape() }
+    }
+
+    pub fn round(mut self, round: bool) -> Self {
+        self.shape = if round { "circle" } else { "rect" }.into();
+        self
+    }
+
+    pub fn is_round(&self) -> bool {
+        self.shape == "circle"
     }
 }
 

@@ -130,7 +130,7 @@ impl StencilEngine {
         let mut bga = PackageTemplate::new("BGA-201", bga_pads.len(), 0.65, 0.25, 0.25);
         bga.category = "BGA & Arrays".into();
         bga.outline = Outline { w: 10.0, h: 10.0 };
-        bga.pads_relative = bga_pads;
+        bga.pads_relative = bga_pads.into_iter().map(|p| p.round(true)).collect();
         bga.rule = PackageRule { undersize_w: 0.015, undersize_h: 0.015, ..Default::default() };
         self.packages.insert(bga.name.clone(), bga);
 
@@ -248,7 +248,8 @@ impl StencilEngine {
                 p.pad_width = pw;
                 p.pad_height = ph;
                 p.pitch = r3(pitch);
-                p.pads_relative = vec![PadRel::new(1, -half, 0.0, pw, ph, "right"), PadRel::new(2, half, 0.0, pw, ph, "left")];
+                let round = self.apertures[id].shape_type == "circle";
+                p.pads_relative = vec![PadRel::new(1, -half, 0.0, pw, ph, "right").round(round), PadRel::new(2, half, 0.0, pw, ph, "left").round(round)];
                 p.outline = Outline { w: r2(pitch + pw + 0.4), h: r2(ph * 1.3) };
                 p.component_count += 1;
             }
@@ -331,7 +332,7 @@ impl StencilEngine {
                     "down"
                 }
                 .into();
-                let mut pr = PadRel::new(i as i64 + 1, r3(ap.cx - mcx), r3(ap.cy - mcy), r3(ap.width), r3(ap.height), &ap.facing_dir);
+                let mut pr = PadRel::new(i as i64 + 1, r3(ap.cx - mcx), r3(ap.cy - mcy), r3(ap.width), r3(ap.height), &ap.facing_dir).round(ap.shape_type == "circle");
                 pr.is_thermal = ap.width >= 1.5 && ap.height >= 1.5 && pins > 4;
                 pads_rel.push(pr);
             }
@@ -371,6 +372,7 @@ impl StencilEngine {
                 continue;
             }
             let (w, h) = (self.apertures[id].width, self.apertures[id].height);
+            let round = self.apertures[id].shape_type == "circle";
             let grp = format!("Generic_{:.2}x{:.2}", w, h);
             {
                 let ap = &mut self.apertures[id];
@@ -384,7 +386,7 @@ impl StencilEngine {
                 let mut p = PackageTemplate::new(&grp, 1, 0.0, w, h);
                 p.category = "Other".into();
                 p.component_count = 0;
-                p.pads_relative = vec![PadRel::new(1, 0.0, 0.0, w, h, "center")];
+                p.pads_relative = vec![PadRel::new(1, 0.0, 0.0, w, h, "center").round(round)];
                 p
             });
             p.component_count += 1;

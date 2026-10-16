@@ -545,6 +545,8 @@ pub struct EdaPin {
     pub y: f64,
     pub w: f64,
     pub h: f64,
+    /// Runde Pinfläche (CR-Record oder kreisförmige Kontur)
+    pub round: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -561,18 +563,24 @@ pub fn parse_eda(content: &str) -> Vec<EdaPackage> {
     let mut scale = 25.4;
     let mut pin_pts: Vec<Pt> = Vec::new();
     let mut in_pin = false;
+    let mut pin_arc = false;
 
-    fn finish_pin(pkgs: &mut [EdaPackage], pts: &mut Vec<Pt>) {
+    fn finish_pin(pkgs: &mut [EdaPackage], pts: &mut Vec<Pt>, arc: &mut bool) {
         if let (Some(pkg), false) = (pkgs.last_mut(), pts.is_empty()) {
             if let Some(pin) = pkg.pins.last_mut() {
                 let (x0, y0, x1, y1) = bounds(pts);
                 if x1 - x0 > 0.05 && y1 - y0 > 0.05 {
                     pin.w = r3(x1 - x0);
                     pin.h = r3(y1 - y0);
+                    // Kontur aus Bögen mit quadratischer Hülle = Kreis
+                    if *arc && ((pin.w - pin.h).abs() / pin.w.max(pin.h)) < 0.05 {
+                        pin.round = true;
+                    }
                 }
             }
         }
         pts.clear();
+        *arc = false;
     }
 
     for raw in content.lines() {
@@ -592,7 +600,7 @@ pub fn parse_eda(content: &str) -> Vec<EdaPackage> {
         match p[0] {
             "PKG" if p.len() >= 7 => {
                 if in_pin {
-                    finish_pin(&mut pkgs, &mut pin_pts);
+                    finish_pin(&mut pkgs, &mut pin_pts, &mut pin_arc);
                 }
                 in_pin = false;
                 let (xmin, ymin, xmax, ymax) = (f(3).unwrap_or(0.0), f(4).unwrap_or(0.0), f(5).unwrap_or(0.0), f(6).unwrap_or(0.0));
@@ -606,11 +614,11 @@ pub fn parse_eda(content: &str) -> Vec<EdaPackage> {
             }
             "PIN" if p.len() >= 5 => {
                 if in_pin {
-                    finish_pin(&mut pkgs, &mut pin_pts);
+                    finish_pin(&mut pkgs, &mut pin_pts, &mut pin_arc);
                 }
                 if let Some(pkg) = pkgs.last_mut() {
                     let idx = p[1].parse::<i64>().unwrap_or(pkg.pins.len() as i64 + 1);
-                    pkg.pins.push(EdaPin { pin: idx, x: r3(f(3).unwrap_or(0.0)), y: r3(f(4).unwrap_or(0.0)), w: 0.8, h: 0.8 });
+                    pkg.pins.push(EdaPin { pin: idx, x: r3(f(3).unwrap_or(0.0)), y: r3(f(4).unwrap_or(0.0)), w: 0.8, h: 0.8, round: false });
                     in_pin = true;
                 }
             }
@@ -630,6 +638,7 @@ pub fn parse_eda(content: &str) -> Vec<EdaPackage> {
                         if r > 0.02 {
                             pin.w = r3(2.0 * r);
                             pin.h = r3(2.0 * r);
+                            pin.round = true;
                         }
                     }
                 }
@@ -643,13 +652,16 @@ pub fn parse_eda(content: &str) -> Vec<EdaPackage> {
                 }
             }
             "OB" | "OS" | "OC" if in_pin => {
+                if p[0] == "OC" {
+                    pin_arc = true;
+                }
                 if let (Some(x), Some(y)) = (f(1), f(2)) {
                     pin_pts.push((x, y));
                 }
             }
             "FGR" | "PRP" | "NET" | "SNT" | "FID" => {
                 if in_pin {
-                    finish_pin(&mut pkgs, &mut pin_pts);
+                    finish_pin(&mut pkgs, &mut pin_pts, &mut pin_arc);
                 }
                 in_pin = false;
             }
@@ -657,7 +669,7 @@ pub fn parse_eda(content: &str) -> Vec<EdaPackage> {
         }
     }
     if in_pin {
-        finish_pin(&mut pkgs, &mut pin_pts);
+        finish_pin(&mut pkgs, &mut pin_pts, &mut pin_arc);
     }
     pkgs
 }

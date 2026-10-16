@@ -17,7 +17,9 @@
         "minHeight": 800,
         "resizable": true,
         "fullscreen": false,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "zoomHotkeysEnabled": true,
+        "label": "main"
       }
     ],
     "security": {

@@ -87,6 +87,14 @@ fn stage_upload(request: tauri::ipc::Request<'_>) -> Result<String, String> {
 pub fn run() {
     let _ = std::fs::remove_dir_all(upload_root());
     tauri::Builder::default()
+        .setup(|app| {
+            // Gleiche Darstellungsdichte wie die Web-App im Browser (80 % Seitenzoom);
+            // mit Strg +/- bzw. Strg+0 weiterhin anpassbar.
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_zoom(0.8);
+            }
+            Ok(())
+        })
         .manage(AppState { engine: Mutex::new(StencilEngine::new(0.120, engine::resolve_data_root())) })
         .invoke_handler(tauri::generate_handler![api_request, stage_upload])
         .run(tauri::generate_context!())
