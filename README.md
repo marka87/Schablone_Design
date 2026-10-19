@@ -103,6 +103,9 @@ Eigenständige Windows-Anwendung ohne Python-Laufzeit. Oberfläche und Funktions
 - „⧉ Eigenes Fenster“ öffnet den Stencil Generator separat (z. B. zweiter Monitor); Auswahl und Änderungen werden zwischen beiden Fenstern synchronisiert, das gewählte Package wird im Board orange hervorgehoben.
 - TOP/BOT: ODB++ und Gerber-Archive mit beiden Pastenlagen laden beide Seiten; Umschalter in der Werkzeugleiste. Öffnungen, Zonen und Blechdicke gelten je Seite, Package-Regeln für beide.
 - Export-Dialog (`Strg+E`): Zielordner, Dateinamen-Muster (`{job}` `{side}` `{dicke}` `{datum}`), Seiten (aktiv/TOP/BOT/beide), Stufenzonen, Platinenkontur, Gerber-X2-Attribute und Prüfbericht (HTML, druckbar/als PDF). Die Optionen werden gemerkt.
+- Regelhierarchie wie PCB Investigator: Reiter „Package Rules“ (Gruppenregel per Klick auf den Gruppennamen, Packages mit „Inherit“ erben sie), „Zone Rules“ (Regel für einen Bereich, wahlweise ohne Dickenänderung) und „Component Rules“ (Regel je Bauteil). Rangfolge: Bauteil → Zone → Package (+ Pin-Anpassung) → Gruppe.
+- Regel „Pin-in-Paste“: Öffnung je THT-Pin automatisch aus Bohrung, Leiterplattendicke, Metallanteil und Blechdicke (Kreis/Quadrat/Donut, begrenzt durch Pitch − Mindeststeg).
+- „Show Info Layer“ im Generator: Area Ratio, Fläche, Volumen je Öffnung und bei Pin-in-Paste die Volumen-Erfüllung in %.
 - UI-Größe oben rechts (Auto / 80–140 %), Bereiche per Ziehleiste in der Größe veränderbar, Doppelklick klappt sie ein.
 
 **Bauen:** `build_desktop.bat` (synchronisiert die Web-UI, führt die Engine-Tests aus, baut `target\release\stencilcraft-desktop.exe`).

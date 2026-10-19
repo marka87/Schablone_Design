@@ -247,6 +247,41 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
     match (method, seg.as_slice()) {
         ("GET", ["api", "history"]) => ok(e.history_json()),
         ("GET", ["api", "sides"]) => ok(e.sides_json()),
+        // Gruppen-, Bauteil- und Zonenregeln
+        ("GET", ["api", "groups"]) => ok(e.groups_json()),
+        ("POST", ["api", "group", g, "rule"]) => {
+            e.set_group_rule(g, body);
+            ok(json!({"status": "ok", "rule": e.group_rule(g).to_json(), "groups": e.groups_json()}))
+        }
+        ("POST", ["api", "group", g, "generate"]) => {
+            let ids = e.group_aperture_ids(g);
+            let n = e.regenerate_ids(&ids);
+            ok(json!({"status": "ok", "modified_count": n, "stats": stats(e)}))
+        }
+        ("GET", ["api", "components"]) => ok(e.components_json()),
+        ("GET", ["api", "component", r]) => ok(e.component_json(r)),
+        ("POST", ["api", "component", r, "rule"]) => {
+            e.set_component_rule(r, body);
+            ok(json!({"status": "ok", "component": e.component_json(r)}))
+        }
+        ("POST", ["api", "component", r, "generate"]) => {
+            let ids = e.component_aperture_ids(r);
+            let n = e.regenerate_ids(&ids);
+            ok(json!({"status": "ok", "modified_count": n, "stats": stats(e)}))
+        }
+        ("POST", ["api", "zone", z, "rule"]) => {
+            let s = e.set_zone_rule(z, body);
+            ok(json!({"status": if s { "ok" } else { "error" }, "zone": e.zones.iter().find(|x| x.id == *z).map(|x| x.to_json()), "pads": e.zone_aperture_ids(z).len()}))
+        }
+        ("POST", ["api", "zone", z, "generate"]) => {
+            let ids = e.zone_aperture_ids(z);
+            let n = e.regenerate_ids(&ids);
+            ok(json!({"status": "ok", "modified_count": n, "stats": stats(e)}))
+        }
+        ("POST", ["api", "generate_all"]) => {
+            let n = e.generate_all();
+            ok(json!({"status": "ok", "modified_count": n, "stats": stats(e)}))
+        }
         ("POST", ["api", "side"]) => {
             let side = b.s("side").unwrap_or_else(|| "top".into());
             e.switch_side(&side);
@@ -267,7 +302,7 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             Err(m) => err(500, m),
         },
         ("POST", ["api", "project", "discard_recovery"]) => {
-            e.discard_autosave();
+            e.discard_autosave(b.s("path").as_deref().map(Path::new));
             ok(json!({"status": "ok"}))
         }
         ("POST", ["api", "load_dataset"]) => {
@@ -336,7 +371,7 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             ok(json!({"status": "ok", "stats": stats(e)}))
         }
         ("POST", ["api", "zone"]) => {
-            let z = e.add_zone(b.f("x0", 0.0), b.f("y0", 0.0), b.f("x1", 0.0), b.f("y1", 0.0), b.f("thickness", 0.100), &b.s("name").unwrap_or_default());
+            let z = e.add_zone_ext(b.f("x0", 0.0), b.f("y0", 0.0), b.f("x1", 0.0), b.f("y1", 0.0), b.f("thickness", 0.100), &b.s("name").unwrap_or_default(), b.b("step", true));
             ok(json!({"status": "ok", "zone": z.to_json(), "stats": stats(e)}))
         }
         ("DELETE", ["api", "zone", id]) => {

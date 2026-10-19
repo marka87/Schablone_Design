@@ -131,8 +131,10 @@ pub struct PadCtx<'a> {
     pub min_bridge: f64,
     /// Anzahl Pins des Packages (für die Regel "Package-Gruppe")
     pub pin_count: usize,
-    /// Bohrdurchmesser bei THT-Pads (für Donut)
+    /// Bohrdurchmesser bei THT-Pads (für Donut / Pin-in-Paste)
     pub drill: Option<f64>,
+    /// Effektive Blechdicke am Pad (mm, für Pin-in-Paste)
+    pub thickness: f64,
 }
 
 impl<'a> PadCtx<'a> {
@@ -212,6 +214,9 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
     // Regel "Package-Gruppe": wählt je Pad die passende Form (PCB Investigator "Inherit")
     if rtype == "package_group" {
         return Some(package_group_geometry(pad, rule, cx, cy, w_eff, h_eff));
+    }
+    if rtype == "pin_in_paste" {
+        return Some(pin_in_paste_geometry(pad, rule, cx, cy, w_eff, h_eff));
     }
     if rtype == "donut" {
         // Ringöffnung um die Bohrung, segmentiert mit Haltestegen (Bridge Width)
@@ -345,6 +350,58 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
         }
         _ => Some(vec![rounded_slice(cx, cy, w_eff, h_eff, rule.corner_radius, "simple_rect")]),
     }
+}
+
+/// Erforderliche Öffnungsfläche (mm²) für Pin-in-Paste nach IPC-7525:
+/// (Bohrungsvolumen − Pinvolumen + 20 % Meniskus) / Metallanteil / Blechdicke.
+pub fn pip_required_area(drill: f64, pin_d: f64, pcb: f64, metal_pct: f64, thickness: f64) -> f64 {
+    use std::f64::consts::PI;
+    let v_hole = ((PI * drill * drill / 4.0 - PI * pin_d * pin_d / 4.0) * pcb).max(0.0);
+    let v_paste = v_hole * 1.2 / (metal_pct / 100.0).clamp(0.1, 1.0);
+    if thickness > 0.0 { v_paste / thickness } else { 0.0 }
+}
+
+/// Pin-in-Paste: Öffnungsgröße automatisch aus Bohrung, Leiterplattendicke, Metallanteil und Blechdicke;
+/// begrenzt durch maximale Größe bzw. Pitch − Mindeststeg, mindestens Padgröße.
+fn pin_in_paste_geometry(pad: &PadCtx, rule: &PackageRule, cx: f64, cy: f64, w_eff: f64, h_eff: f64) -> Vec<Slice> {
+    use std::f64::consts::PI;
+    let Some(drill) = pad.drill.filter(|d| *d > 0.05) else {
+        // Kein Bohrloch bekannt: Pad 1:1 (rund bleibt rund)
+        return if pad.round { vec![circle_slice(cx, cy, w_eff.min(h_eff), "pin_in_paste")] } else { vec![rounded_slice(cx, cy, w_eff, h_eff, rule.corner_radius, "pin_in_paste")] };
+    };
+    let t = if pad.thickness > 0.0 { pad.thickness } else { 0.12 };
+    let pin_d = (drill - rule.pip_pin_clearance).max(0.1);
+    let area = pip_required_area(drill, pin_d, rule.pip_pcb_thickness, rule.pip_metal_pct, t);
+    let max_size = if rule.pip_max_size > 0.0 {
+        rule.pip_max_size
+    } else {
+        pad.pitch.map_or(f64::INFINITY, |p| (p - pad.min_bridge.max(0.1)).max(0.2))
+    };
+    let min_size = w_eff.min(h_eff);
+    let mut out = match rule.pip_shape.as_str() {
+        "rect" => {
+            let side = area.sqrt().clamp(min_size.min(max_size), max_size);
+            vec![rounded_slice(cx, cy, side, side, rule.corner_radius, "pin_in_paste")]
+        }
+        "donut" => {
+            let inner = drill + 0.1;
+            let outer = (4.0 * area / PI + inner * inner).sqrt().clamp(min_size.min(max_size), max_size);
+            if outer <= inner * 1.05 {
+                vec![circle_slice(cx, cy, outer, "pin_in_paste")]
+            } else {
+                donut_segments(cx, cy, inner, outer, rule.bridge_width.max(0.1))
+            }
+        }
+        _ => {
+            let d = (4.0 * area / PI).sqrt().clamp(min_size.min(max_size), max_size);
+            vec![circle_slice(cx, cy, d, "pin_in_paste")]
+        }
+    };
+    for s in out.iter_mut() {
+        s.kind = Some("pin_in_paste".into());
+        s.manual = None;
+    }
+    out
 }
 
 /// Regel "Package-Gruppe" (angelehnt an PCB Investigator "Handle Stencil Creation by Package Group"):
@@ -549,6 +606,20 @@ mod tests {
         let s = generate_rule_aperture_geometry(&PadCtx::new(1.2, 1.3, 0.0, 0.0, "right"), &rule).unwrap();
         assert!((s[0].w - 0.8).abs() < 1e-9 && (s[0].h - 0.5).abs() < 1e-9);
         assert!(s[0].pts.as_ref().unwrap().len() > 20, "echte Bogenecken erwartet");
+    }
+
+    #[test]
+    fn pin_in_paste_size_from_drill() {
+        let rule = PackageRule { rule_type: "pin_in_paste".into(), ..Default::default() };
+        let ctx = PadCtx { round: true, drill: Some(1.0), thickness: 0.12, pin_count: 20, ..PadCtx::new(1.8, 1.8, 0.0, 0.0, "center") };
+        let s = generate_rule_aperture_geometry(&ctx, &rule).unwrap();
+        let need = pip_required_area(1.0, 0.75, 1.6, 50.0, 0.12);
+        let d = (4.0 * need / std::f64::consts::PI).sqrt();
+        assert!((s[0].w - r4(d)).abs() < 1e-3, "{} vs {d}", s[0].w);
+        // durch Pitch begrenzt
+        let ctx = PadCtx { pitch: Some(2.54), min_bridge: 0.15, ..ctx };
+        let s = generate_rule_aperture_geometry(&ctx, &rule).unwrap();
+        assert!(s[0].w <= 2.39 + 1e-9);
     }
 
     #[test]

@@ -30,6 +30,8 @@ pub struct EditState {
     current_customer: String,
     current_side: String,
     sides: BTreeMap<String, super::SideData>,
+    group_rules: BTreeMap<String, PackageRule>,
+    component_rules: BTreeMap<String, PackageRule>,
 }
 
 #[derive(Default)]
@@ -114,6 +116,10 @@ struct ProjectFile {
     sides: BTreeMap<String, SideSave>,
     #[serde(default)]
     active_side: String,
+    #[serde(default)]
+    group_rules: BTreeMap<String, PackageRule>,
+    #[serde(default)]
+    component_rules: BTreeMap<String, PackageRule>,
 }
 
 fn aperture_saves(aps: &[ApertureItem]) -> Vec<ApertureSave> {
@@ -172,6 +178,8 @@ impl StencilEngine {
             current_customer: self.current_customer.clone(),
             current_side: self.current_side.clone(),
             sides: self.sides.clone(),
+            group_rules: self.group_rules.clone(),
+            component_rules: self.component_rules.clone(),
         }
     }
 
@@ -181,6 +189,8 @@ impl StencilEngine {
         let stash = if side_changed { self.sides.get(&s.current_side).cloned() } else { None };
         self.current_side = s.current_side;
         self.sides = s.sides;
+        self.group_rules = s.group_rules;
+        self.component_rules = s.component_rules;
         self.apertures = s.apertures;
         self.packages = s.packages;
         self.package_aliases = s.aliases;
@@ -288,6 +298,8 @@ impl StencilEngine {
                 m
             },
             active_side: self.current_side.clone(),
+            group_rules: self.group_rules.clone(),
+            component_rules: self.component_rules.clone(),
         }
     }
 
@@ -361,6 +373,10 @@ impl StencilEngine {
         self.current_customer = s.current_customer;
         self.packages = pf.packages;
         self.package_aliases = pf.aliases;
+        if !pf.group_rules.is_empty() {
+            self.group_rules = pf.group_rules;
+        }
+        self.component_rules = pf.component_rules;
 
         let mut unmatched = 0;
         if pf.sides.is_empty() {
@@ -395,7 +411,7 @@ impl StencilEngine {
         self.history.clear();
         self.dirty = false;
         self.project_path = Some(path.to_path_buf());
-        if path != self.autosave_path() {
+        if !path.starts_with(self.data_root.join("Autosave")) {
             self.add_recent(path);
         }
         Ok(OpenResult::Opened { warnings })
@@ -404,8 +420,20 @@ impl StencilEngine {
     // -------------------------------------------------------------
     // Autospeichern & zuletzt geöffnet
     // -------------------------------------------------------------
+    /// Sicherungsdatei dieser Instanz (je Prozess eigene Datei, damit parallele Instanzen sich nicht überschreiben).
     pub fn autosave_path(&self) -> PathBuf {
-        self.data_root.join("Autosave").join(format!("autosave.{PROJECT_EXT}"))
+        self.data_root.join("Autosave").join(format!("autosave_{}.{PROJECT_EXT}", std::process::id()))
+    }
+
+    /// Neueste Sicherung einer anderen (beendeten oder abgestürzten) Instanz.
+    fn foreign_autosave(&self) -> Option<PathBuf> {
+        let own = self.autosave_path();
+        std::fs::read_dir(self.data_root.join("Autosave"))
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p != &own && p.extension().map_or(false, |x| x == PROJECT_EXT))
+            .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
     }
 
     /// Schreibt bei ungespeicherten Änderungen eine Sicherung (Wiederherstellung nach Absturz).
@@ -420,12 +448,16 @@ impl StencilEngine {
         Ok(true)
     }
 
-    pub fn discard_autosave(&self) {
+    /// Eigene Sicherung löschen; optional zusätzlich eine angebotene fremde Sicherung.
+    pub fn discard_autosave(&self, other: Option<&Path>) {
         let _ = std::fs::remove_file(self.autosave_path());
+        if let Some(o) = other.filter(|o| o.starts_with(self.data_root.join("Autosave"))) {
+            let _ = std::fs::remove_file(o);
+        }
     }
 
     pub fn recovery_info(&self) -> Value {
-        let p = self.autosave_path();
+        let Some(p) = self.foreign_autosave() else { return json!({"exists": false}) };
         match std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) {
             Some(v) => json!({
                 "exists": true,
@@ -483,6 +515,13 @@ pub fn edit_label(method: &str, seg: &[&str], body: &Map<String, Value>) -> Opti
         ("POST" | "DELETE", ["api", "package", n, "pin", p, "override"]) => format!("Pin {p} von {n}"),
         ("POST" | "DELETE", ["api", "package", n, "pins", "override"]) => format!("Alle Pins von {n}"),
         ("POST", ["api", "auto_classify"]) => "Auto-Klassifizierung".into(),
+        ("POST", ["api", "group", g, "rule"]) => format!("Gruppenregel {g}"),
+        ("POST", ["api", "group", g, "generate"]) => format!("Gruppe {g} anwenden"),
+        ("POST", ["api", "component", c, "rule"]) => format!("Bauteilregel {c}"),
+        ("POST", ["api", "component", c, "generate"]) => format!("Bauteil {c} anwenden"),
+        ("POST", ["api", "zone", z, "rule"]) => format!("Zonenregel {z}"),
+        ("POST", ["api", "zone", z, "generate"]) => format!("Zone {z} anwenden"),
+        ("POST", ["api", "generate_all"]) => "Alle Regeln anwenden".into(),
         ("POST", ["api", "library", "load"]) => "Bibliothek laden".into(),
         ("POST", ["api", "set_ipc_mode"]) => "IPC-Klasse".into(),
         ("POST", ["api", "set_paste_type"]) => "Pastentyp".into(),

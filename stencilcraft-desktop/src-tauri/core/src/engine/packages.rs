@@ -371,7 +371,7 @@ impl StencilEngine {
                     let pitch = if real_pitch.is_finite() { real_pitch } else { 0.8 };
                     let mut p = PackageTemplate::new(&pkg_name, pins, r3(pitch), r2(avg_w), r2(avg_h));
                     p.category = category.into();
-                    p.rule = PackageRule::with("package_group", "Handle Stencil Creation by Package Group");
+                    p.rule = PackageRule::with("inherit", "Inherit");
                     p.outline = outline;
                     p.pads_relative = pads_rel;
                     p.component_count = 1;
@@ -407,7 +407,7 @@ impl StencilEngine {
             let p = self.packages.entry(grp.clone()).or_insert_with(|| {
                 let mut p = PackageTemplate::new(&grp, 1, 0.0, w, h);
                 p.category = "Other".into();
-                p.rule = PackageRule::with("package_group", "Handle Stencil Creation by Package Group");
+                p.rule = PackageRule::with("inherit", "Inherit");
                 p.component_count = 0;
                 p.pads_relative = vec![PadRel::new(1, 0.0, 0.0, w, h, "center").round(round)];
                 p

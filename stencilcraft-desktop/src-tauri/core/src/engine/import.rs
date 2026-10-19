@@ -107,6 +107,8 @@ impl StencilEngine {
                     y1,
                     thickness: 0.100,
                     is_step_down: true,
+                    step: true,
+                    rule: None,
                 });
                 idx += 1;
             }
@@ -589,7 +591,7 @@ impl StencilEngine {
             t.outline = Outline { w: p.w, h: p.h };
             t.component_count = comp_count.get(p.name.as_str()).copied().unwrap_or(0);
             // Wie PCB Investigator: Standardregel "Inherit – Handle Stencil Creation by Package Group"
-            t.rule = PackageRule::with("package_group", "Handle Stencil Creation by Package Group");
+            t.rule = PackageRule::with("inherit", "Inherit");
             t.pads_relative = if pins.is_empty() {
                 vec![PadRel::new(1, r3(-pitch / 2.0), 0.0, pw, ph, "right"), PadRel::new(2, r3(pitch / 2.0), 0.0, pw, ph, "left")]
             } else {

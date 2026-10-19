@@ -13,6 +13,7 @@ pub mod packages;
 pub mod project;
 pub mod report;
 pub mod rules;
+pub mod rulesets;
 pub mod types;
 
 use geometry::circle_pts;
@@ -64,6 +65,10 @@ pub struct StencilEngine {
     pub history: project::History,
     /// Arbeitsstand der nicht aktiven Seite(n)
     pub sides: BTreeMap<String, SideData>,
+    /// Gruppenregeln (SMD / THT / Other / Fiducial / Library) – Ziel von "Inherit"
+    pub group_rules: BTreeMap<String, PackageRule>,
+    /// Bauteilregeln je RefDes (höchste Priorität)
+    pub component_rules: BTreeMap<String, PackageRule>,
 
     pub data_root: PathBuf,
 }
@@ -146,6 +151,8 @@ impl StencilEngine {
             dirty: false,
             history: project::History::default(),
             sides: BTreeMap::new(),
+            group_rules: rulesets::default_group_rules(),
+            component_rules: BTreeMap::new(),
             data_root,
         };
         e.init_standard_packages();
@@ -332,6 +339,7 @@ impl StencilEngine {
         self.dirty = false;
         self.history.clear();
         self.sides.clear();
+        self.component_rules.clear();
         self.bounds = [0.0; 4];
         self.dataset_name = NO_DATASET.into();
         self.init_standard_packages();
@@ -361,7 +369,7 @@ impl StencilEngine {
 
     pub fn get_effective_thickness(&self, cx: f64, cy: f64) -> (f64, Option<&StencilZone>) {
         for z in &self.zones {
-            if z.contains_point(cx, cy) {
+            if z.step && z.contains_point(cx, cy) {
                 return (z.thickness, Some(z));
             }
         }
@@ -538,6 +546,7 @@ impl StencilEngine {
 
     /// Regelgeometrie einer Apertur gemäß ihrem Package (inkl. Pin-Override) neu berechnen.
     fn regenerate_from_package(&self, ap: &ApertureItem, pkg: &PackageTemplate, pitch: Option<f64>) -> Option<Vec<Slice>> {
+        let (base_rule, _) = self.effective_rule(ap);
         let (rule, pw, ph) = match pkg.pad_overrides.get(&ap.pin_number) {
             Some(ov) => {
                 let (mut ow, mut oh) = (ov.get("w").and_then(val_f64), ov.get("h").and_then(val_f64));
@@ -548,9 +557,9 @@ impl StencilEngine {
                         std::mem::swap(&mut ow, &mut oh);
                     }
                 }
-                (resolve_pin_rule(&pkg.rule, ov), ow.unwrap_or(ap.width), oh.unwrap_or(ap.height))
+                (resolve_pin_rule(&base_rule, ov), ow.unwrap_or(ap.width), oh.unwrap_or(ap.height))
             }
-            None => (pkg.rule.clone(), ap.width, ap.height),
+            None => (base_rule, ap.width, ap.height),
         };
         let ctx = PadCtx {
             mask: ap.pad_ref.as_ref().map(|p| (p.w, p.h)),
@@ -558,6 +567,8 @@ impl StencilEngine {
             pitch,
             min_bridge: self.min_bridge_width,
             pin_count: pkg.pads_relative.len().max(pkg.pin_count),
+            thickness: self.get_effective_thickness(ap.cx, ap.cy).0,
+            drill: self.drill_at(ap.cx, ap.cy, ap.width.min(ap.height)),
             ..PadCtx::new(pw, ph, ap.cx, ap.cy, &ap.facing_dir)
         };
         generate_rule_aperture_geometry(&ctx, &rule)
@@ -656,9 +667,22 @@ impl StencilEngine {
     }
 
     pub fn add_zone(&mut self, x0: f64, y0: f64, x1: f64, y1: f64, thickness: f64, name: &str) -> StencilZone {
+        self.add_zone_ext(x0, y0, x1, y1, thickness, name, true)
+    }
+
+    /// Zone anlegen; `step = false` → reine Regelzone ohne Dickenänderung.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_zone_ext(&mut self, x0: f64, y0: f64, x1: f64, y1: f64, thickness: f64, name: &str, step: bool) -> StencilZone {
         let n = self.next_zone_id();
+        let thickness = if step { thickness } else { self.base_thickness };
         let is_step_down = thickness < self.base_thickness;
-        let name = if name.trim().is_empty() { Self::auto_zone_name(n, thickness, is_step_down) } else { name.to_string() };
+        let name = if !name.trim().is_empty() {
+            name.to_string()
+        } else if step {
+            Self::auto_zone_name(n, thickness, is_step_down)
+        } else {
+            format!("Regelzone {n}")
+        };
         let z = StencilZone {
             id: format!("zone_{n}"),
             name,
@@ -668,6 +692,8 @@ impl StencilEngine {
             y1: y0.max(y1),
             thickness,
             is_step_down,
+            step,
+            rule: None,
         };
         self.zones.push(z.clone());
         z
@@ -823,6 +849,11 @@ impl StencilEngine {
     }
 
     pub fn get_package_preview_data(&self, pkg_name: &str) -> Value {
+        self.package_preview_with(pkg_name, None)
+    }
+
+    /// Vorschau eines Packages; `rule_override` ersetzt die Package-Regel (z. B. Bauteilregel).
+    pub fn package_preview_with(&self, pkg_name: &str, rule_override: Option<(&PackageRule, String)>) -> Value {
         let target = self.resolve_alias(pkg_name);
         let fallback;
         let pkg = match self.packages.get(&target) {
@@ -834,12 +865,16 @@ impl StencilEngine {
                 &fallback
             }
         };
+        let (eff, source) = match &rule_override {
+            Some((r, src)) => ((*r).clone(), src.clone()),
+            None => self.package_effective_rule(pkg),
+        };
         let rel: Vec<(f64, f64, f64, f64)> = pkg.pads_relative.iter().map(|p| (p.cx, p.cy, p.w, p.h)).collect();
         let mut paste = Vec::new();
         for (i, p) in pkg.pads_relative.iter().enumerate() {
             let (rule, pw, ph) = match pkg.pad_overrides.get(&p.pin) {
-                Some(ov) => (resolve_pin_rule(&pkg.rule, ov), ov.get("w").and_then(val_f64).unwrap_or(p.w), ov.get("h").and_then(val_f64).unwrap_or(p.h)),
-                None => (pkg.rule.clone(), p.w, p.h),
+                Some(ov) => (resolve_pin_rule(&eff, ov), ov.get("w").and_then(val_f64).unwrap_or(p.w), ov.get("h").and_then(val_f64).unwrap_or(p.h)),
+                None => (eff.clone(), p.w, p.h),
             };
             let ctx = PadCtx {
                 round: p.is_round(),
@@ -848,6 +883,7 @@ impl StencilEngine {
                 pin_count: pkg.pads_relative.len(),
                 mask: p.mask_w.zip(p.mask_h),
                 drill: p.drill,
+                thickness: self.base_thickness,
                 ..PadCtx::new(pw, ph, p.cx, p.cy, &p.facing)
             };
             if let Some(mut g) = generate_rule_aperture_geometry(&ctx, &rule) {
@@ -870,6 +906,9 @@ impl StencilEngine {
             "pads": pkg.pads_relative,
             "paste": paste,
             "rule": pkg.rule.to_json(),
+            "effective_rule": eff.to_json(),
+            "rule_source": source,
+            "base_thickness": self.base_thickness,
             "pad_overrides": pkg.overrides_json(),
         })
     }
@@ -913,6 +952,15 @@ impl StencilEngine {
                 }
             }
         }
+        if let Some(groups) = data.get("groups").and_then(|v| v.as_object()) {
+            for (g, rule) in groups {
+                if let Some(r) = rule.as_object() {
+                    let mut gr = self.group_rule(g);
+                    gr.apply_map(r);
+                    self.group_rules.insert(g.clone(), gr);
+                }
+            }
+        }
         if let Some(al) = data.get("aliases").and_then(|v| v.as_object()) {
             for (k, v) in al {
                 if let Some(s) = v.as_str() {
@@ -939,8 +987,9 @@ impl StencilEngine {
             .collect();
         let payload = json!({
             "customer": customer,
-            "version": "1.0",
+            "version": "1.1",
             "packages": packages,
+            "groups": self.group_rules,
             "aliases": self.package_aliases,
         });
         let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;

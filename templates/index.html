@@ -490,6 +490,14 @@
                     </div>
                 </div>
 
+                <!-- Reiter wie PCB Investigator: Package Rules / Zone Rules / Component Rules -->
+                <div class="gen-tabs" id="genTabs">
+                    <button data-tab="packages" class="active">Package Rules</button>
+                    <button data-tab="zones">Zone Rules</button>
+                    <button data-tab="components">Component Rules</button>
+                </div>
+
+                <div id="genTabPackages" class="gen-tab-pane">
                 <!-- Search Input -->
                 <div class="pkg-search-box">
                     <input type="text" id="pkgSearchInput" placeholder="🔍 Package suchen (z. B. 0805, QFN)...">
@@ -509,6 +517,25 @@
                 <div class="pkg-tree-list" id="pkgTreeList">
                     <!-- Dynamisch aus /api/packages befüllt -->
                 </div>
+                </div>
+
+                <div id="genTabZones" class="gen-tab-pane hidden">
+                    <div class="gen-pane-actions">
+                        <button id="btnNewRuleZone" class="btn btn-xs btn-secondary" title="Rechteck im Board aufziehen; Öffnungen darin erhalten die Zonenregel">➕ Regelzone im Board aufziehen</button>
+                    </div>
+                    <div class="pkg-tree-list" id="zoneRuleList"></div>
+                </div>
+
+                <div id="genTabComponents" class="gen-tab-pane hidden">
+                    <div class="pkg-search-box">
+                        <input type="text" id="compSearchInput" placeholder="🔍 Bauteil suchen (RefDes / Package)...">
+                    </div>
+                    <div class="pkg-category-bar">
+                        <button class="cat-pill comp-filter active" data-f="">Alle</button>
+                        <button class="cat-pill comp-filter" data-f="rule">Mit eigener Regel</button>
+                    </div>
+                    <div class="pkg-tree-list" id="componentList"></div>
+                </div>
             </div>
 
             <!-- Right Column: Rule Config (Top) & CAD Preview (Bottom) -->
@@ -520,13 +547,15 @@
                         <div class="rule-dropdown-group">
                             <label for="selectPkgRule">Select Rule:</label>
                             <select id="selectPkgRule">
-                                <option value="package_group">Inherit – Handle Stencil Creation by Package Group</option>
+                                <option value="inherit">Inherit – Regel der Gruppe übernehmen</option>
+                                <option value="package_group">Handle Stencil Creation by Package Group</option>
                                 <option value="simple_rect">Simple Rectangle Surface</option>
                                 <option value="house_builder">HouseBuilder</option>
                                 <option value="inverted_house_builder">InvertedHouseBuilder</option>
                                 <option value="elongated_pitch">Länglich & Schmal (Pitch-Schutz)</option>
                                 <option value="array_slicing">Array Pads (Thermal Slicing)</option>
                                 <option value="donut">Donut Creation</option>
+                                <option value="pin_in_paste">Pin-in-Paste (THT, automatisch)</option>
                                 <option value="take_existing">Take Existing Paste Elements</option>
                                 <option value="ignore">Ignore</option>
                             </select>
@@ -551,9 +580,13 @@
                     </div>
 
                     <!-- Rule Property Grid (Exact PCB Investigator Parameters) -->
+                    <div id="ruleSourceBanner" class="rule-source-banner hidden">
+                        <span id="ruleSourceText"></span>
+                        <button id="btnRemoveTargetRule" class="btn btn-xs btn-ghost hidden">Eigene Regel entfernen</button>
+                    </div>
                     <div id="ruleDescription" class="rule-description"></div>
                     <div class="rule-property-grid">
-                        <div class="prop-item" data-rules="package_group simple_rect elongated_pitch array_slicing">
+                        <div class="prop-item" data-rules="package_group simple_rect elongated_pitch array_slicing pin_in_paste">
                             <label>Corner Radius (MM):</label>
                             <input type="number" id="propCornerRadius" value="0.0" step="0.005" min="0" max="1.0">
                         </div>
@@ -591,7 +624,7 @@
                                 <input type="number" id="propBridgeY" value="0" step="1" min="0" max="6" placeholder="Y">
                             </div>
                         </div>
-                        <div class="prop-item" data-rules="simple_rect array_slicing donut">
+                        <div class="prop-item" data-rules="simple_rect array_slicing donut pin_in_paste">
                             <label>Bridge Width (MM):</label>
                             <input type="number" id="propBridgeWidth" value="0.30" step="0.05" min="0.1" max="1.5">
                         </div>
@@ -653,6 +686,29 @@
                         <div class="prop-item" data-rules="package_group">
                             <label>Utilization House Area (%):</label>
                             <input type="number" id="propUtilHouse" value="0" step="5" min="0" max="100" title="0 = keine Flächenanpassung">
+                        </div>
+                        <div class="prop-item" data-rules="pin_in_paste">
+                            <label>Leiterplattendicke (MM):</label>
+                            <input type="number" id="propPipPcb" value="1.6" step="0.1" min="0.2">
+                        </div>
+                        <div class="prop-item" data-rules="pin_in_paste">
+                            <label>Metallanteil Paste (%):</label>
+                            <input type="number" id="propPipMetal" value="50" step="1" min="10" max="100">
+                        </div>
+                        <div class="prop-item" data-rules="pin_in_paste">
+                            <label>Spiel Bohrung − Pin (MM):</label>
+                            <input type="number" id="propPipClearance" value="0.25" step="0.05" min="0" title="Pin-Durchmesser = Bohrung − Spiel">
+                        </div>
+                        <div class="prop-item" data-rules="pin_in_paste">
+                            <label>Overprint-Form / max. Größe (MM):</label>
+                            <div class="dual-row">
+                                <select id="propPipShape" style="font-size:0.75rem;">
+                                    <option value="circle">Kreis</option>
+                                    <option value="rect">Quadrat</option>
+                                    <option value="donut">Donut (segmentiert)</option>
+                                </select>
+                                <input type="number" id="propPipMax" value="0" step="0.1" min="0" title="0 = Pitch − Mindeststeg">
+                            </div>
                         </div>
                         <div class="prop-item checkbox-prop" data-rules="package_group simple_rect house_builder inverted_house_builder elongated_pitch array_slicing donut">
                             <label><input type="checkbox" id="propRotate45"> Rotate Bridges 45°</label>
@@ -720,6 +776,7 @@
                             <label><input type="checkbox" id="chkPrevRuler" checked> Show Ruler</label>
                             <label><input type="checkbox" id="chkPrevPinLabels"> Show Pin Labels</label>
                             <label><input type="checkbox" id="chkPrevDrills" checked> Show Drills</label>
+                            <label title="Area Ratio, Fläche und Pastenvolumen je Öffnung"><input type="checkbox" id="chkPrevInfo"> Show Info Layer</label>
                         </div>
 
                         <div class="preview-cta">
@@ -786,6 +843,11 @@
                 <span class="pill-btn" data-thick="130">130 µm</span>
                 <span class="pill-btn" data-thick="150">150 µm</span>
             </div>
+
+            <div class="form-row" style="margin-top: 10px;">
+                <label><input type="checkbox" id="modalZoneIsStep" checked> Stufenzone (Blechdicke ändern)</label>
+            </div>
+            <p class="modal-desc">Ohne Häkchen: reine Regelzone – die Zonenregel wird im Stencil Generator unter „Zone Rules“ festgelegt.</p>
 
             <div class="form-row" style="margin-top: 14px;">
                 <label>Zonenname (optional):</label>

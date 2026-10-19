@@ -1918,3 +1918,26 @@ body.view-package-only #projectMenu, body.view-package-only #lblProjectName { di
 .exp-checks { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.85rem; }
 .exp-preview { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary); line-height: 1.5; word-break: break-all; }
 .export-file-list div { font-family: var(--font-mono); font-size: 0.78rem; padding: 2px 0; word-break: break-all; }
+
+/* Stencil Generator: Reiter, Regelquelle, Listen */
+.gen-tabs { display: flex; border-bottom: 1px solid var(--border-color); background: var(--bg-surface-elevated); }
+.gen-tabs button { flex: 1; background: none; border: none; color: var(--text-secondary); padding: 7px 4px; font-size: 0.75rem; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; }
+.gen-tabs button.active { color: #60a5fa; border-bottom-color: #3b82f6; }
+.gen-tab-pane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.gen-pane-actions { padding: 8px 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+.rule-source-banner { display: flex; align-items: center; gap: 10px; padding: 5px 12px; font-size: 0.78rem; background: rgba(59, 130, 246, 0.12); border-bottom: 1px solid rgba(59, 130, 246, 0.3); color: #bfdbfe; }
+.rule-source-banner.inherited { background: rgba(148, 163, 184, 0.12); color: #cbd5e1; border-bottom-color: rgba(148, 163, 184, 0.3); }
+.rule-source-banner.own { background: rgba(250, 204, 21, 0.12); color: #fde68a; border-bottom-color: rgba(250, 204, 21, 0.35); }
+.pkg-group-header .grp-label { cursor: pointer; }
+.pkg-group-header .grp-label:hover { text-decoration: underline; }
+.pkg-group-header.active { background: rgba(59, 130, 246, 0.2); }
+.pkg-tree-item.inherits .pkg-item-name { font-style: italic; opacity: 0.85; }
+.pkg-tree-item .own-rule-dot { color: #facc15; margin-left: 4px; font-size: 0.7rem; }
+.list-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; border-bottom: 1px solid rgba(148, 163, 184, 0.08); font-size: 0.8rem; }
+.list-item:hover { background: var(--bg-hover); }
+.list-item.active { background: rgba(59, 130, 246, 0.22); }
+.list-item .li-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list-item .li-sub { color: var(--text-muted); font-size: 0.72rem; }
+.li-badge { font-size: 0.68rem; padding: 1px 6px; border-radius: 8px; background: rgba(148, 163, 184, 0.18); color: #cbd5e1; white-space: nowrap; }
+.li-badge.rule { background: rgba(250, 204, 21, 0.2); color: #fde68a; }
+.li-badge.step { background: rgba(192, 132, 252, 0.2); color: #e9d5ff; }

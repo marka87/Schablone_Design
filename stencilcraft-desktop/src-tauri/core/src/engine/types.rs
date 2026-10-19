@@ -182,6 +182,16 @@ pub struct StencilZone {
     pub y1: f64,
     pub thickness: f64,
     pub is_step_down: bool,
+    /// Stufenzone (ändert die Blechdicke); false = reine Regelzone
+    #[serde(default = "default_true")]
+    pub step: bool,
+    /// Zonenregel für alle Öffnungen, deren Mitte in der Zone liegt
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<PackageRule>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl StencilZone {
@@ -208,6 +218,8 @@ impl StencilZone {
             "is_step_down": self.is_step_down,
             "width": r3(self.width()),
             "height": r3(self.height()),
+            "step": self.step,
+            "rule": self.rule.as_ref().map(|r| r.to_json()),
         })
     }
 }
@@ -310,6 +322,14 @@ pub struct PackageRule {
     pub distance_array_fields: f64,
     pub utilization_array_pct: f64,
     pub utilization_house_pct: f64,
+    // Pin-in-Paste (THT-Reflow)
+    pub pip_pcb_thickness: f64,
+    pub pip_metal_pct: f64,
+    pub pip_pin_clearance: f64,
+    /// "circle", "rect" oder "donut"
+    pub pip_shape: String,
+    /// Größte Öffnung (0 = Pitch − Mindeststeg)
+    pub pip_max_size: f64,
 }
 
 impl Default for PackageRule {
@@ -346,6 +366,11 @@ impl Default for PackageRule {
             distance_array_fields: 0.25,
             utilization_array_pct: 40.0,
             utilization_house_pct: 0.0,
+            pip_pcb_thickness: 1.6,
+            pip_metal_pct: 50.0,
+            pip_pin_clearance: 0.25,
+            pip_shape: "circle".into(),
+            pip_max_size: 0.0,
         }
     }
 }
@@ -412,6 +437,11 @@ impl PackageRule {
                 "distance_array_fields" => { if let Some(f) = val_f64(v) { self.distance_array_fields = f } }
                 "utilization_array_pct" => { if let Some(f) = val_f64(v) { self.utilization_array_pct = f } }
                 "utilization_house_pct" => { if let Some(f) = val_f64(v) { self.utilization_house_pct = f } }
+                "pip_pcb_thickness" => { if let Some(f) = val_f64(v) { self.pip_pcb_thickness = f.max(0.1) } }
+                "pip_metal_pct" => { if let Some(f) = val_f64(v) { self.pip_metal_pct = f.clamp(10.0, 100.0) } }
+                "pip_pin_clearance" => { if let Some(f) = val_f64(v) { self.pip_pin_clearance = f.max(0.0) } }
+                "pip_shape" => { if let Some(s) = val_str(v) { self.pip_shape = s } }
+                "pip_max_size" => { if let Some(f) = val_f64(v) { self.pip_max_size = f.max(0.0) } }
                 "rotate_bridges_45" => { if let Some(b) = val_bool(v) { self.rotate_bridges_45 = b } }
                 "try_find_direction" => { if let Some(b) = val_bool(v) { self.try_find_direction = b } }
                 "pin_minus_mask" => { if let Some(b) = val_bool(v) { self.pin_minus_mask = b } }

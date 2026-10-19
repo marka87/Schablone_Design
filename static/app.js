@@ -2319,6 +2319,9 @@ function startDrawingZone() {
 let pendingZoneCoords = null;
 function openZoneModal(x0, y0, x1, y1) {
     pendingZoneCoords = { x0, y0, x1, y1 };
+    const chk = document.getElementById("modalZoneIsStep");
+    if (chk) chk.checked = !state.drawRuleZone;
+    state.drawRuleZone = false;
     document.getElementById("zoneModal").classList.remove("hidden");
 }
 
@@ -2332,6 +2335,7 @@ document.getElementById("btnSaveZoneModal").addEventListener("click", async () =
     const thickUm = parseFloat(document.getElementById("modalZoneThickUm").value);
     const thickMm = thickUm / 1000.0;
     const name = document.getElementById("modalZoneName").value;
+    const isStep = document.getElementById("modalZoneIsStep")?.checked !== false;
 
     await fetch("/api/zone", {
         method: "POST",
@@ -2342,11 +2346,13 @@ document.getElementById("btnSaveZoneModal").addEventListener("click", async () =
             x1: pendingZoneCoords.x1,
             y1: pendingZoneCoords.y1,
             thickness: thickMm,
-            name: name
+            name: name,
+            step: isStep
         })
     });
 
     document.getElementById("zoneModal").classList.add("hidden");
+    renderZoneRuleList();
     pendingZoneCoords = null;
     await refreshApertureData();
 });
@@ -2736,10 +2742,17 @@ function renderPkgTree() {
         const collapsed = Boolean(pkgState.collapsedGroups[g.key]) && !query;
         const header = document.createElement("div");
         header.className = "pkg-group-header";
-        header.innerHTML = `<span class="caret">${collapsed ? "▸" : "▾"}</span><span>${g.label}</span><span class="pkg-group-count">${members.length}</span>`;
-        header.addEventListener("click", () => {
+        const isActive = pkgState.ruleTarget?.kind === "group" && pkgState.ruleTarget.id === g.key;
+        header.className = `pkg-group-header ${isActive ? "active" : ""}`;
+        header.innerHTML = `<span class="caret">${collapsed ? "▸" : "▾"}</span><span class="grp-label" title="Gruppenregel bearbeiten">${g.label}</span><span class="pkg-group-count">${members.length}</span>`;
+        header.querySelector(".caret").addEventListener("click", (e) => {
+            e.stopPropagation();
             pkgState.collapsedGroups[g.key] = !pkgState.collapsedGroups[g.key];
             renderPkgTree();
+        });
+        header.querySelector(".grp-label").addEventListener("click", (e) => {
+            e.stopPropagation();
+            selectGroupRule(g.key);
         });
         list.appendChild(header);
         if (collapsed) continue;
@@ -2750,7 +2763,9 @@ function renderPkgTree() {
 function renderPkgTreeItem(list, p) {
     {
         const item = document.createElement("div");
-        item.className = `pkg-tree-item ${p.name === pkgState.activePkgName ? 'active' : ''}`;
+        const inherits = p.rule?.rule_type === "inherit";
+        item.className = `pkg-tree-item ${p.name === pkgState.activePkgName && pkgState.ruleTarget?.kind === "package" ? 'active' : ''} ${inherits ? 'inherits' : ''}`;
+        item.title = inherits ? "Regel von der Gruppe geerbt" : `Eigene Regel: ${p.rule?.rule_type}`;
         
         let icon = "📦";
         if (p.category === "SMD Passives") icon = "▫️";
@@ -2760,7 +2775,7 @@ function renderPkgTreeItem(list, p) {
         item.innerHTML = `
             <div class="pkg-item-main">
                 <span class="pkg-item-icon">${icon}</span>
-                <span class="pkg-item-name" title="${p.name}">${p.name}</span>
+                <span class="pkg-item-name" title="${p.name}">${p.name}</span>${inherits ? "" : '<span class="own-rule-dot">●</span>'}
             </div>
             <div class="pkg-item-badges">
                 ${p.pitch > 0 ? `<span class="pkg-badge-pitch">${p.pitch}mm</span>` : ''}
@@ -2831,8 +2846,12 @@ async function selectPackage(pkgName) {
         // Pin Dropdown befüllen
         populatePinDropdown(data.pads, data.pad_overrides);
 
-        // Regeleingaben aktualisieren
-        populateRuleInputs(data.rule);
+        // Regeleingaben aktualisieren (bei Inherit: Werte der geerbten Regel zeigen)
+        pkgState.ruleTarget = { kind: "package", id: data.name };
+        pkgState.effectiveRuleType = data.effective_rule?.rule_type;
+        populateRuleInputs(data.rule?.rule_type === "inherit" ? { ...data.effective_rule, rule_type: "inherit" } : data.rule);
+        updateRuleSourceBanner();
+        document.querySelectorAll(".pkg-group-header").forEach(el => el.classList.remove("active"));
 
         // Auto-Fit Zoom für Package
         autoFitPackagePreview(data);
@@ -2915,6 +2934,11 @@ function populateRuleInputs(rule) {
     setv("propArrayDistance", rule.distance_array_fields ?? 0.25);
     setv("propUtilArray", rule.utilization_array_pct ?? 40);
     setv("propUtilHouse", rule.utilization_house_pct ?? 0);
+    setv("propPipPcb", rule.pip_pcb_thickness ?? 1.6);
+    setv("propPipMetal", rule.pip_metal_pct ?? 50);
+    setv("propPipClearance", rule.pip_pin_clearance ?? 0.25);
+    setv("propPipShape", rule.pip_shape || "circle");
+    setv("propPipMax", rule.pip_max_size ?? 0);
     updateRuleFieldVisibility();
 }
 
@@ -2928,17 +2952,20 @@ const RULE_DESCRIPTIONS = {
     array_slicing: "Teilt die Fläche in Felder mit Stegen (Bridge Count / Width), optional 45° gedreht.",
     donut: "Ringöffnung um die Bohrung (THT / Pin-in-Paste), segmentiert mit Haltestegen (Bridge Width).",
     take_existing: "Übernimmt die Pastenöffnungen unverändert aus dem Kundendatensatz.",
+    inherit: "Inherit: Das Package übernimmt die Regel seiner Gruppe (SMD/THT/Other/Fiducials). Änderungen an einem Parameter erzeugen eine eigene Package-Regel.",
+    pin_in_paste: "Pin-in-Paste: Öffnung je THT-Pin aus Bohrung (ODB++), Leiterplattendicke, Metallanteil und Blechdicke (IPC-7525, +20 % Meniskus); begrenzt durch max. Größe bzw. Pitch − Mindeststeg.",
     ignore: "Für dieses Package werden keine Pastenöffnungen erzeugt."
 };
 
 // Nur die zur gewählten Regel gehörenden Parameter anzeigen
 function updateRuleFieldVisibility() {
-    const rule = document.getElementById("selectPkgRule")?.value || "simple_rect";
+    const sel = document.getElementById("selectPkgRule")?.value || "simple_rect";
+    const rule = sel === "inherit" ? (pkgState.effectiveRuleType || "package_group") : sel;
     document.querySelectorAll(".rule-property-grid .prop-item[data-rules]").forEach(el => {
         el.classList.toggle("rule-hidden", !el.dataset.rules.split(" ").includes(rule));
     });
     const desc = document.getElementById("ruleDescription");
-    if (desc) desc.textContent = RULE_DESCRIPTIONS[rule] || "";
+    if (desc) desc.textContent = RULE_DESCRIPTIONS[sel] || RULE_DESCRIPTIONS[rule] || "";
 }
 
 // Zahl aus Eingabefeld; leere/ungültige Eingabe → Standardwert (0 ist ein gültiger Wert!)
@@ -2978,30 +3005,65 @@ function collectRuleFromInputs() {
         min_array_field: numInput("propMinArrayField", 0.75),
         distance_array_fields: numInput("propArrayDistance", 0.25),
         utilization_array_pct: numInput("propUtilArray", 40),
-        utilization_house_pct: numInput("propUtilHouse", 0)
+        utilization_house_pct: numInput("propUtilHouse", 0),
+        pip_pcb_thickness: numInput("propPipPcb", 1.6),
+        pip_metal_pct: numInput("propPipMetal", 50),
+        pip_pin_clearance: numInput("propPipClearance", 0.25),
+        pip_shape: document.getElementById("propPipShape")?.value || "circle",
+        pip_max_size: numInput("propPipMax", 0)
     };
 }
 
 let ruleUpdateTimeout = null;
-function onRuleParamChanged() {
+function onRuleParamChanged(e) {
+    const select = document.getElementById("selectPkgRule");
+    // Parameter an einer geerbten Regel geändert → eigene Regel mit dem geerbten Typ
+    if (e && e.target && e.target.id !== "selectPkgRule" && select.value === "inherit") {
+        select.value = pkgState.effectiveRuleType || "package_group";
+        updateRuleFieldVisibility();
+    }
     const ruleData = collectRuleFromInputs();
-    const pkgName = pkgState.activePkgName;
+    const target = { ...(pkgState.ruleTarget || { kind: "package", id: pkgState.activePkgName }) };
 
-    // Sofortige lokale Vorschau-Aktualisierung (35ms Debounce für flüssige Spinner)
     clearTimeout(ruleUpdateTimeout);
     ruleUpdateTimeout = setTimeout(async () => {
-        if (!pkgName || pkgName !== pkgState.activePkgName) return;
-        const res = await fetch(`/api/package/${encodeURIComponent(pkgName)}/rule`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(ruleData)
-        });
+        if (!target.id) return;
+        const cur = pkgState.ruleTarget || { kind: "package", id: pkgState.activePkgName };
+        if (cur.kind !== target.kind || cur.id !== target.id) return;
+        const url = {
+            package: `/api/package/${encodeURIComponent(target.id)}/rule`,
+            group: `/api/group/${encodeURIComponent(target.id)}/rule`,
+            zone: `/api/zone/${encodeURIComponent(target.id)}/rule`,
+            component: `/api/component/${encodeURIComponent(target.id)}/rule`
+        }[target.kind];
+        const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(ruleData) });
         const data = await res.json();
-        if (data.preview) {
+        const now = pkgState.ruleTarget || { kind: "package", id: pkgState.activePkgName };
+        if (now.kind !== target.kind || now.id !== target.id) return; // veraltet
+        if (target.kind === "package" && data.preview) {
             pkgState.activePackageData = data.preview;
+            pkgState.effectiveRuleType = data.preview.effective_rule?.rule_type;
+            if (data.preview.rule?.rule_type === "inherit") {
+                // Auf "Inherit" umgestellt: Werte der Gruppenregel anzeigen
+                populateRuleInputs({ ...data.preview.effective_rule, rule_type: "inherit" });
+            }
+            updateRuleSourceBanner();
+            loadPackagesList();
             renderPkgPreview();
+        } else if (target.kind === "component" && data.component) {
+            pkgState.activePackageData = data.component.preview;
+            pkgState.activeComponent = data.component;
+            updateRuleSourceBanner();
+            renderPkgPreview();
+            renderComponentList();
+        } else if (target.kind === "zone") {
+            await refreshApertureData();
+            renderZoneRuleList();
+        } else if (target.kind === "group") {
+            pkgState.groups = data.groups?.groups || pkgState.groups;
+            drawPkgMessage(groupMessage(target.id));
         }
-    }, 35);
+    }, 120);
 }
 
 // Live-Update für Einzelpad-Bearbeitung (0ms direkte Vorschau + 40ms Backend-Sync)
@@ -3260,6 +3322,9 @@ function renderPkgPreview() {
     // Measurements (Package View)
     drawMeasurementLayer(pkgCtx, "package", pkgWorldToScreen, pkgState.zoom);
 
+    // Info-Layer: AR / Fläche / Volumen je Öffnung
+    renderPasteInfo(data);
+
     // Dynamic CAD Scale Bar (Maßstab)
     drawCanvasScaleBar(pkgCtx, w, h, pkgState.zoom, 14, 38);
 }
@@ -3391,7 +3456,8 @@ function setupPkgEventListeners() {
         "propOffsetMoveAway", "propOffsetX", "propOffsetY", "propBridgeX", "propBridgeY", "propBridgeWidth",
         "propToeHeelShift", "propChamferSize", "propSizeW", "propSizeH", "propDonutInner",
         "propBgaThreshold", "propChipThreshold", "propInvertHouse", "propMiniChip",
-        "propMinArrayField", "propArrayDistance", "propUtilArray", "propUtilHouse"
+        "propMinArrayField", "propArrayDistance", "propUtilArray", "propUtilHouse",
+        "propPipPcb", "propPipMetal", "propPipClearance", "propPipMax", "propPipShape"
     ].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -3469,10 +3535,13 @@ function setupPkgEventListeners() {
     document.getElementById("chkPrevRuler").addEventListener("change", e => { pkgState.showRuler = e.target.checked; renderPkgPreview(); });
     document.getElementById("chkPrevPinLabels").addEventListener("change", e => { pkgState.showPinLabels = e.target.checked; renderPkgPreview(); });
     document.getElementById("chkPrevDrills")?.addEventListener("change", e => { pkgState.showDrills = e.target.checked; renderPkgPreview(); });
+    document.getElementById("chkPrevInfo")?.addEventListener("change", e => { pkgState.showInfo = e.target.checked; renderPkgPreview(); });
+    setupRuleTargets();
 
     // Generate Stencil Pads Button
     document.getElementById("btnGenerateStencilPads").addEventListener("click", async () => {
-        if (!pkgState.activePkgName) return;
+        const target = pkgState.ruleTarget || { kind: "package", id: pkgState.activePkgName };
+        if (!target.id) return;
         const btn = document.getElementById("btnGenerateStencilPads");
         const originalText = btn.innerHTML;
         btn.innerHTML = `<span>⏳</span> Generiere...`;
@@ -3480,10 +3549,13 @@ function setupPkgEventListeners() {
 
         try {
             const ruleData = collectRuleFromInputs();
-            const res = await fetch(`/api/package/${encodeURIComponent(pkgState.activePkgName)}/generate`, {
+            const url = target.kind === "package"
+                ? `/api/package/${encodeURIComponent(target.id)}/generate`
+                : `/api/${target.kind}/${encodeURIComponent(target.id)}/generate`;
+            const res = await fetch(url, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(ruleData)
+                body: target.kind === "package" ? JSON.stringify(ruleData) : "{}"
             });
             const data = await res.json();
             btn.innerHTML = `<span>✓</span> ${data.modified_count} Pads aktualisiert!`;
@@ -4123,8 +4195,13 @@ async function offerRecovery() {
         const r = await askChoice("Sitzung wiederherstellen?",
             `Es gibt eine automatische Sicherung mit ungespeicherten Änderungen:\n${info.dataset || "Unbenannt"}\n\nMöchten Sie diese wiederherstellen?`,
             [{ label: "Verwerfen", value: "discard", cls: "btn-ghost" }, { label: "Wiederherstellen", value: "restore", cls: "btn-primary" }]);
-        if (r === "restore") await openProject(info.path, { recovered: true });
-        else if (r === "discard") await fetch("/api/project/discard_recovery", { method: "POST" });
+        if (r === "restore") {
+            await openProject(info.path, { recovered: true });
+            // Sicherung ist nun Teil dieser Sitzung (eigene Sicherung übernimmt)
+            await fetch("/api/project/discard_recovery", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: info.path }) });
+        } else if (r === "discard") {
+            await fetch("/api/project/discard_recovery", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: info.path }) });
+        }
     } catch (e) { /* ohne Sicherung weiter */ }
 }
 
@@ -4276,4 +4353,290 @@ function setupExportDialog() {
             btn.disabled = false;
         }
     });
+}
+
+
+// -------------------------------------------------------------
+// Regelziele: Gruppe / Zone / Bauteil (PCB Investigator: Package-, Zone-, Component-Rules)
+// -------------------------------------------------------------
+const GROUP_LABELS = { SMD: "SMD Packages", THT: "THT Packages", Other: "Other Packages", Fiducial: "Fiducials", Library: "Bibliothek" };
+
+function updateRuleSourceBanner() {
+    const banner = document.getElementById("ruleSourceBanner");
+    const text = document.getElementById("ruleSourceText");
+    const btn = document.getElementById("btnRemoveTargetRule");
+    if (!banner) return;
+    const t = pkgState.ruleTarget || { kind: "package" };
+    banner.classList.remove("hidden", "inherited", "own");
+    btn.classList.add("hidden");
+    const inheritOpt = document.querySelector('#selectPkgRule option[value="inherit"]');
+    if (inheritOpt) inheritOpt.disabled = t.kind === "group";
+    if (t.kind === "package") {
+        const d = pkgState.activePackageData;
+        if (d?.rule?.rule_type === "inherit") {
+            banner.classList.add("inherited");
+            text.textContent = `↳ Regel geerbt von ${d.rule_source} – Parameter ändern erzeugt eine eigene Package-Regel`;
+        } else {
+            banner.classList.add("own");
+            text.textContent = `● Eigene Package-Regel (${d?.rule?.rule_type || "-"}) – „Inherit“ wählen, um die Gruppenregel zu verwenden`;
+        }
+    } else if (t.kind === "group") {
+        text.textContent = `Gruppenregel „${GROUP_LABELS[t.id] || t.id}“ – gilt für alle Packages dieser Gruppe mit „Inherit“`;
+    } else if (t.kind === "component") {
+        const c = pkgState.activeComponent;
+        if (c?.has_rule) {
+            banner.classList.add("own");
+            text.textContent = `● Bauteilregel ${t.id} (überschreibt Zone, Package und Gruppe)`;
+            btn.classList.remove("hidden");
+        } else {
+            banner.classList.add("inherited");
+            text.textContent = `↳ ${t.id} nutzt ${c?.rule_source || "-"} – Parameter ändern erzeugt eine Bauteilregel`;
+        }
+    } else if (t.kind === "zone") {
+        const z = (state.zones || []).find(x => x.id === t.id);
+        if (z?.rule) {
+            banner.classList.add("own");
+            text.textContent = `● Zonenregel „${z.name}“ (gilt für Öffnungen in der Zone, außer Bauteilregeln)`;
+            btn.classList.remove("hidden");
+        } else {
+            banner.classList.add("inherited");
+            text.textContent = `Zone „${z?.name || t.id}“ hat noch keine Regel – Parameter ändern legt sie an`;
+        }
+    }
+}
+
+function drawPkgMessage(lines) {
+    if (!pkgCtx || !pkgCanvas) return;
+    const r = pkgCanvas.getBoundingClientRect();
+    pkgCtx.save();
+    pkgCtx.setTransform(1, 0, 0, 1, 0, 0);
+    pkgCtx.fillStyle = "#000";
+    pkgCtx.fillRect(0, 0, pkgCanvas.width, pkgCanvas.height);
+    resetToCssPixels(pkgCtx);
+    pkgCtx.fillStyle = "#e2e8f0";
+    pkgCtx.textAlign = "center";
+    pkgCtx.font = "600 16px Inter, sans-serif";
+    (Array.isArray(lines) ? lines : [lines]).forEach((l, i) => {
+        if (i === 1) { pkgCtx.font = "13px Inter, sans-serif"; pkgCtx.fillStyle = "#94a3b8"; }
+        pkgCtx.fillText(l, r.width / 2, r.height / 2 - 20 + i * 24);
+    });
+    pkgCtx.restore();
+}
+
+function groupMessage(key) {
+    const g = (pkgState.groups || []).find(x => x.key === key);
+    return [`Gruppenregel: ${GROUP_LABELS[key] || key}`,
+            g ? `${g.inheriting} von ${g.packages} Packages erben diese Regel · ${g.pads} Pads auf der aktiven Seite` : "",
+            "„Generate Stencil Pads“ wendet sie auf alle erbenden Pads an."];
+}
+
+async function selectGroupRule(key) {
+    const d = await (await fetch("/api/groups")).json();
+    pkgState.groups = d.groups;
+    const g = d.groups.find(x => x.key === key);
+    if (!g) return;
+    pkgState.ruleTarget = { kind: "group", id: key };
+    pkgState.activePkgName = null;
+    pkgState.activePackageData = null;
+    pkgState.effectiveRuleType = g.rule.rule_type;
+    document.getElementById("singlePadBar")?.classList.add("hidden");
+    document.getElementById("canvasPkgTitle").textContent = GROUP_LABELS[key];
+    document.getElementById("canvasPkgPitch").textContent = "";
+    populateRuleInputs(g.rule);
+    updateRuleSourceBanner();
+    renderPkgTree();
+    drawPkgMessage(groupMessage(key));
+}
+
+function switchGenTab(tab) {
+    document.querySelectorAll("#genTabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+    document.getElementById("genTabPackages")?.classList.toggle("hidden", tab !== "packages");
+    document.getElementById("genTabZones")?.classList.toggle("hidden", tab !== "zones");
+    document.getElementById("genTabComponents")?.classList.toggle("hidden", tab !== "components");
+    if (tab === "zones") renderZoneRuleList();
+    if (tab === "components") loadComponentList();
+}
+
+function renderZoneRuleList() {
+    const box = document.getElementById("zoneRuleList");
+    if (!box) return;
+    const zones = state.zones || [];
+    box.innerHTML = zones.length ? "" : '<div class="dropdown-empty" style="padding:12px">Keine Zonen auf dieser Seite. Regelzone im Board aufziehen oder Stufenzone anlegen.</div>';
+    for (const z of zones) {
+        const el = document.createElement("div");
+        const active = pkgState.ruleTarget?.kind === "zone" && pkgState.ruleTarget.id === z.id;
+        el.className = `list-item ${active ? "active" : ""}`;
+        el.innerHTML = `<div class="li-main">${z.name}<div class="li-sub">${z.width.toFixed(1)} × ${z.height.toFixed(1)} mm</div></div>` +
+            (z.step ? `<span class="li-badge step">${Math.round(z.thickness * 1000)} µm</span>` : "") +
+            (z.rule ? `<span class="li-badge rule">${z.rule.rule_type}</span>` : '<span class="li-badge">keine Regel</span>');
+        el.addEventListener("click", () => selectZoneRule(z.id));
+        box.appendChild(el);
+    }
+}
+
+async function selectZoneRule(id) {
+    await refreshApertureData();
+    const z = (state.zones || []).find(x => x.id === id);
+    if (!z) return;
+    pkgState.ruleTarget = { kind: "zone", id };
+    pkgState.activePkgName = null;
+    pkgState.activePackageData = null;
+    const groups = (await (await fetch("/api/groups")).json()).groups;
+    const base = z.rule || groups.find(g => g.key === "SMD")?.rule;
+    pkgState.effectiveRuleType = base?.rule_type;
+    document.getElementById("singlePadBar")?.classList.add("hidden");
+    document.getElementById("canvasPkgTitle").textContent = z.name;
+    document.getElementById("canvasPkgPitch").textContent = "";
+    populateRuleInputs(base);
+    updateRuleSourceBanner();
+    renderZoneRuleList();
+    const n = (state.apertures || []).filter(a => a.cx >= z.x0 && a.cx <= z.x1 && a.cy >= z.y0 && a.cy <= z.y1).length;
+    drawPkgMessage([`Zone: ${z.name}`, `${n} Pads liegen in der Zone${z.step ? ` · Stufe ${Math.round(z.thickness * 1000)} µm` : " · reine Regelzone"}`, "„Generate Stencil Pads“ wendet die Zonenregel an."]);
+    // Im Board-Fenster die Zone zeigen
+    if (window.scBroadcast) window.scBroadcast("pkg-focus", { pkg: null, pin: null });
+}
+
+async function loadComponentList() {
+    const d = await (await fetch("/api/components")).json();
+    pkgState.components = d.components || [];
+    renderComponentList();
+}
+
+function renderComponentList() {
+    const box = document.getElementById("componentList");
+    if (!box) return;
+    const q = (document.getElementById("compSearchInput")?.value || "").toLowerCase();
+    const onlyRule = pkgState.compFilter === "rule";
+    const list = (pkgState.components || []).filter(c =>
+        (!q || c.refdes.toLowerCase().includes(q) || c.package.toLowerCase().includes(q)) && (!onlyRule || c.has_rule));
+    box.innerHTML = list.length ? "" : '<div class="dropdown-empty" style="padding:12px">Keine Bauteile (nur bei ODB++ mit Bauteildaten).</div>';
+    for (const c of list.slice(0, 800)) {
+        const el = document.createElement("div");
+        const active = pkgState.ruleTarget?.kind === "component" && pkgState.ruleTarget.id === c.refdes;
+        el.className = `list-item ${active ? "active" : ""}`;
+        el.innerHTML = `<div class="li-main"><b>${c.refdes}</b> <span class="li-sub">${c.package}</span></div><span class="li-badge">${c.pads} Pads</span>${c.has_rule ? '<span class="li-badge rule">eigene Regel</span>' : ""}`;
+        el.addEventListener("click", () => selectComponentRule(c.refdes));
+        box.appendChild(el);
+    }
+}
+
+async function selectComponentRule(refdes) {
+    const d = await (await fetch(`/api/component/${encodeURIComponent(refdes)}`)).json();
+    pkgState.ruleTarget = { kind: "component", id: refdes };
+    pkgState.activeComponent = d;
+    pkgState.activePkgName = null;
+    pkgState.activePackageData = d.preview;
+    pkgState.effectiveRuleType = d.effective_rule?.rule_type;
+    pkgState.rotation = d.rot || 0;
+    document.getElementById("singlePadBar")?.classList.add("hidden");
+    document.getElementById("canvasPkgTitle").textContent = `${refdes} (${d.package})`;
+    document.getElementById("canvasPkgPitch").textContent = `${d.pads} Pads`;
+    populateRuleInputs(d.rule || { ...d.effective_rule, rule_type: "inherit" });
+    updateRuleSourceBanner();
+    autoFitPackagePreview(d.preview);
+    renderPkgPreview();
+    renderComponentList();
+    window.scBroadcast?.("pkg-focus", { pkg: d.package, pin: null });
+    state.highlightPkg = d.package;
+}
+
+function setupRuleTargets() {
+    document.querySelectorAll("#genTabs button").forEach(b => b.addEventListener("click", () => switchGenTab(b.dataset.tab)));
+    document.getElementById("compSearchInput")?.addEventListener("input", renderComponentList);
+    document.querySelectorAll(".comp-filter").forEach(b => b.addEventListener("click", () => {
+        document.querySelectorAll(".comp-filter").forEach(x => x.classList.toggle("active", x === b));
+        pkgState.compFilter = b.dataset.f;
+        renderComponentList();
+    }));
+    document.getElementById("btnNewRuleZone")?.addEventListener("click", () => {
+        if (document.body.classList.contains("view-package-only")) {
+            showToast("Regelzone im Board-Fenster aufziehen (Werkzeug „Zone“, Häkchen „Stufenzone“ entfernen).", 5000);
+            return;
+        }
+        state.drawRuleZone = true;
+        switchWorkspace("board");
+        startDrawingZone();
+        showToast("Rechteck für die Regelzone im Board aufziehen", 3000);
+    });
+    document.getElementById("btnRemoveTargetRule")?.addEventListener("click", async () => {
+        const t = pkgState.ruleTarget;
+        if (!t || (t.kind !== "component" && t.kind !== "zone")) return;
+        await fetch(`/api/${t.kind}/${encodeURIComponent(t.id)}/rule`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: false }) });
+        await fetch(`/api/${t.kind}/${encodeURIComponent(t.id)}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        await refreshApertureData();
+        if (t.kind === "component") { await loadComponentList(); await selectComponentRule(t.id); }
+        else { renderZoneRuleList(); await selectZoneRule(t.id); }
+        showToast("Eigene Regel entfernt – Öffnungen neu berechnet");
+    });
+}
+
+// Info-Layer: AR, Fläche und Volumen je Pastenöffnung + Summe
+function renderPasteInfo(data) {
+    const pitchEl = document.getElementById("canvasPkgPitch");
+    if (!data?.paste?.length) return;
+    const T = data.base_thickness || state.stats?.base_thickness || 0.12;
+    const minAr = state.stats?.ipc_min_ar || 0.66;
+    let sumVol = 0, arMin = Infinity;
+    const infos = data.paste.map(sl => {
+        let area, perim;
+        if (sl.shape === "circle") { area = Math.PI * (sl.w / 2) ** 2; perim = Math.PI * sl.w; }
+        else if (sl.pts && sl.pts.length >= 3) {
+            area = 0; perim = 0;
+            for (let i = 0; i < sl.pts.length; i++) {
+                const a = sl.pts[i], b = sl.pts[(i + 1) % sl.pts.length];
+                area += a[0] * b[1] - b[0] * a[1];
+                perim += Math.hypot(b[0] - a[0], b[1] - a[1]);
+            }
+            area = Math.abs(area) / 2;
+        } else { area = sl.w * sl.h; perim = 2 * (sl.w + sl.h); }
+        const ar = area / (perim * T);
+        const vol = area * T * 1000; // nl
+        sumVol += vol;
+        arMin = Math.min(arMin, ar);
+        return { sl, area, ar, vol };
+    });
+    if (pitchEl && pkgState.ruleTarget?.kind !== "group") {
+        const base = data.pitch > 0 ? `Pitch: ${data.pitch} mm · ` : "";
+        pitchEl.textContent = `${base}Paste Σ ${sumVol.toFixed(1)} nl · AR min ${arMin.toFixed(2)} · ${Math.round(T * 1000)} µm`;
+    }
+    if (!pkgState.showInfo) return;
+    // Pin-in-Paste: Soll-Fläche je Pin aus Bohrung und Regelparametern (wie Engine)
+    const er = data.effective_rule || {};
+    const pipNeed = (pin) => {
+        const pad = data.pads?.find(p => p.pin === pin);
+        if (!pad?.drill) return null;
+        const dr = pad.drill, pinD = Math.max(0.1, dr - (er.pip_pin_clearance ?? 0.25));
+        const vHole = Math.max(0, (Math.PI * dr * dr / 4 - Math.PI * pinD * pinD / 4) * (er.pip_pcb_thickness ?? 1.6));
+        return vHole * 1.2 / Math.min(1, Math.max(0.1, (er.pip_metal_pct ?? 50) / 100)) / T;
+    };
+    pkgCtx.save();
+    resetToCssPixels(pkgCtx);
+    pkgCtx.textAlign = "center";
+    pkgCtx.textBaseline = "middle";
+    for (const inf of infos) {
+        const sw = Math.min(inf.sl.w, inf.sl.h) * pkgState.zoom;
+        if (sw < 26) continue; // zu klein für Beschriftung
+        const p = pkgWorldToScreen(inf.sl.cx, inf.sl.cy);
+        const col = inf.ar >= minAr ? "#4ade80" : (inf.ar >= minAr * 0.9 ? "#fbbf24" : "#f87171");
+        const lines = [[`AR ${inf.ar.toFixed(2)}`, col]];
+        if (inf.sl.type === "pin_in_paste") {
+            const need = pipNeed(inf.sl.pin);
+            if (need) {
+                const pct = Math.round(inf.area / need * 100);
+                lines.push([`${pct} % Vol.`, pct >= 95 ? "#4ade80" : (pct >= 80 ? "#fbbf24" : "#f87171")]);
+            }
+        }
+        if (sw >= 95) lines.push([`${inf.area.toFixed(3)} mm²`, "#e2e8f0"], [`${inf.vol.toFixed(1)} nl`, "#cbd5e1"]);
+        const fs = Math.max(9, Math.min(12, sw / 7));
+        pkgCtx.font = `600 ${fs}px "JetBrains Mono", monospace`;
+        const wbox = Math.min(sw, Math.max(...lines.map(l => pkgCtx.measureText(l[0]).width)) + 6);
+        const hbox = lines.length * (fs + 2) + 2;
+        pkgCtx.fillStyle = "rgba(0,0,0,0.6)";
+        pkgCtx.fillRect(p.x - wbox / 2, p.y - hbox / 2, wbox, hbox);
+        lines.forEach(([t, c], i) => {
+            pkgCtx.fillStyle = c;
+            pkgCtx.fillText(t, p.x, p.y - hbox / 2 + (fs + 2) * (i + 0.5) + 1, wbox);
+        });
+    }
+    pkgCtx.restore();
 }

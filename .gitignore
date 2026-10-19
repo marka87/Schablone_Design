@@ -9,3 +9,6 @@ Export/
 Autosave/
 recent_projects.json
 export_settings.json
+
+# Referenzdaten (PCB-I-Ausgaben, Video) – nicht versionieren
+Referenz/
