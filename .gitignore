@@ -4,3 +4,8 @@ stencilcraft-desktop/node_modules/
 
 # Generierte Schablonen-Exporte
 Export/
+
+# Laufzeitdaten der Desktop-App
+Autosave/
+recent_projects.json
+export_settings.json

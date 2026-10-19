@@ -119,27 +119,44 @@ impl StencilEngine {
         for (path, content) in files {
             imported.push(self.add_layer_from_gerber_content(&path, &content, None, None));
         }
-        let pick = |t: &[&str]| imported.iter().position(|(l, _)| t.contains(&l.layer_type.as_str()) && l.side.contains(side));
-        let paste = pick(&["paste"]);
-        if let Some(i) = paste {
-            self.load_paste_data(&imported[i].1);
+        let pick = |t: &[&str], sd: &str| imported.iter().position(|(l, _)| t.contains(&l.layer_type.as_str()) && l.side.contains(sd));
+        let side = if side.starts_with('b') { "bot" } else { "top" };
+        let other = if side == "top" { "bot" } else { "top" };
+        for s in [other, side] {
+            let paste = pick(&["paste"], s);
+            if s == other && paste.is_none() {
+                continue;
+            }
+            self.apertures.clear();
+            self.original_apertures.clear();
+            self.zones.clear();
+            self.pads.clear();
+            self.current_side = s.into();
+            if let Some(i) = paste {
+                self.load_paste_data(&imported[i].1);
+            }
+            if let Some(i) = pick(&["zone"], s) {
+                self.load_zones_data(&imported[i].1);
+            }
+            if let Some(i) = pick(&["mask", "copper"], s) {
+                self.pads = imported[i].1.pad_boxes();
+                self.correlate_apertures_with_pads();
+            }
+            if paste.is_some() {
+                self.detect_packages();
+            }
+            if s == other {
+                let d = self.take_side_data();
+                self.sides.insert(s.to_string(), d);
+            }
         }
-        if let Some(i) = pick(&["zone"]) {
-            self.load_zones_data(&imported[i].1);
-        }
-        if let Some(i) = pick(&["profile"]) {
+        if let Some(i) = pick(&["profile"], side).or_else(|| pick(&["profile"], "both")) {
             self.profile_paths = imported[i].1.profile_segments();
         }
-        if let Some(i) = pick(&["fiducial"]) {
+        if let Some(i) = pick(&["fiducial"], side) {
             self.fiducials = imported[i].1.fiducials();
         }
-        if let Some(i) = pick(&["mask", "copper"]) {
-            self.pads = imported[i].1.pad_boxes();
-            self.correlate_apertures_with_pads();
-        }
-        if paste.is_some() {
-            self.detect_packages();
-        }
+        self.apply_side_visibility();
         imported.len()
     }
 
@@ -172,6 +189,15 @@ impl StencilEngine {
             return Err(errors.join("; "));
         }
         self.load_customer_library(&self.current_customer.clone());
+        self.annotate_packages();
+        // Quelle merken (Projektdatei), Verlauf beginnt neu
+        if clear_previous {
+            self.source_paths = paths.to_vec();
+        } else {
+            self.source_paths.extend(paths.iter().cloned());
+        }
+        self.source_side = if side.starts_with('b') { "bot".into() } else { "top".into() };
+        self.history.clear();
         Ok(count)
     }
 
@@ -277,15 +303,18 @@ impl StencilEngine {
             overall = [overall[0].min(b[0]), overall[1].min(b[1]), overall[2].max(b[2]), overall[3].max(b[3])];
         };
         let mut count = 0;
-        let mut paste_layer: Option<String> = None;
+        // Je Seite: Pastenlage, Lötstopp-Pads und Toeprints (Pinpositionen)
+        let mut paste_layers: std::collections::HashMap<&'static str, String> = std::collections::HashMap::new();
+        let mut side_masks: std::collections::HashMap<&'static str, Vec<PadBox>> = std::collections::HashMap::new();
+        let mut side_toeprints: std::collections::HashMap<&'static str, Vec<(String, Vec<(i64, f64, f64)>)>> = std::collections::HashMap::new();
 
         for ml in &matrix {
             let name = ml.name.as_str();
             let lt = ml.ltype.as_str();
             let lside = odb_side(name);
             let (ltype, color, lside) = if lt.contains("PASTE") || matches!(name, "spt" | "spb" | "top_paste" | "bottom_paste") {
-                if lside == side && paste_layer.is_none() && !name.contains("copy") {
-                    paste_layer = Some(name.to_string());
+                if !name.contains("copy") {
+                    paste_layers.entry(lside).or_insert_with(|| name.to_string());
                 }
                 continue;
             } else if lt.contains("MASK") || matches!(name, "smt" | "smb" | "top_solder" | "bottom_solder") {
@@ -326,11 +355,30 @@ impl StencilEngine {
                             outline: Vec::new(),
                         });
                     }
-                    self.odb_toeprints.extend(comps.into_iter().filter(|_| comp_side.eq_ignore_ascii_case(side)).map(|c| (c.refdes, c.pins)));
+                    side_toeprints.entry(if comp_side == "BOT" { "bot" } else { "top" }).or_default().extend(comps.into_iter().map(|c| (c.refdes, c.pins)));
                 }
             }
             if let Some(feat) = job.get(&format!("{base}/features")) {
                 let f = odb::parse_features(feat, MAX_LAYER_PRIMS);
+                // Bohrungen (alle Bohrlagen) und Lötstopp der aktiven Seite für Pin-Infos merken
+                if ltype == "drill" {
+                    for p in &f.pads {
+                        if let PadGeom::Circle { d } = p.geom {
+                            self.drills.push((p.x, p.y, d));
+                        }
+                    }
+                } else if ltype == "mask" && (lside == "top" || lside == "bot") && !name.contains("copy") {
+                    for p in &f.pads {
+                        let (b, round) = match &p.geom {
+                            PadGeom::Circle { d } => ((p.x - d / 2.0, p.y - d / 2.0, p.x + d / 2.0, p.y + d / 2.0), true),
+                            PadGeom::Rect { w, h } => ((p.x - w / 2.0, p.y - h / 2.0, p.x + w / 2.0, p.y + h / 2.0), false),
+                            PadGeom::Poly { pts } => (super::geometry::bounds(pts), false),
+                        };
+                        let mut pb = PadBox::new(b.0, b.1, b.2, b.3);
+                        pb.round = round;
+                        side_masks.entry(if lside == "bot" { "bot" } else { "top" }).or_default().push(pb);
+                    }
+                }
                 if let Some(b) = f.bbox {
                     if b[0] < b[2] {
                         grow(b);
@@ -398,59 +446,77 @@ impl StencilEngine {
             }
         }
 
-        // Aktive Pastenlage als Aperturen laden
-        self.current_side = side.into();
-        let paste_layer = paste_layer.or_else(|| {
-            let layers_prefix = format!("{step_dir}/layers/");
-            let mut cands: Vec<String> = job
-                .files
-                .keys()
-                .filter_map(|k| k.strip_prefix(&layers_prefix).and_then(|r| r.strip_suffix("/features")).map(String::from))
-                .filter(|n| (n.contains("paste") || n == "spt" || n == "spb") && odb_side(n) == side)
+        // Pastenlagen beider Seiten als Arbeits-Aperturen laden; die gewünschte Seite zuletzt (= aktiv)
+        let other = if side == "top" { "bot" } else { "top" };
+        let layers_prefix = format!("{step_dir}/layers/");
+        for s in [other, side] {
+            let pl = paste_layers.get(s).cloned().or_else(|| {
+                let mut cands: Vec<String> = job
+                    .files
+                    .keys()
+                    .filter_map(|k| k.strip_prefix(&layers_prefix).and_then(|r| r.strip_suffix("/features")).map(String::from))
+                    .filter(|n| (n.contains("paste") || n == "spt" || n == "spb") && odb_side(n) == s)
+                    .collect();
+                cands.sort();
+                cands.into_iter().next()
+            });
+            if s == other && pl.is_none() {
+                continue;
+            }
+            self.apertures.clear();
+            self.original_apertures.clear();
+            self.zones.clear();
+            self.bridge_violations.clear();
+            self.current_side = s.into();
+            self.pads = side_masks.remove(s).unwrap_or_default();
+            self.odb_toeprints = side_toeprints.remove(s).unwrap_or_default();
+            if let Some(pl) = &pl {
+                if let Some(feat) = job.get(&format!("{step_dir}/layers/{pl}/features")) {
+                    self.load_odb_paste(&odb::parse_features(feat, usize::MAX), &eda);
+                }
+            }
+            self.correlate_apertures_with_pads();
+
+            let orig_prims: Vec<Prim> = self
+                .original_apertures
+                .iter()
+                .map(|a| match a.shape_type.as_str() {
+                    "circle" => Prim::circle(a.cx, a.cy, a.width / 2.0),
+                    "polygon" => Prim::poly(&a.points),
+                    _ => Prim::rect(a.cx, a.cy, a.width, a.height),
+                })
                 .collect();
-            cands.sort();
-            cands.into_iter().next()
-        });
-        if let Some(pl) = &paste_layer {
-            if let Some(feat) = job.get(&format!("{step_dir}/layers/{pl}/features")) {
-                self.load_odb_paste(&odb::parse_features(feat, usize::MAX), &eda);
+            self.upsert_layer(BoardLayer {
+                id: format!("paste_orig_{s}"),
+                name: format!("{}_PASTE (Kunde / Original)", s.to_uppercase()),
+                filename: format!("{s}_paste_orig"),
+                layer_type: "paste_orig".into(),
+                side: s.into(),
+                color: "#ec4899".into(),
+                visible: false,
+                opacity: 0.80,
+                file_path: String::new(),
+                primitives: orig_prims,
+            });
+            self.upsert_layer(BoardLayer {
+                id: format!("stencil_mod_{s}"),
+                name: format!("Schablone {} (Zwischenspeicher)", s.to_uppercase()),
+                filename: format!("stencil_{s}_working_buffer"),
+                layer_type: "paste".into(),
+                side: s.into(),
+                color: "#c084fc".into(),
+                visible: s == side,
+                opacity: 0.90,
+                file_path: String::new(),
+                primitives: Vec::new(),
+            });
+            count += 2;
+            if s == other {
+                let d = self.take_side_data();
+                self.sides.insert(s.to_string(), d);
             }
         }
-
-        let orig_prims: Vec<Prim> = self
-            .original_apertures
-            .iter()
-            .map(|a| match a.shape_type.as_str() {
-                "circle" => Prim::circle(a.cx, a.cy, a.width / 2.0),
-                "polygon" => Prim::poly(&a.points),
-                _ => Prim::rect(a.cx, a.cy, a.width, a.height),
-            })
-            .collect();
-        self.upsert_layer(BoardLayer {
-            id: format!("paste_orig_{side}"),
-            name: format!("{}_PASTE (Kunde / Original)", side.to_uppercase()),
-            filename: format!("{side}_paste_orig"),
-            layer_type: "paste_orig".into(),
-            side: side.into(),
-            color: "#ec4899".into(),
-            visible: false,
-            opacity: 0.80,
-            file_path: String::new(),
-            primitives: orig_prims,
-        });
-        self.upsert_layer(BoardLayer {
-            id: format!("stencil_mod_{side}"),
-            name: format!("Schablone {} (Zwischenspeicher)", side.to_uppercase()),
-            filename: format!("stencil_{side}_working_buffer"),
-            layer_type: "paste".into(),
-            side: side.into(),
-            color: "#c084fc".into(),
-            visible: true,
-            opacity: 0.90,
-            file_path: String::new(),
-            primitives: Vec::new(),
-        });
-        count += 2;
+        self.apply_side_visibility();
 
         if overall[0] < overall[2] {
             self.bounds = overall;
@@ -522,9 +588,8 @@ impl StencilEngine {
             t.category = super::packages::categorize_package_name(&p.name).into();
             t.outline = Outline { w: p.w, h: p.h };
             t.component_count = comp_count.get(p.name.as_str()).copied().unwrap_or(0);
-            if p.name.to_lowercase().contains("qfn") {
-                t.rule = PackageRule::with("house_builder", "HouseBuilder");
-            }
+            // Wie PCB Investigator: Standardregel "Inherit – Handle Stencil Creation by Package Group"
+            t.rule = PackageRule::with("package_group", "Handle Stencil Creation by Package Group");
             t.pads_relative = if pins.is_empty() {
                 vec![PadRel::new(1, r3(-pitch / 2.0), 0.0, pw, ph, "right"), PadRel::new(2, r3(pitch / 2.0), 0.0, pw, ph, "left")]
             } else {

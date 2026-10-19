@@ -216,6 +216,20 @@ impl StencilEngine {
             if nearest_twin(&self.apertures, &used, bid).map(|(n, _)| n) != Some(id) {
                 continue;
             }
+            // Pads einer Reihe (Stecker, IC-Seite) haben weitere gleich große Nachbarn im selben
+            // Abstand – das ist kein 2-Pin-Chip.
+            let in_row = |a: usize, partner: usize| {
+                let ap = &self.apertures[a];
+                query(ap.cx, ap.cy, dist * 1.2).into_iter().any(|nid| {
+                    let n = &self.apertures[nid];
+                    nid != a && nid != partner
+                        && (n.width - ap.width).abs() < 0.08 && (n.height - ap.height).abs() < 0.08
+                        && (n.cx - ap.cx).hypot(n.cy - ap.cy) <= dist * 1.2
+                })
+            };
+            if in_row(id, bid) || in_row(bid, id) {
+                continue;
+            }
             used.insert(id);
             used.insert(bid);
             let pitch = dist;
@@ -230,11 +244,13 @@ impl StencilEngine {
             } else {
                 "1206"
             };
-            let (ax, ay, pw, ph) = {
+            let (ax, ay, aw, ah) = {
                 let a = &self.apertures[id];
                 (a.cx, a.cy, r3(a.width), r3(a.height))
             };
             let (bx, by) = (self.apertures[bid].cx, self.apertures[bid].cy);
+            // Template liegt horizontal (Pads links/rechts): bei vertikal angeordnetem Paar B/H tauschen
+            let (pw, ph) = if (bx - ax).abs() >= (by - ay).abs() { (aw, ah) } else { (ah, aw) };
             let (dx, dy) = (bx - ax, by - ay);
             let (fa, fb) = if dx.abs() >= dy.abs() {
                 if dx > 0.0 { ("right", "left") } else { ("left", "right") }
@@ -338,8 +354,13 @@ impl StencilEngine {
             }
 
             let outline = Outline { w: r2(cw + 0.6), h: r2(ch + 0.6) };
+            let rel: Vec<(f64, f64, f64, f64)> = pads_rel.iter().map(|p| (p.cx, p.cy, p.w, p.h)).collect();
+            let real_pitch = (0..rel.len()).filter_map(|i| super::neighbor_pitch(&rel, i)).fold(f64::INFINITY, f64::min);
             match self.packages.get_mut(&pkg_name) {
                 Some(p) => {
+                    if real_pitch.is_finite() {
+                        p.pitch = r3(real_pitch);
+                    }
                     p.pads_relative = pads_rel;
                     p.outline = outline;
                     p.component_count += 1;
@@ -347,9 +368,10 @@ impl StencilEngine {
                 None => {
                     let avg_w = comp.iter().map(|&i| self.apertures[i].width).sum::<f64>() / pins as f64;
                     let avg_h = comp.iter().map(|&i| self.apertures[i].height).sum::<f64>() / pins as f64;
-                    let pitch = if pads_rel.len() > 1 { (pads_rel[0].cx - pads_rel[1].cx).abs().max(0.4) } else { 0.8 };
+                    let pitch = if real_pitch.is_finite() { real_pitch } else { 0.8 };
                     let mut p = PackageTemplate::new(&pkg_name, pins, r3(pitch), r2(avg_w), r2(avg_h));
                     p.category = category.into();
+                    p.rule = PackageRule::with("package_group", "Handle Stencil Creation by Package Group");
                     p.outline = outline;
                     p.pads_relative = pads_rel;
                     p.component_count = 1;
@@ -385,6 +407,7 @@ impl StencilEngine {
             let p = self.packages.entry(grp.clone()).or_insert_with(|| {
                 let mut p = PackageTemplate::new(&grp, 1, 0.0, w, h);
                 p.category = "Other".into();
+                p.rule = PackageRule::with("package_group", "Handle Stencil Creation by Package Group");
                 p.component_count = 0;
                 p.pads_relative = vec![PadRel::new(1, 0.0, 0.0, w, h, "center").round(round)];
                 p

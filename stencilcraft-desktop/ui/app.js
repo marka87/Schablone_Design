@@ -74,10 +74,163 @@ const measureState = {
 window.addEventListener("DOMContentLoaded", async () => {
     setupCanvas();
     setupEventListeners();
+    setupSplitters();
+    setupPackageHighlight();
+    const view = new URLSearchParams(location.search).get("view");
+    if (view === "package") {
+        // Eigenes Stencil-Generator-Fenster
+        document.body.classList.add("view-package-only");
+        document.title = "Stencil Generator – SMT StencilCraft";
+        switchWorkspace("package");
+    }
+    setupProjectUI();
     await loadLayers();
     await refreshApertureData();
     fitToScreen();
+    await refreshHistory();
+    refreshSides();
+    if (view !== "package") {
+        setInterval(() => fetch("/api/project/autosave", { method: "POST" }).catch(() => {}), 60000);
+        offerRecovery();
+    }
 });
+
+// -------------------------------------------------------------
+// Layout: verschiebbare / einklappbare Bereiche (Größen werden gespeichert)
+// -------------------------------------------------------------
+const PANEL_VARS = {
+    layerPanel: "--left-panel-w",
+    boardSidebar: "--right-panel-w",
+    pkgSidebar: "--pkg-sidebar-w",
+    ruleConfigCard: "--rule-card-h"
+};
+
+function saveLayout() {
+    const root = document.documentElement;
+    const sizes = {};
+    for (const [id, v] of Object.entries(PANEL_VARS)) {
+        const val = root.style.getPropertyValue(v);
+        if (val) sizes[id] = parseFloat(val);
+    }
+    const collapsed = Object.keys(PANEL_VARS).filter(id => document.getElementById(id)?.classList.contains("panel-collapsed"));
+    localStorage.setItem("sc.layout", JSON.stringify({ sizes, collapsed }));
+}
+
+function onLayoutChanged() {
+    resizeCanvas();
+    render();
+    if (typeof pkgInitialized !== "undefined" && pkgInitialized) {
+        resizePkgCanvas();
+        renderPkgPreview();
+    }
+}
+
+function setupSplitters() {
+    const root = document.documentElement;
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem("sc.layout") || "{}"); } catch (e) { saved = {}; }
+    for (const [id, px] of Object.entries(saved.sizes || {})) {
+        if (PANEL_VARS[id] && px > 0) root.style.setProperty(PANEL_VARS[id], `${px}px`);
+    }
+    for (const id of saved.collapsed || []) document.getElementById(id)?.classList.add("panel-collapsed");
+
+    document.querySelectorAll(".splitter").forEach(sp => {
+        const target = document.getElementById(sp.dataset.target);
+        if (!target) return;
+        const horiz = sp.classList.contains("splitter-h");
+        const side = sp.dataset.side;
+        sp.addEventListener("mousedown", (e) => {
+            e.preventDefault();
+            target.classList.remove("panel-collapsed");
+            const startPos = horiz ? e.clientY : e.clientX;
+            const r = target.getBoundingClientRect();
+            const start = horiz ? r.height : r.width;
+            sp.classList.add("dragging");
+            document.body.classList.add("resizing");
+            document.body.style.cursor = horiz ? "row-resize" : "col-resize";
+            const move = (ev) => {
+                const d = (horiz ? ev.clientY : ev.clientX) - startPos;
+                const limit = (horiz ? window.innerHeight : window.innerWidth) * 0.65;
+                const size = Math.max(140, Math.min(limit, side === "right" ? start - d : start + d));
+                root.style.setProperty(PANEL_VARS[target.id], `${Math.round(size)}px`);
+                onLayoutChanged();
+            };
+            const up = () => {
+                window.removeEventListener("mousemove", move);
+                window.removeEventListener("mouseup", up);
+                sp.classList.remove("dragging");
+                document.body.classList.remove("resizing");
+                document.body.style.cursor = "";
+                saveLayout();
+            };
+            window.addEventListener("mousemove", move);
+            window.addEventListener("mouseup", up);
+        });
+        sp.addEventListener("dblclick", () => {
+            target.classList.toggle("panel-collapsed");
+            saveLayout();
+            onLayoutChanged();
+        });
+    });
+}
+
+// -------------------------------------------------------------
+// Package-Hervorhebung im Board (alle Instanzen eines Packages, optional ein Pin)
+// -------------------------------------------------------------
+function setupPackageHighlight() {
+    document.getElementById("btnHighlightClear")?.addEventListener("click", () => setPackageHighlight(null));
+    document.getElementById("btnHighlightZoom")?.addEventListener("click", zoomToHighlight);
+    document.getElementById("chkHighlightDim")?.addEventListener("change", (e) => { state.highlightDim = e.target.checked; render(); });
+}
+
+function setPackageHighlight(pkg, pin = null) {
+    // Packages ohne Pads auf der Platine (z. B. Bibliothek) nicht hervorheben
+    if (pkg && !(state.apertures || []).some(a => a.pkg_name === pkg)) pkg = null;
+    state.highlightPkg = pkg || null;
+    state.highlightPin = pkg ? pin : null;
+    const chip = document.getElementById("pkgHighlightChip");
+    if (chip) {
+        chip.classList.toggle("hidden", !pkg);
+        if (pkg) {
+            const n = (state.apertures || []).filter(a => a.pkg_name === pkg).length;
+            document.getElementById("lblHighlightPkg").textContent = pkg;
+            document.getElementById("lblHighlightCount").textContent = n;
+            document.getElementById("lblHighlightPin").textContent = pin !== null && pin !== undefined ? ` · Pin ${pin}` : "";
+        }
+    }
+    render();
+}
+window.setPackageHighlight = setPackageHighlight;
+
+function fitToWorldBox(minX, minY, maxX, maxY, margin = 60) {
+    const rect = container.getBoundingClientRect();
+    const worldW = Math.max(maxX - minX, 1), worldH = Math.max(maxY - minY, 1);
+    const availW = Math.max(10, rect.width - margin * 2), availH = Math.max(10, rect.height - margin * 2);
+    state.zoom = Math.max(0.2, Math.min(150, Math.min(availW / worldW, availH / worldH)));
+    state.panX = margin + (availW - worldW * state.zoom) / 2 - minX * state.zoom;
+    state.panY = margin + (availH - worldH * state.zoom) / 2 - minY * state.zoom;
+    render();
+}
+
+function zoomToHighlight() {
+    const aps = (state.apertures || []).filter(a => a.pkg_name === state.highlightPkg && (state.highlightPin == null || a.pin_number === state.highlightPin));
+    if (aps.length === 0) return;
+    fitToWorldBox(Math.min(...aps.map(a => a.cx - a.w / 2)), Math.min(...aps.map(a => a.cy - a.h / 2)),
+                  Math.max(...aps.map(a => a.cx + a.w / 2)), Math.max(...aps.map(a => a.cy + a.h / 2)));
+}
+
+function renderPackageHighlight() {
+    if (!state.highlightPkg) return;
+    for (const ap of state.apertures) {
+        if (ap.pkg_name !== state.highlightPkg) continue;
+        const isPin = state.highlightPin != null && ap.pin_number === state.highlightPin;
+        const sp = worldToScreen(ap.cx - ap.w / 2, ap.cy + ap.h / 2);
+        const sw = Math.max(3, ap.w * state.zoom), sh = Math.max(3, ap.h * state.zoom);
+        ctx.strokeStyle = isPin ? "#fde047" : "#fb923c";
+        ctx.lineWidth = isPin ? 3 : 2;
+        ctx.strokeRect(sp.x - 2, sp.y - 2, sw + 4, sh + 4);
+    }
+}
 
 function setupCanvas() {
     resizeCanvas();
@@ -85,10 +238,19 @@ function setupCanvas() {
         resizeCanvas();
         render();
     });
+    // Größe/Zoom-Änderungen der Container zuverlässig erfassen (auch bei ausgeblendeter Ansicht)
+    if (window.ResizeObserver) {
+        new ResizeObserver(() => { resizeCanvas(); render(); }).observe(container);
+        const pc = document.getElementById("pkgPreviewContainer");
+        if (pc) new ResizeObserver(() => {
+            if (typeof resizePkgCanvas === "function" && pkgInitialized) { resizePkgCanvas(); renderPkgPreview(); }
+        }).observe(pc);
+    }
 }
 
 function resizeCanvas() {
     const rect = container.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return; // ausgeblendet
     const dpr = window.devicePixelRatio || 1;
     canvas.width = rect.width * dpr;
     canvas.height = rect.height * dpr;
@@ -206,67 +368,97 @@ function pkgWorldToScreen(x, y) {
     const centerX = rect.width / 2 + pkgState.panX;
     const centerY = rect.height / 2 + pkgState.panY;
     const rotRad = ((pkgState.rotation || 0) * Math.PI) / 180;
-    const rx = x * Math.cos(rotRad) - y * Math.sin(rotRad);
-    const ry = x * Math.sin(rotRad) + y * Math.cos(rotRad);
-    const sx = centerX + rx * pkgState.zoom;
-    const sy = centerY - ry * pkgState.zoom; // Y invertiert im CAD
-    return { x: sx, y: sy };
+    const c = Math.cos(rotRad), s = Math.sin(rotRad);
+    // Entspricht ctx.translate(center); ctx.rotate(θ); ctx.scale(z, -z)
+    return {
+        x: centerX + pkgState.zoom * (x * c + y * s),
+        y: centerY + pkgState.zoom * (x * s - y * c)
+    };
 }
 
+// Bildschirm (clientX/Y) → Package-Koordinaten in mm (Umkehrung von pkgWorldToScreen)
+function pkgScreenToWorld(clientX, clientY) {
+    const pCanvas = document.getElementById("pkgPreviewCanvas");
+    const rect = pCanvas.getBoundingClientRect();
+    const vx = (clientX - rect.left - (rect.width / 2 + pkgState.panX)) / pkgState.zoom;
+    const vy = (clientY - rect.top - (rect.height / 2 + pkgState.panY)) / pkgState.zoom;
+    const rotRad = ((pkgState.rotation || 0) * Math.PI) / 180;
+    const c = Math.cos(rotRad), s = Math.sin(rotRad);
+    return { x: vx * c + vy * s, y: vx * s - vy * c };
+}
+
+// Fangpunkte eines Elements: Zentrum, Ecken, Kantenmitten bzw. Polygon-Eckpunkte
+function snapCandidates(cx, cy, w, h, pts, round) {
+    const out = [{ x: cx, y: cy, kind: "Mitte" }];
+    if (pts && pts.length >= 3 && pts.length <= 64) {
+        for (const p of pts) out.push({ x: p[0], y: p[1], kind: "Ecke" });
+        for (let i = 0; i < pts.length; i++) {
+            const a = pts[i], b = pts[(i + 1) % pts.length];
+            out.push({ x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, kind: "Kante" });
+        }
+    } else if (w && h) {
+        const hw = w / 2, hh = h / 2;
+        out.push({ x: cx - hw, y: cy, kind: "Kante" }, { x: cx + hw, y: cy, kind: "Kante" },
+                 { x: cx, y: cy - hh, kind: "Kante" }, { x: cx, y: cy + hh, kind: "Kante" });
+        if (!round) {
+            out.push({ x: cx - hw, y: cy - hh, kind: "Ecke" }, { x: cx + hw, y: cy - hh, kind: "Ecke" },
+                     { x: cx + hw, y: cy + hh, kind: "Ecke" }, { x: cx - hw, y: cy + hh, kind: "Ecke" });
+        }
+    }
+    return out;
+}
+
+function nearestSnap(items, wx, wy, maxDist) {
+    let best = null, bestD = maxDist;
+    for (const it of items) {
+        const reach = Math.max(it.w || 0, it.h || 0) / 2 + maxDist;
+        if (Math.abs(it.cx - wx) > reach || Math.abs(it.cy - wy) > reach) continue;
+        for (const c of snapCandidates(it.cx, it.cy, it.w, it.h, it.pts, it.round)) {
+            const d = Math.hypot(c.x - wx, c.y - wy);
+            if (d < bestD) {
+                bestD = d;
+                best = { x: c.x, y: c.y, label: `${it.label} · ${c.kind}` };
+            }
+        }
+    }
+    return best;
+}
+
+// Fangen im Board: Pad-/Slice-Ecken, Kantenmitten, Zentren und Bauteilzentren (8 px Fangradius).
 function findSnapPointBoard(wx, wy) {
-    const snapDistMm = 15 / state.zoom;
-    let bestSnap = null;
-    let minDist = snapDistMm;
-
-    if (state.apertures) {
-        for (const ap of state.apertures) {
-            const dist = Math.hypot(ap.cx - wx, ap.cy - wy);
-            if (dist < minDist) {
-                minDist = dist;
-                bestSnap = { x: ap.cx, y: ap.cy, label: ap.comp_id || "Pad" };
-            }
+    const snapDistMm = 8 / state.zoom;
+    const items = [];
+    for (const ap of state.apertures || []) {
+        const label = ap.comp_id ? `${ap.comp_id}` : "Pad";
+        if (ap.slices && ap.slices.length > 0) {
+            for (const s of ap.slices) items.push({ cx: s.cx, cy: s.cy, w: s.w, h: s.h, pts: s.pts, round: s.shape === "circle", label });
         }
+        items.push({ cx: ap.cx, cy: ap.cy, w: ap.w, h: ap.h, pts: ap.pts, round: ap.shape === "circle", label });
     }
-    if (state.components) {
-        for (const c of state.components) {
-            const dist = Math.hypot(c.cx - wx, c.cy - wy);
-            if (dist < minDist) {
-                minDist = dist;
-                bestSnap = { x: c.cx, y: c.cy, label: c.refdes || "Comp" };
-            }
-        }
+    for (const c of state.components || []) {
+        items.push({ cx: c.cx, cy: c.cy, w: 0, h: 0, label: c.refdes || "Bauteil" });
     }
-    return bestSnap;
+    return nearestSnap(items, wx, wy, snapDistMm);
 }
 
+// Fangen im Stencil Generator: Kupferpads und Pastenöffnungen (Ecken, Kantenmitten, Zentren).
 function findSnapPointPkg(mmX, mmY) {
-    const snapDistMm = 15 / pkgState.zoom;
-    let bestSnap = null;
-    let minDist = snapDistMm;
-
-    if (pkgState.activePackageData?.pads) {
-        for (const p of pkgState.activePackageData.pads) {
-            let dist = Math.hypot(p.cx - mmX, p.cy - mmY);
-            if (dist < minDist) {
-                minDist = dist;
-                bestSnap = { x: p.cx, y: p.cy, label: `Pin ${p.pin}` };
-            }
-            const corners = [
-                { x: p.cx - p.w / 2, y: p.cy - p.h / 2 },
-                { x: p.cx + p.w / 2, y: p.cy - p.h / 2 },
-                { x: p.cx + p.w / 2, y: p.cy + p.h / 2 },
-                { x: p.cx - p.w / 2, y: p.cy + p.h / 2 }
-            ];
-            for (const crn of corners) {
-                dist = Math.hypot(crn.x - mmX, crn.y - mmY);
-                if (dist < minDist) {
-                    minDist = dist;
-                    bestSnap = { x: crn.x, y: crn.y, label: `Pin ${p.pin}` };
-                }
-            }
-        }
+    const snapDistMm = 8 / pkgState.zoom;
+    const data = pkgState.activePackageData;
+    const items = [];
+    for (const p of data?.pads || []) {
+        items.push({ cx: p.cx, cy: p.cy, w: p.w, h: p.h, round: p.shape === "circle", label: `Pin ${p.pin}` });
     }
-    return bestSnap;
+    for (const s of data?.paste || []) {
+        items.push({ cx: s.cx, cy: s.cy, w: s.w, h: s.h, pts: s.pts, round: s.shape === "circle", label: s.pin ? `Paste ${s.pin}` : "Paste" });
+    }
+    return nearestSnap(items, mmX, mmY, snapDistMm);
+}
+
+// Setzt die Transformation auf CSS-Pixel (berücksichtigt devicePixelRatio, z. B. bei Seitenzoom).
+function resetToCssPixels(targetCtx) {
+    const dpr = window.devicePixelRatio || 1;
+    targetCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
 function drawCanvasScaleBar(targetCtx, canvasWidth, canvasHeight, zoom, offsetX = 14, offsetY = 65) {
@@ -295,7 +487,7 @@ function drawCanvasScaleBar(targetCtx, canvasWidth, canvasHeight, zoom, offsetX 
     const label = `${mmStr} (${mils} mil)`;
 
     targetCtx.save();
-    targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+    resetToCssPixels(targetCtx);
 
     const x = offsetX;
     const y = canvasHeight - offsetY;
@@ -350,7 +542,7 @@ function drawMeasurementLayer(targetCtx, mode, toScreenFn, zoom) {
         if (measureState.hoverSnap) {
             const s = toScreenFn(measureState.hoverSnap.x, measureState.hoverSnap.y);
             targetCtx.save();
-            targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+            resetToCssPixels(targetCtx);
             targetCtx.strokeStyle = "#38bdf8";
             targetCtx.fillStyle = "rgba(56, 189, 248, 0.4)";
             targetCtx.lineWidth = 1.5;
@@ -385,7 +577,7 @@ function drawSingleMeasurement(targetCtx, pt1, pt2, toScreenFn, isActive) {
     if (dist < 0.0001) return;
 
     targetCtx.save();
-    targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+    resetToCssPixels(targetCtx);
 
     const color = isActive ? "#38bdf8" : "#0ea5e9";
     targetCtx.strokeStyle = color;
@@ -822,8 +1014,10 @@ function renderApertures() {
     const activePasteLayer = pasteLayers.find(l => l.visible);
     const pasteColor = (activePasteLayer && activePasteLayer.color) ? activePasteLayer.color : "rgba(244, 114, 182, 0.85)";
 
+    const dimOthers = state.highlightPkg && state.highlightDim !== false;
     for (const ap of state.apertures) {
         let fillColor = "#38bdf8";
+        ctx.globalAlpha = dimOthers && ap.pkg_name !== state.highlightPkg ? 0.22 : 1.0;
 
         if (isHeatmap) {
             if (ap.status === "OK") fillColor = "#10b981";
@@ -881,6 +1075,8 @@ function renderApertures() {
             ctx.fill();
         }
     }
+    ctx.globalAlpha = 1.0;
+    renderPackageHighlight();
 }
 
 function renderSelectionHighlight() {
@@ -1021,6 +1217,11 @@ async function selectAperture(apId) {
         state.selectedAperture = ap;
 
         updateInspectorUI(ap);
+        if (ap.package_name && ap.package_name !== state.highlightPkg) {
+            setPackageHighlight(ap.package_name, null);
+        }
+        const badge = document.getElementById("padPkgNameBadge");
+        if (badge) badge.textContent = ap.package_name || ap.package_group || "-";
         render();
     } catch (e) {
         console.error("Fehler beim Laden der Apertur-Details:", e);
@@ -1278,12 +1479,8 @@ function showToast(msg, durationMs = 3500) {
 }
 
 async function promptCloseBeforeLoad() {
-    if (state.apertures && state.apertures.length > 0) {
-        const replace = confirm("Ein Datensatz ist bereits geöffnet. Möchten Sie den vorherigen Datensatz schließen, um den neuen sauber zu laden?\n\n(Klicken Sie auf 'OK' zum Schließen & Neuladen, oder 'Abbrechen', um vorher zu speichern/exportieren)");
-        if (!replace) return false;
-        await closeCurrentDataset();
-    }
-    return true;
+    // Nur bei ungespeicherten Änderungen nachfragen
+    return guardUnsaved("einen neuen Datensatz laden");
 }
 
 // Windows Dialog Triggers
@@ -1397,14 +1594,16 @@ function setupEventListeners() {
     }, { passive: false });
 
     container.addEventListener("mousedown", (e) => {
+        if (e.target !== canvas) return; // Klicks auf Buttons/Overlays ignorieren
         if (e.button === 0 || e.button === 1) {
             if (measureState.active && e.button === 0) {
                 const rect = container.getBoundingClientRect();
                 const sx = e.clientX - rect.left;
                 const sy = e.clientY - rect.top;
                 let worldPt = screenToWorld(sx, sy);
-                if (measureState.hoverSnap) {
-                    worldPt = { x: measureState.hoverSnap.x, y: measureState.hoverSnap.y };
+                const snap = e.shiftKey ? null : findSnapPointBoard(worldPt.x, worldPt.y);
+                if (snap) {
+                    worldPt = { x: snap.x, y: snap.y };
                 }
 
                 if (!measureState.startPoint) {
@@ -1464,20 +1663,20 @@ function setupEventListeners() {
             const sy = e.clientY - rect.top;
             if (sx >= 0 && sx <= rect.width && sy >= 0 && sy <= rect.height) {
                 const rawWorld = screenToWorld(sx, sy);
-                measureState.hoverSnap = findSnapPointBoard(rawWorld.x, rawWorld.y);
+                measureState.hoverSnap = e.shiftKey ? null : findSnapPointBoard(rawWorld.x, rawWorld.y);
                 measureState.currentPoint = measureState.hoverSnap ? { x: measureState.hoverSnap.x, y: measureState.hoverSnap.y } : rawWorld;
                 render();
             }
         } else {
             const w = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
             document.getElementById("coordsDisplay").innerText = 
-                `X: ${w.x.toFixed(2)} mm | Y: ${w.y.toFixed(2)} mm | Zoom: ${Math.round(state.zoom * 25)}%`;
+                `X: ${w.x.toFixed(2)} mm | Y: ${w.y.toFixed(2)} mm | Zoom: ${Math.round(state.zoom * 100 / 3.0)}%`;
         }
     });
 
     // Doppelklick auf Package oder Pad -> Sofortiger Sprung in den Stencil Generator
     container.addEventListener("dblclick", (e) => {
-        if (measureState.active) return;
+        if (e.target !== canvas || measureState.active) return;
         const rect = container.getBoundingClientRect();
         const sx = e.clientX - rect.left;
         const sy = e.clientY - rect.top;
@@ -1487,16 +1686,17 @@ function setupEventListeners() {
         let targetPin = null;
         let targetRot = 0;
 
-        // 1. Suche nach Apertur (Paste / Pad)
+        // 1. Suche nach Apertur (Paste / Pad): nächstgelegenes Pad im Fangbereich
         if (state.apertures) {
-            for (const ap of state.apertures) {
-                const dx = Math.abs(ap.cx - w.x);
-                const dy = Math.abs(ap.cy - w.y);
-                if (dx <= (ap.w / 2 + 0.3) && dy <= (ap.h / 2 + 0.3)) {
+            const hits = state.apertures
+                .filter(ap => Math.abs(ap.cx - w.x) <= ap.w / 2 + 0.3 && Math.abs(ap.cy - w.y) <= ap.h / 2 + 0.3)
+                .sort((a, b) => Math.hypot(a.cx - w.x, a.cy - w.y) - Math.hypot(b.cx - w.x, b.cy - w.y));
+            for (const ap of hits) {
+                {
                     targetPkg = ap.pkg_name || ap.package_name || ap.package || ap.pkg;
                     targetPin = ap.pin_number ?? ap.pin;
-                    if (ap.component_id && state.components) {
-                        const comp = state.components.find(c => c.refdes === ap.component_id);
+                    if (ap.comp_id && state.components) {
+                        const comp = state.components.find(c => c.refdes === ap.comp_id);
                         if (comp) targetRot = comp.rot || comp.rotation || 0;
                     }
                     break;
@@ -1526,14 +1726,20 @@ function setupEventListeners() {
                     closestDist = dist;
                     targetPkg = ap.pkg_name || ap.package_name || ap.package || ap.pkg;
                     targetPin = ap.pin_number ?? ap.pin;
-                    if (ap.component_id && state.components) {
-                        const comp = state.components.find(c => c.refdes === ap.component_id);
+                    if (ap.comp_id && state.components) {
+                        const comp = state.components.find(c => c.refdes === ap.comp_id);
                         if (comp) targetRot = comp.rot || comp.rotation || 0;
                     }
                 }
             }
         }
 
+        if (targetPkg && window.scGeneratorDetached) {
+            window.scBroadcast?.("open-package", { pkg: targetPkg, pin: targetPin ?? null, rot: targetRot });
+            window.scFocusGenerator?.();
+            setPackageHighlight(targetPkg, targetPin ?? null);
+            return;
+        }
         if (targetPkg) {
             switchWorkspace("package", targetPkg, targetRot);
             showToast(`📦 Package "${targetPkg}" im Stencil Generator geöffnet (${targetRot}°)`);
@@ -1568,17 +1774,23 @@ function setupEventListeners() {
         const tag = document.activeElement ? document.activeElement.tagName.toLowerCase() : "";
         if (tag === "input" || tag === "textarea" || tag === "select") return;
 
+        if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+            const k = e.key.toLowerCase();
+            if (k === "z" && !e.shiftKey) { e.preventDefault(); doUndo(); return; }
+            if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); doRedo(); return; }
+            if (k === "s") { e.preventDefault(); saveProject(e.shiftKey); return; }
+        }
         if (e.key === "m" || e.key === "M") {
             e.preventDefault();
             toggleMeasureTool();
         } else if (e.key === "Escape") {
-            if (measureState.measurements.length > 0) {
-                clearMeasurements();
-            } else if (measureState.startPoint) {
+            if (measureState.startPoint) {
                 measureState.startPoint = null;
                 measureState.currentPoint = null;
                 render();
                 renderPkgPreview();
+            } else if (measureState.measurements.length > 0) {
+                clearMeasurements();
             } else if (measureState.active) {
                 toggleMeasureTool(false);
             }
@@ -1753,13 +1965,28 @@ function setupEventListeners() {
     });
 
     // Zoom Toolbar
-    document.getElementById("btnZoomIn").addEventListener("click", () => {
-        state.zoom *= 1.3; render();
-    });
-    document.getElementById("btnZoomOut").addEventListener("click", () => {
-        state.zoom /= 1.3; render();
-    });
+    const zoomAroundCenter = (factor) => {
+        const rect = container.getBoundingClientRect();
+        const cx = rect.width / 2, cy = rect.height / 2;
+        const before = screenToWorld(cx, cy);
+        state.zoom = Math.max(0.2, Math.min(150.0, state.zoom * factor));
+        state.panX = cx - before.x * state.zoom;
+        state.panY = rect.height - cy - before.y * state.zoom;
+        render();
+    };
+    document.getElementById("btnZoomIn").addEventListener("click", () => zoomAroundCenter(1.3));
+    document.getElementById("btnZoomOut").addEventListener("click", () => zoomAroundCenter(1 / 1.3));
     document.getElementById("btnFitScreen").addEventListener("click", fitToScreen);
+
+    // Rakelrichtung (Stufenkanten-Abstandsprüfung längs / quer zur Druckrichtung)
+    document.getElementById("squeegeeDir")?.addEventListener("change", async (e) => {
+        await fetch("/api/set_squeegee", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dir: e.target.value })
+        });
+        await refreshApertureData();
+    });
 
     // Sidebar Tabs
     document.querySelectorAll(".tab-btn").forEach(btn => {
@@ -1851,7 +2078,7 @@ function setupEventListeners() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 id: state.selectedAperture.id,
-                apply_all: true
+                apply_all: false
             })
         });
         await refreshApertureData();
@@ -2036,54 +2263,20 @@ function setupEventListeners() {
     });
 
     // EXPORT
-    document.getElementById("btnExport").addEventListener("click", async () => {
-        const res = await fetch("/api/export", { method: "POST" });
-        const data = await res.json();
-        document.getElementById("exportMsg").innerText = data.message;
-        document.getElementById("exportFileList").innerHTML = `
-            <div>📄 Stencil: ${data.stencil_file}</div>
-            <div>📄 Step-Zones: ${data.zones_file}</div>
-        `;
-        document.getElementById("exportModal").classList.remove("hidden");
-    });
-    document.getElementById("btnCloseExportModal").addEventListener("click", () => {
-        document.getElementById("exportModal").classList.add("hidden");
-    });
+    document.getElementById("btnExport").addEventListener("click", openExportDialog);
+    setupExportDialog();
 
-    // CLOSE DATASET & CONFIRMATION
-    const closeModal = document.getElementById("closeModal");
-    const btnCloseDataset = document.getElementById("btnCloseDataset");
-    if (btnCloseDataset && closeModal) {
-        btnCloseDataset.addEventListener("click", () => {
-            closeModal.classList.remove("hidden");
-        });
-    }
-    const btnCancelCloseModal = document.getElementById("btnCancelCloseModal");
-    if (btnCancelCloseModal && closeModal) {
-        btnCancelCloseModal.addEventListener("click", () => {
-            closeModal.classList.add("hidden");
-        });
-    }
-    const btnDiscardAndClose = document.getElementById("btnDiscardAndClose");
-    if (btnDiscardAndClose && closeModal) {
-        btnDiscardAndClose.addEventListener("click", async () => {
-            closeModal.classList.add("hidden");
-            await closeCurrentDataset();
-        });
-    }
-    const btnExportAndClose = document.getElementById("btnExportAndClose");
-    if (btnExportAndClose && closeModal) {
-        btnExportAndClose.addEventListener("click", async () => {
-            await triggerExport();
-            closeModal.classList.add("hidden");
-            await closeCurrentDataset();
-        });
-    }
+    // Datensatz schließen (mit Abfrage bei ungespeicherten Änderungen)
+    document.getElementById("btnCloseDataset")?.addEventListener("click", async () => {
+        if (!(await guardUnsaved("den Datensatz schließen"))) return;
+        await fetch("/api/project/discard_recovery", { method: "POST" });
+        await closeCurrentDataset();
+    });
 }
 
 async function triggerExport() {
     try {
-        const res = await fetch("/api/export", { method: "POST" });
+        const res = await fetch("/api/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
         const data = await res.json();
         showToast("💾 Gerber-Dateien exportiert!");
         return data;
@@ -2259,13 +2452,17 @@ btnViewPackage.addEventListener("click", () => switchWorkspace("package"));
 const btnOpenInStencilGen = document.getElementById("btnOpenInStencilGen");
 if (btnOpenInStencilGen) {
     btnOpenInStencilGen.addEventListener("click", () => {
-        const pkg = state.selectedAperture ? (state.selectedAperture.pkg_name || state.selectedAperture.package_group) : "0805";
+        const pkg = state.selectedAperture ? (state.selectedAperture.package_name || state.selectedAperture.pkg_name || "0805") : "0805";
         switchWorkspace("package", pkg);
     });
 }
 
 function switchWorkspace(mode, targetPkg = null, targetRot = 0) {
     currentWorkspaceMode = mode;
+    // Eine angefangene Messung gehört zum alten Koordinatensystem
+    measureState.startPoint = null;
+    measureState.currentPoint = null;
+    measureState.hoverSnap = null;
     updateMeasureButtonsVisibility();
     if (mode === "board") {
         btnViewBoard.classList.add("active");
@@ -2326,6 +2523,7 @@ async function initPackageMode(targetPkg = null, targetRot = 0) {
         setupPkgEventListeners();
         pkgInitialized = true;
     }
+    resizePkgCanvas();
 
     if (targetRot !== undefined && targetRot !== null) {
         pkgState.rotation = targetRot;
@@ -2359,24 +2557,18 @@ function setupPkgCanvas() {
     }, { passive: false });
 
     pkgContainer.addEventListener("mousedown", (e) => {
-        const rect = pkgCanvas.getBoundingClientRect();
-        const clickX = e.clientX - rect.left;
-        const clickY = e.clientY - rect.top;
-
+        if (e.target !== pkgCanvas) return; // Pin-Leiste, Banner, Buttons nicht als Canvas-Klick werten
         // In Package-Koordinaten umrechnen (mm) unter Berücksichtigung der Ansichtsdrehung
-        const centerX = rect.width / 2 + pkgState.panX;
-        const centerY = rect.height / 2 + pkgState.panY;
-        const rotRad = -((pkgState.rotation || 0) * Math.PI) / 180;
-        const dx = (clickX - centerX) / pkgState.zoom;
-        const dy = -(clickY - centerY) / pkgState.zoom; // Y invertiert
-        let mmX = dx * Math.cos(rotRad) - dy * Math.sin(rotRad);
-        let mmY = dx * Math.sin(rotRad) + dy * Math.cos(rotRad);
+        const wpt = pkgScreenToWorld(e.clientX, e.clientY);
+        let mmX = wpt.x;
+        let mmY = wpt.y;
 
-        // Messmodus in Stencil Generator
+        // Messmodus in Stencil Generator (Fangpunkt beim Klick neu bestimmen, Shift = ohne Fangen)
         if (measureState.active && e.button === 0) {
-            if (measureState.hoverSnap) {
-                mmX = measureState.hoverSnap.x;
-                mmY = measureState.hoverSnap.y;
+            const snap = e.shiftKey ? null : findSnapPointPkg(mmX, mmY);
+            if (snap) {
+                mmX = snap.x;
+                mmY = snap.y;
             }
             if (!measureState.startPoint) {
                 measureState.startPoint = { x: mmX, y: mmY };
@@ -2435,14 +2627,8 @@ function setupPkgCanvas() {
             const clickX = e.clientX - rect.left;
             const clickY = e.clientY - rect.top;
             if (clickX >= 0 && clickX <= rect.width && clickY >= 0 && clickY <= rect.height) {
-                const centerX = rect.width / 2 + pkgState.panX;
-                const centerY = rect.height / 2 + pkgState.panY;
-                const rotRad = -((pkgState.rotation || 0) * Math.PI) / 180;
-                const dx = (clickX - centerX) / pkgState.zoom;
-                const dy = -(clickY - centerY) / pkgState.zoom;
-                const mmX = dx * Math.cos(rotRad) - dy * Math.sin(rotRad);
-                const mmY = dx * Math.sin(rotRad) + dy * Math.cos(rotRad);
-                measureState.hoverSnap = findSnapPointPkg(mmX, mmY);
+                const { x: mmX, y: mmY } = pkgScreenToWorld(e.clientX, e.clientY);
+                measureState.hoverSnap = e.shiftKey ? null : findSnapPointPkg(mmX, mmY);
                 measureState.currentPoint = measureState.hoverSnap ? { x: measureState.hoverSnap.x, y: measureState.hoverSnap.y } : { x: mmX, y: mmY };
                 renderPkgPreview();
             }
@@ -2464,17 +2650,8 @@ function setupPkgCanvas() {
 
     // Doppelklick auf Pad im Package-Modus -> Pin auswählen und Eingabe fokussieren
     pkgContainer.addEventListener("dblclick", (e) => {
-        if (measureState.active) return;
-        const rect = pkgCanvas.getBoundingClientRect();
-        const clickX = e.clientX - rect.left;
-        const clickY = e.clientY - rect.top;
-        const centerX = rect.width / 2 + pkgState.panX;
-        const centerY = rect.height / 2 + pkgState.panY;
-        const rotRad = -((pkgState.rotation || 0) * Math.PI) / 180;
-        const dx = (clickX - centerX) / pkgState.zoom;
-        const dy = -(clickY - centerY) / pkgState.zoom;
-        const mmX = dx * Math.cos(rotRad) - dy * Math.sin(rotRad);
-        const mmY = dx * Math.sin(rotRad) + dy * Math.cos(rotRad);
+        if (e.target !== pkgCanvas || measureState.active) return;
+        const { x: mmX, y: mmY } = pkgScreenToWorld(e.clientX, e.clientY);
 
         if (pkgState.activePackageData && pkgState.activePackageData.pads) {
             for (const p of pkgState.activePackageData.pads) {
@@ -2492,6 +2669,7 @@ function setupPkgCanvas() {
 function resizePkgCanvas() {
     if (!pkgContainer || !pkgCanvas) return;
     const rect = pkgContainer.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return; // ausgeblendet
     const dpr = window.devicePixelRatio || 1;
     pkgCanvas.width = rect.width * dpr;
     pkgCanvas.height = rect.height * dpr;
@@ -2532,18 +2710,45 @@ async function loadPackagesList() {
     }
 }
 
+const PKG_GROUPS = [
+    { key: "SMD", label: "SMD Packages" },
+    { key: "THT", label: "THT Packages" },
+    { key: "Other", label: "Other Packages" },
+    { key: "Fiducial", label: "Fiducials" },
+    { key: "Library", label: "Bibliothek (nicht auf Platine)" }
+];
+
 function renderPkgTree() {
     const list = document.getElementById("pkgTreeList");
     list.innerHTML = "";
 
     const query = pkgState.searchQuery.toLowerCase();
     const filtered = pkgState.packages.filter(p => {
-        if (pkgState.activeCategory && p.category !== pkgState.activeCategory) return false;
+        if (pkgState.activeCategory && (p.group || "SMD") !== pkgState.activeCategory) return false;
         if (query && !p.name.toLowerCase().includes(query)) return false;
         return true;
     });
+    pkgState.collapsedGroups = pkgState.collapsedGroups || { Library: true };
 
-    for (const p of filtered) {
+    for (const g of PKG_GROUPS) {
+        const members = filtered.filter(p => (p.group || "SMD") === g.key).sort((a, b) => a.name.localeCompare(b.name));
+        if (members.length === 0) continue;
+        const collapsed = Boolean(pkgState.collapsedGroups[g.key]) && !query;
+        const header = document.createElement("div");
+        header.className = "pkg-group-header";
+        header.innerHTML = `<span class="caret">${collapsed ? "▸" : "▾"}</span><span>${g.label}</span><span class="pkg-group-count">${members.length}</span>`;
+        header.addEventListener("click", () => {
+            pkgState.collapsedGroups[g.key] = !pkgState.collapsedGroups[g.key];
+            renderPkgTree();
+        });
+        list.appendChild(header);
+        if (collapsed) continue;
+        for (const p of members) renderPkgTreeItem(list, p);
+    }
+}
+
+function renderPkgTreeItem(list, p) {
+    {
         const item = document.createElement("div");
         item.className = `pkg-tree-item ${p.name === pkgState.activePkgName ? 'active' : ''}`;
         
@@ -2555,7 +2760,7 @@ function renderPkgTree() {
         item.innerHTML = `
             <div class="pkg-item-main">
                 <span class="pkg-item-icon">${icon}</span>
-                <span class="pkg-item-name">${p.name}</span>
+                <span class="pkg-item-name" title="${p.name}">${p.name}</span>
             </div>
             <div class="pkg-item-badges">
                 ${p.pitch > 0 ? `<span class="pkg-badge-pitch">${p.pitch}mm</span>` : ''}
@@ -2568,6 +2773,27 @@ function renderPkgTree() {
         });
 
         list.appendChild(item);
+
+        // Aktives Package: Pins als Unterknoten (wie PCB Investigator "1(0)", "2(1)")
+        const data = pkgState.activePackageData;
+        if (p.name === pkgState.activePkgName && data && data.name === p.name && data.pads?.length) {
+            const pins = document.createElement("div");
+            pins.className = "pkg-pin-list";
+            const ovs = data.pad_overrides || {};
+            data.pads.forEach((pad, idx) => {
+                const pi = document.createElement("div");
+                const hasOv = ovs[pad.pin] || ovs[String(pad.pin)];
+                pi.className = `pkg-pin-item ${pkgState.selectedPin === pad.pin ? "active" : ""}`;
+                pi.innerHTML = `<span>${pad.pin}(${idx})</span><span>${pad.w}×${pad.h}${pad.drill ? ` ⌀${pad.drill}` : ""}</span>${hasOv ? '<span class="pin-ov">✏️</span>' : ""}`;
+                pi.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    selectPkgPin(pad.pin, pad);
+                    renderPkgTree();
+                });
+                pins.appendChild(pi);
+            });
+            list.appendChild(pins);
+        }
     }
 }
 
@@ -2589,6 +2815,9 @@ async function selectPackage(pkgName) {
         const res = await fetch(`/api/package/${encodeURIComponent(pkgName)}`);
         const data = await res.json();
         pkgState.activePackageData = data;
+        state.highlightPkg = (state.apertures || []).some(a => a.pkg_name === pkgName) ? pkgName : null;
+        state.highlightPin = null;
+        window.scBroadcast?.("pkg-focus", { pkg: pkgName, pin: null });
 
         // UI Header aktualisieren
         document.getElementById("lblActivePkgName").textContent = data.name;
@@ -2607,7 +2836,8 @@ async function selectPackage(pkgName) {
 
         // Auto-Fit Zoom für Package
         autoFitPackagePreview(data);
-        renderPkgPreview();
+        openAllPinsBar(); // Pin-Editor standardmäßig für alle Pins
+        renderPkgTree(); // Pins des aktiven Packages im Baum anzeigen
     } catch (e) {
         console.error("Fehler beim Abrufen der Package-Vorschau:", e);
     }
@@ -2673,41 +2903,95 @@ function populateRuleInputs(rule) {
     if (cmEl) cmEl.value = rule.chamfer_mode || "all";
     const pmmEl = document.getElementById("propPinMinusMask");
     if (pmmEl) pmmEl.checked = Boolean(rule.pin_minus_mask);
+    const setv = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    setv("propSizeW", rule.size_w ?? 0);
+    setv("propSizeH", rule.size_h ?? 0);
+    setv("propDonutInner", rule.donut_inner_dia ?? 0);
+    setv("propBgaThreshold", rule.bga_threshold_square ?? 0.41);
+    setv("propChipThreshold", rule.chip_threshold_houses ?? 2.49);
+    setv("propInvertHouse", rule.invert_house_below ?? 0.75);
+    setv("propMiniChip", rule.mini_chip_reduction ?? 0.075);
+    setv("propMinArrayField", rule.min_array_field ?? 0.75);
+    setv("propArrayDistance", rule.distance_array_fields ?? 0.25);
+    setv("propUtilArray", rule.utilization_array_pct ?? 40);
+    setv("propUtilHouse", rule.utilization_house_pct ?? 0);
+    updateRuleFieldVisibility();
+}
+
+// Beschreibung der Regeln (wie im PCB Investigator unter der Parameterliste)
+const RULE_DESCRIPTIONS = {
+    package_group: "Wählt die Öffnung je Pad automatisch: BGA-Pads 1:1, große Flächen als Array-Felder (Mindestfeldgröße, Feldabstand, Flächennutzung), 2-Pin-Chips als HouseBuilder (kleine als Inverted House), sonst Rechteck mit Undersize und Eckradius.",
+    simple_rect: "Create one surface with fix size and offset away from the center. Optional mit Stegen (Bridge Count) und fester Größe.",
+    house_builder: "Hausform: Spitze zum Bauteilkörper, verhindert Tombstoning und Lotperlen bei Chip-Bauteilen.",
+    inverted_house_builder: "Umgekehrte Hausform: Kerbe zur Bauteilaußenseite.",
+    elongated_pitch: "Länglich & Schmal: verschmälert quer zum Pitch so, dass der Pastenabstand mindestens der Padbreite entspricht.",
+    array_slicing: "Teilt die Fläche in Felder mit Stegen (Bridge Count / Width), optional 45° gedreht.",
+    donut: "Ringöffnung um die Bohrung (THT / Pin-in-Paste), segmentiert mit Haltestegen (Bridge Width).",
+    take_existing: "Übernimmt die Pastenöffnungen unverändert aus dem Kundendatensatz.",
+    ignore: "Für dieses Package werden keine Pastenöffnungen erzeugt."
+};
+
+// Nur die zur gewählten Regel gehörenden Parameter anzeigen
+function updateRuleFieldVisibility() {
+    const rule = document.getElementById("selectPkgRule")?.value || "simple_rect";
+    document.querySelectorAll(".rule-property-grid .prop-item[data-rules]").forEach(el => {
+        el.classList.toggle("rule-hidden", !el.dataset.rules.split(" ").includes(rule));
+    });
+    const desc = document.getElementById("ruleDescription");
+    if (desc) desc.textContent = RULE_DESCRIPTIONS[rule] || "";
+}
+
+// Zahl aus Eingabefeld; leere/ungültige Eingabe → Standardwert (0 ist ein gültiger Wert!)
+function numInput(id, def) {
+    const v = parseFloat(document.getElementById(id)?.value);
+    return Number.isFinite(v) ? v : def;
 }
 
 function collectRuleFromInputs() {
     return {
         rule_type: document.getElementById("selectPkgRule").value,
-        corner_radius: parseFloat(document.getElementById("propCornerRadius").value) || 0,
-        undersize_w: parseFloat(document.getElementById("propUndersize").value) || 0,
-        undersize_h: parseFloat(document.getElementById("propUndersize").value) || 0,
-        house_cut_pct: parseFloat(document.getElementById("propHouseCut").value) || 35,
-        pitch_reduction_pct: parseFloat(document.getElementById("propPitchRed").value) || 20,
-        length_usage_pct: parseFloat(document.getElementById("propLengthUse").value) || 95,
-        offset_move_away: parseFloat(document.getElementById("propOffsetMoveAway").value) || 0,
-        offset_x: parseFloat(document.getElementById("propOffsetX").value) || 0,
-        offset_y: parseFloat(document.getElementById("propOffsetY").value) || 0,
-        bridge_count_x: parseInt(document.getElementById("propBridgeX").value) || 0,
-        bridge_count_y: parseInt(document.getElementById("propBridgeY").value) || 0,
-        bridge_width: parseFloat(document.getElementById("propBridgeWidth").value) || 0.3,
+        corner_radius: numInput("propCornerRadius", 0),
+        undersize_w: numInput("propUndersize", 0),
+        undersize_h: numInput("propUndersize", 0),
+        house_cut_pct: numInput("propHouseCut", 35),
+        pitch_reduction_pct: numInput("propPitchRed", 20),
+        length_usage_pct: numInput("propLengthUse", 95),
+        offset_move_away: numInput("propOffsetMoveAway", 0),
+        offset_x: numInput("propOffsetX", 0),
+        offset_y: numInput("propOffsetY", 0),
+        bridge_count_x: Math.max(0, Math.round(numInput("propBridgeX", 0))),
+        bridge_count_y: Math.max(0, Math.round(numInput("propBridgeY", 0))),
+        bridge_width: numInput("propBridgeWidth", 0.3),
         rotate_bridges_45: document.getElementById("propRotate45").checked,
         try_find_direction: document.getElementById("propTryDirection").checked,
-        toe_heel_shift: parseFloat(document.getElementById("propToeHeelShift")?.value) || 0,
-        chamfer_size: parseFloat(document.getElementById("propChamferSize")?.value) || 0,
+        toe_heel_shift: numInput("propToeHeelShift", 0),
+        chamfer_size: numInput("propChamferSize", 0),
         chamfer_mode: document.getElementById("propChamferMode")?.value || "all",
-        pin_minus_mask: Boolean(document.getElementById("propPinMinusMask")?.checked)
+        pin_minus_mask: Boolean(document.getElementById("propPinMinusMask")?.checked),
+        size_w: numInput("propSizeW", 0),
+        size_h: numInput("propSizeH", 0),
+        donut_inner_dia: numInput("propDonutInner", 0),
+        bga_threshold_square: numInput("propBgaThreshold", 0.41),
+        chip_threshold_houses: numInput("propChipThreshold", 2.49),
+        invert_house_below: numInput("propInvertHouse", 0.75),
+        mini_chip_reduction: numInput("propMiniChip", 0.075),
+        min_array_field: numInput("propMinArrayField", 0.75),
+        distance_array_fields: numInput("propArrayDistance", 0.25),
+        utilization_array_pct: numInput("propUtilArray", 40),
+        utilization_house_pct: numInput("propUtilHouse", 0)
     };
 }
 
 let ruleUpdateTimeout = null;
 function onRuleParamChanged() {
     const ruleData = collectRuleFromInputs();
-    
+    const pkgName = pkgState.activePkgName;
+
     // Sofortige lokale Vorschau-Aktualisierung (35ms Debounce für flüssige Spinner)
     clearTimeout(ruleUpdateTimeout);
     ruleUpdateTimeout = setTimeout(async () => {
-        if (!pkgState.activePkgName) return;
-        const res = await fetch(`/api/package/${pkgState.activePkgName}/rule`, {
+        if (!pkgName || pkgName !== pkgState.activePkgName) return;
+        const res = await fetch(`/api/package/${encodeURIComponent(pkgName)}/rule`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(ruleData)
@@ -2723,6 +3007,11 @@ function onRuleParamChanged() {
 // Live-Update für Einzelpad-Bearbeitung (0ms direkte Vorschau + 40ms Backend-Sync)
 let singlePinDebounce = null;
 function onSinglePinParamChanged() {
+    if (pkgState.pinBarMode === "all") {
+        // Alle Pins: erst mit "Anpassen" übernehmen
+        document.getElementById("btnSavePadOverride")?.classList.add("btn-pulse");
+        return;
+    }
     if (!pkgState.activePackageData || pkgState.selectedPin === null) return;
     const pinNum = pkgState.selectedPin;
     const ruleType = document.getElementById("selectPinRule")?.value || "inherit";
@@ -2732,12 +3021,7 @@ function onSinglePinParamChanged() {
 
     if (isNaN(w) || isNaN(h) || w <= 0 || h <= 0) return;
 
-    // 1. Live 0ms client-side preview on canvas!
-    const pad = pkgState.activePackageData.pads?.find(p => p.pin === pinNum);
-    if (pad) {
-        pad.w = w;
-        pad.h = h;
-    }
+    const pkgName = pkgState.activePkgName;
 
     if (!pkgState.activePackageData.pad_overrides) {
         pkgState.activePackageData.pad_overrides = {};
@@ -2789,12 +3073,13 @@ function onSinglePinParamChanged() {
                 undersize_w: red,
                 undersize_h: red
             };
-            const res = await fetch(`/api/package/${encodeURIComponent(pkgState.activePkgName)}/pin/${pinNum}/override`, {
+            const res = await fetch(`/api/package/${encodeURIComponent(pkgName)}/pin/${pinNum}/override`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload)
             });
             const data = await res.json();
+            if (pkgName !== pkgState.activePkgName || pinNum !== pkgState.selectedPin) return; // veraltet
             if (data.preview) {
                 pkgState.activePackageData = data.preview;
                 populatePinDropdown(data.preview.pads, data.preview.pad_overrides);
@@ -2852,6 +3137,26 @@ function renderPkgPreview() {
         pkgCtx.strokeRect(-ow/2, -oh/2, ow, oh);
     }
 
+    // 2b. Lötstopp-Freistellung (Show Mask)
+    if (pkgState.showMask && data.pads) {
+        pkgCtx.fillStyle = "rgba(0, 168, 107, 0.28)";
+        pkgCtx.strokeStyle = "rgba(16, 185, 129, 0.8)";
+        pkgCtx.lineWidth = 1 / pkgState.zoom;
+        pkgCtx.setLineDash([4 / pkgState.zoom, 3 / pkgState.zoom]);
+        for (const p of data.pads) {
+            if (!p.mask_w || !p.mask_h) continue;
+            pkgCtx.beginPath();
+            if (p.mask_round || p.shape === "circle") {
+                pkgCtx.ellipse(p.cx, p.cy, p.mask_w / 2, p.mask_h / 2, 0, 0, Math.PI * 2);
+            } else {
+                pkgCtx.rect(p.cx - p.mask_w / 2, p.cy - p.mask_h / 2, p.mask_w, p.mask_h);
+            }
+            pkgCtx.fill();
+            pkgCtx.stroke();
+        }
+        pkgCtx.setLineDash([]);
+    }
+
     // 3. Copper Pads (Grün #00A86B / #10B981) - Exakt wie PCB Investigator Screenshot 1
     if (pkgState.showCopper && data.pads) {
         for (const p of data.pads) {
@@ -2894,6 +3199,25 @@ function renderPkgPreview() {
                 pkgCtx.fillRect(ap.cx - ap.w/2, ap.cy - ap.h/2, ap.w, ap.h);
                 pkgCtx.strokeRect(ap.cx - ap.w/2, ap.cy - ap.h/2, ap.w, ap.h);
             }
+        }
+    }
+
+    // 4b. Bohrungen (THT)
+    if (pkgState.showDrills !== false && data.pads) {
+        pkgCtx.strokeStyle = "#f8fafc";
+        pkgCtx.fillStyle = "rgba(15, 23, 42, 0.85)";
+        pkgCtx.lineWidth = 1.2 / pkgState.zoom;
+        for (const p of data.pads) {
+            if (!p.drill) continue;
+            const r = p.drill / 2;
+            pkgCtx.beginPath();
+            pkgCtx.arc(p.cx, p.cy, r, 0, Math.PI * 2);
+            pkgCtx.fill();
+            pkgCtx.stroke();
+            pkgCtx.beginPath();
+            pkgCtx.moveTo(p.cx - r * 0.6, p.cy); pkgCtx.lineTo(p.cx + r * 0.6, p.cy);
+            pkgCtx.moveTo(p.cx, p.cy - r * 0.6); pkgCtx.lineTo(p.cx, p.cy + r * 0.6);
+            pkgCtx.stroke();
         }
     }
 
@@ -2940,11 +3264,83 @@ function renderPkgPreview() {
     drawCanvasScaleBar(pkgCtx, w, h, pkgState.zoom, 14, 38);
 }
 
-function selectPkgPin(pinNum, padObj) {
-    pkgState.selectedPin = pinNum;
+// Pin-Editor im Modus "Alle Pins": Regel/Größe/Reduktion für das ganze Package
+function openAllPinsBar() {
+    const data = pkgState.activePackageData;
+    if (!data) return;
+    pkgState.selectedPin = null;
+    pkgState.pinBarMode = "all";
     const bar = document.getElementById("singlePadBar");
     bar.classList.remove("hidden");
+    const pads = data.pads || [];
+    document.getElementById("lblPinBarPrefix").textContent = "";
+    document.getElementById("lblSelectedPin").textContent = `Alle Pins (${pads.length})`;
+    document.getElementById("btnApplyPinToAll")?.classList.add("hidden");
+    const dropdown = document.getElementById("selectPinDropdown");
+    if (dropdown) dropdown.value = "all";
+
+    // Gemeinsame Werte vorbelegen, unterschiedliche Werte leer lassen
+    const ovs = Object.values(data.pad_overrides || {});
+    const common = (vals) => vals.length > 0 && vals.every(v => v === vals[0]) ? vals[0] : null;
+    const ruleSelect = document.getElementById("selectPinRule");
+    if (ruleSelect) ruleSelect.value = (ovs.length === pads.length && common(ovs.map(o => o.rule_type || "inherit"))) || "inherit";
+    const inpW = document.getElementById("inputPadCustomW");
+    const inpH = document.getElementById("inputPadCustomH");
+    const cw = common(pads.map(p => +p.w.toFixed(3)));
+    const ch = common(pads.map(p => +p.h.toFixed(3)));
+    inpW.value = cw ?? "";
+    inpH.value = ch ?? "";
+    inpW.placeholder = cw === null ? "versch." : "B (mm)";
+    inpH.placeholder = ch === null ? "versch." : "H (mm)";
+    const undersizeInput = document.getElementById("inputPadCustomUndersize");
+    if (undersizeInput) undersizeInput.value = common(ovs.map(o => o.undersize_w)) ?? data.rule?.undersize_w ?? 0.025;
+    renderPkgPreview();
+}
+
+// Sammel-Übersteuerung für alle Pins (matchPin: Breite/Höhe nur auf gleich große Pads übertragen)
+async function applyPinsBulk(override, w, h, matchPin = null) {
+    const pkgName = pkgState.activePkgName;
+    if (!pkgName) return null;
+    document.getElementById("btnSavePadOverride")?.classList.remove("btn-pulse");
+    const res = await fetch(`/api/package/${encodeURIComponent(pkgName)}/pins/override`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ override, w: isNaN(w) ? null : w, h: isNaN(h) ? null : h, match_pin: matchPin })
+    });
+    const data = await res.json();
+    if (pkgName !== pkgState.activePkgName) return data; // inzwischen anderes Package gewählt
+    if (data.preview) {
+        pkgState.activePackageData = data.preview;
+        populatePinDropdown(data.preview.pads, data.preview.pad_overrides);
+        const dropdown = document.getElementById("selectPinDropdown");
+        if (dropdown) dropdown.value = pkgState.selectedPin ?? "all";
+        renderPkgPreview();
+    }
+    return data;
+}
+
+function readPinBarValues() {
+    return {
+        ruleType: document.getElementById("selectPinRule")?.value || "inherit",
+        w: parseFloat(document.getElementById("inputPadCustomW")?.value),
+        h: parseFloat(document.getElementById("inputPadCustomH")?.value),
+        red: parseFloat(document.getElementById("inputPadCustomUndersize")?.value)
+    };
+}
+
+function selectPkgPin(pinNum, padObj) {
+    pkgState.selectedPin = pinNum;
+    pkgState.pinBarMode = "single";
+    state.highlightPin = pinNum;
+    window.scBroadcast?.("pkg-focus", { pkg: pkgState.activePkgName, pin: pinNum });
+    const bar = document.getElementById("singlePadBar");
+    bar.classList.remove("hidden");
+    document.getElementById("lblPinBarPrefix").textContent = "Pin ";
     document.getElementById("lblSelectedPin").textContent = pinNum;
+    document.getElementById("btnApplyPinToAll")?.classList.remove("hidden");
+    document.getElementById("inputPadCustomW").placeholder = "B (mm)";
+    document.getElementById("inputPadCustomH").placeholder = "H (mm)";
+    document.querySelectorAll(".pkg-pin-item").forEach(el => el.classList.toggle("active", el.firstChild?.textContent?.startsWith(`${pinNum}(`)));
 
     const dropdown = document.getElementById("selectPinDropdown");
     if (dropdown) dropdown.value = pinNum;
@@ -2958,7 +3354,7 @@ function selectPkgPin(pinNum, padObj) {
     document.getElementById("inputPadCustomW").value = ov?.w ?? padObj.w;
     document.getElementById("inputPadCustomH").value = ov?.h ?? padObj.h;
     const undersizeInput = document.getElementById("inputPadCustomUndersize");
-    if (undersizeInput) undersizeInput.value = ov?.undersize_w ?? 0.025;
+    if (undersizeInput) undersizeInput.value = ov?.undersize_w ?? pkgState.activePackageData?.rule?.undersize_w ?? 0.025;
 
     renderPkgPreview();
 }
@@ -2989,11 +3385,13 @@ function setupPkgEventListeners() {
     });
 
     // Rule Inputs live sync (0ms / 35ms schnelles Live-Update)
-    document.getElementById("selectPkgRule").addEventListener("change", onRuleParamChanged);
+    document.getElementById("selectPkgRule").addEventListener("change", () => { updateRuleFieldVisibility(); onRuleParamChanged(); });
     [
         "propCornerRadius", "propUndersize", "propHouseCut", "propPitchRed", "propLengthUse",
         "propOffsetMoveAway", "propOffsetX", "propOffsetY", "propBridgeX", "propBridgeY", "propBridgeWidth",
-        "propToeHeelShift", "propChamferSize"
+        "propToeHeelShift", "propChamferSize", "propSizeW", "propSizeH", "propDonutInner",
+        "propBgaThreshold", "propChipThreshold", "propInvertHouse", "propMiniChip",
+        "propMinArrayField", "propArrayDistance", "propUtilArray", "propUtilHouse"
     ].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -3070,6 +3468,7 @@ function setupPkgEventListeners() {
     document.getElementById("chkPrevComponent").addEventListener("change", e => { pkgState.showComponent = e.target.checked; renderPkgPreview(); });
     document.getElementById("chkPrevRuler").addEventListener("change", e => { pkgState.showRuler = e.target.checked; renderPkgPreview(); });
     document.getElementById("chkPrevPinLabels").addEventListener("change", e => { pkgState.showPinLabels = e.target.checked; renderPkgPreview(); });
+    document.getElementById("chkPrevDrills")?.addEventListener("change", e => { pkgState.showDrills = e.target.checked; renderPkgPreview(); });
 
     // Generate Stencil Pads Button
     document.getElementById("btnGenerateStencilPads").addEventListener("click", async () => {
@@ -3081,7 +3480,7 @@ function setupPkgEventListeners() {
 
         try {
             const ruleData = collectRuleFromInputs();
-            const res = await fetch(`/api/package/${pkgState.activePkgName}/generate`, {
+            const res = await fetch(`/api/package/${encodeURIComponent(pkgState.activePkgName)}/generate`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(ruleData)
@@ -3156,9 +3555,7 @@ function setupPkgEventListeners() {
         selectPinDropdown.addEventListener("change", (e) => {
             const val = e.target.value;
             if (val === "all") {
-                pkgState.selectedPin = null;
-                document.getElementById("singlePadBar").classList.add("hidden");
-                renderPkgPreview();
+                openAllPinsBar();
             } else {
                 const pinNum = parseInt(val, 10);
                 const pad = pkgState.activePackageData?.pads?.find(p => p.pin === pinNum);
@@ -3203,6 +3600,15 @@ function setupPkgEventListeners() {
     const btnSavePadOverride = document.getElementById("btnSavePadOverride");
     if (btnSavePadOverride) {
         btnSavePadOverride.addEventListener("click", async () => {
+            if (pkgState.pinBarMode === "all") {
+                const v = readPinBarValues();
+                const override = { rule_type: v.ruleType };
+                if (!isNaN(v.red)) { override.undersize_w = v.red; override.undersize_h = v.red; }
+                const data = await applyPinsBulk(override, v.w, v.h);
+                if (data?.status === "ok") showToast(`Alle ${data.pins} Pins angepasst`);
+                await refreshApertureData();
+                return;
+            }
             if (!pkgState.activePkgName || pkgState.selectedPin === null) return;
             const pinNum = pkgState.selectedPin;
             const ruleType = document.getElementById("selectPinRule").value;
@@ -3241,8 +3647,31 @@ function setupPkgEventListeners() {
     }
 
     const btnResetPadOverride = document.getElementById("btnResetPadOverride");
+    // Werte des gewählten Pins auf alle Pins übertragen
+    document.getElementById("btnApplyPinToAll")?.addEventListener("click", async () => {
+        if (!pkgState.activePkgName || pkgState.selectedPin === null) return;
+        const v = readPinBarValues();
+        const override = { rule_type: v.ruleType };
+        if (!isNaN(v.red)) { override.undersize_w = v.red; override.undersize_h = v.red; }
+        const data = await applyPinsBulk(override, v.w, v.h, pkgState.selectedPin);
+        if (data?.status === "ok") showToast(`Einstellungen von Pin ${pkgState.selectedPin} auf ${data.pins} Pins übernommen`);
+        await refreshApertureData();
+    });
+
     if (btnResetPadOverride) {
         btnResetPadOverride.addEventListener("click", async () => {
+            if (pkgState.pinBarMode === "all" && pkgState.activePkgName) {
+                const res = await fetch(`/api/package/${encodeURIComponent(pkgState.activePkgName)}/pins/override`, { method: "DELETE" });
+                const data = await res.json();
+                if (data.preview) {
+                    pkgState.activePackageData = data.preview;
+                    populatePinDropdown(data.preview.pads, data.preview.pad_overrides);
+                    openAllPinsBar();
+                    showToast("Alle Pin-Anpassungen zurückgesetzt");
+                }
+                await refreshApertureData();
+                return;
+            }
             if (!pkgState.activePkgName || pkgState.selectedPin === null) return;
             const pinNum = pkgState.selectedPin;
             try {
@@ -3267,8 +3696,13 @@ function setupPkgEventListeners() {
 
     // Single Pad Override Close
     document.getElementById("btnClosePadBar").addEventListener("click", () => {
+        if (pkgState.pinBarMode === "single") {
+            openAllPinsBar(); // zurück zur Bearbeitung aller Pins
+            return;
+        }
         document.getElementById("singlePadBar").classList.add("hidden");
         pkgState.selectedPin = null;
+        pkgState.pinBarMode = null;
         const dropdown = document.getElementById("selectPinDropdown");
         if (dropdown) dropdown.value = "all";
         renderPkgPreview();
@@ -3449,3 +3883,397 @@ window.zoomToBridgeViolation = function(x, y) {
 };
 
 
+
+
+// -------------------------------------------------------------
+// Synchronisation zwischen Fenstern (Desktop): Aufrufe aus desktop.js
+// -------------------------------------------------------------
+async function refreshActivePackage() {
+    if (!pkgState.activePkgName) return;
+    const res = await fetch(`/api/package/${encodeURIComponent(pkgState.activePkgName)}`);
+    const data = await res.json();
+    pkgState.activePackageData = data;
+    populatePinDropdown(data.pads, data.pad_overrides);
+    const dd = document.getElementById("selectPinDropdown");
+    if (dd) dd.value = pkgState.selectedPin ?? "all";
+    populateRuleInputs(data.rule);
+    renderPkgPreview();
+    renderPkgTree();
+}
+
+// Anderes Fenster hat Daten geändert → eigene Ansicht nachladen
+window.scOnEngineChanged = async (info) => {
+    const reloadAll = /import|load|close|upload|open_windows|project\/open/.test(info.path || "");
+    refreshHistory();
+    refreshSides();
+    if (/\/api\/side$/.test(info.path || "")) await loadLayers();
+    if (!document.body.classList.contains("view-package-only")) {
+        if (reloadAll) await loadLayers();
+        await refreshApertureData();
+        if (reloadAll) fitToScreen();
+    }
+    if (typeof pkgInitialized !== "undefined" && pkgInitialized) {
+        await loadPackagesList();
+        if (reloadAll) {
+            pkgState.activePkgName = null;
+            pkgState.activePackageData = null;
+        } else {
+            await refreshActivePackage();
+        }
+    }
+};
+
+// Board-Fenster fordert ein Package (und Pin) im Generator-Fenster an
+window.scOpenPackage = async ({ pkg, pin, rot }) => {
+    if (currentWorkspaceMode !== "package") switchWorkspace("package", pkg, rot || 0);
+    pkgState.rotation = rot || 0;
+    await selectPackage(pkg);
+    if (pin !== null && pin !== undefined) {
+        const pad = pkgState.activePackageData?.pads?.find(p => p.pin === pin);
+        if (pad) selectPkgPin(pin, pad);
+    }
+};
+
+
+// -------------------------------------------------------------
+// Projekt speichern/laden, Undo/Redo, ungespeicherte Änderungen
+// -------------------------------------------------------------
+const projectState = { history: { dirty: false, can_undo: false, can_redo: false } };
+
+// Jede ändernde API-Antwort liefert den Bearbeitungsstand mit → Anzeige aktualisieren
+(function hookHistoryFromResponses() {
+    const baseFetch = window.fetch.bind(window);
+    window.fetch = async (input, opts = {}) => {
+        const res = await baseFetch(input, opts);
+        try {
+            const url = typeof input === "string" ? input : input?.url;
+            const m = (opts.method || "GET").toUpperCase();
+            if (url && url.startsWith("/api/") && m !== "GET") {
+                res.clone().json().then(d => { if (d && d.history) updateHistoryUI(d.history); }).catch(() => {});
+            }
+        } catch (e) { /* Anzeige ist optional */ }
+        return res;
+    };
+})();
+
+function updateHistoryUI(h) {
+    if (!h) return;
+    projectState.history = h;
+    const undo = document.getElementById("btnUndo"), redo = document.getElementById("btnRedo");
+    if (undo) { undo.disabled = !h.can_undo; undo.title = h.can_undo ? `Rückgängig: ${h.undo_label} (Strg+Z)` : "Rückgängig (Strg+Z)"; }
+    if (redo) { redo.disabled = !h.can_redo; redo.title = h.can_redo ? `Wiederholen: ${h.redo_label} (Strg+Y)` : "Wiederholen (Strg+Y)"; }
+    const lbl = document.getElementById("lblProjectName");
+    if (lbl) {
+        lbl.textContent = h.project_name || (h.dataset_loaded ? "Unbenanntes Projekt" : "–");
+        lbl.title = h.project_path || "Noch nicht gespeichert";
+        lbl.classList.toggle("dirty", Boolean(h.dirty));
+    }
+    const base = document.body.classList.contains("view-package-only") ? "Stencil Generator" : "SMT StencilCraft";
+    document.title = `${h.dirty ? "● " : ""}${h.project_name ? h.project_name + " – " : ""}${base}`;
+}
+
+async function refreshHistory() {
+    try {
+        const r = await fetch("/api/history");
+        updateHistoryUI(await r.json());
+    } catch (e) { /* ignorieren */ }
+}
+
+// Auswahl-Dialog: liefert den "value" des geklickten Buttons (ESC/Hintergrund = "cancel")
+function askChoice(title, text, choices) {
+    return new Promise(resolve => {
+        const modal = document.getElementById("choiceModal");
+        document.getElementById("choiceTitle").textContent = title;
+        document.getElementById("choiceText").textContent = text;
+        const box = document.getElementById("choiceButtons");
+        box.innerHTML = "";
+        const done = (v) => { modal.classList.add("hidden"); window.removeEventListener("keydown", onKey, true); resolve(v); };
+        const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); done("cancel"); } };
+        for (const c of choices) {
+            const b = document.createElement("button");
+            b.className = `btn ${c.cls || "btn-secondary"}`;
+            b.textContent = c.label;
+            b.addEventListener("click", () => done(c.value));
+            box.appendChild(b);
+        }
+        window.addEventListener("keydown", onKey, true);
+        modal.classList.remove("hidden");
+        box.lastChild?.focus();
+    });
+}
+
+// Vor verlustbehafteten Aktionen: bei ungespeicherten Änderungen speichern/verwerfen/abbrechen
+async function guardUnsaved(actionText) {
+    await refreshHistory();
+    if (!projectState.history.dirty) return true;
+    const r = await askChoice("Ungespeicherte Änderungen",
+        `Das Projekt enthält ungespeicherte Änderungen.\nMöchten Sie speichern, bevor Sie ${actionText}?`,
+        [{ label: "Abbrechen", value: "cancel", cls: "btn-ghost" },
+         { label: "Verwerfen", value: "discard", cls: "btn-danger" },
+         { label: "Speichern", value: "save", cls: "btn-primary" }]);
+    if (r === "cancel") return false;
+    if (r === "save") return saveProject(false);
+    return true;
+}
+window.guardUnsaved = guardUnsaved;
+
+async function saveProject(saveAs = false) {
+    const res = await fetch("/api/project/save", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ save_as: saveAs })
+    });
+    const d = await res.json();
+    if (d.status === "ok") { showToast(`💾 Projekt gespeichert: ${d.path}`); return true; }
+    if (d.status !== "cancelled") showToast(`❌ Speichern fehlgeschlagen: ${d.message}`);
+    return false;
+}
+window.saveProject = saveProject;
+
+async function reloadAllViews(full = false) {
+    if (full) await loadLayers();
+    refreshSides();
+    await refreshApertureData();
+    if (full) fitToScreen();
+    if (typeof pkgInitialized !== "undefined" && pkgInitialized) {
+        await loadPackagesList();
+        if (full) {
+            pkgState.activePkgName = null;
+            if (currentWorkspaceMode === "package") await initPackageMode();
+        } else if (pkgState.activePkgName) {
+            await refreshActivePackage();
+        }
+    }
+    await refreshHistory();
+}
+
+async function doUndo() {
+    const d = await (await fetch("/api/undo", { method: "POST" })).json();
+    if (d.status === "ok") { showToast(`↶ Rückgängig: ${d.label}`, 2000); await reloadAllViews(); }
+}
+
+async function doRedo() {
+    const d = await (await fetch("/api/redo", { method: "POST" })).json();
+    if (d.status === "ok") { showToast(`↷ Wiederholt: ${d.label}`, 2000); await reloadAllViews(); }
+}
+
+async function openProject(path = null, extra = {}) {
+    if (!extra.relocate && !extra.recovered && !(await guardUnsaved("ein anderes Projekt öffnen"))) return;
+    const res = await fetch("/api/project/open", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, ...extra })
+    });
+    const d = await res.json();
+    if (d.status === "missing_dataset") {
+        const r = await askChoice("Datensatz nicht gefunden",
+            `Der Datensatz des Projekts liegt nicht mehr am gespeicherten Ort:\n${(d.dataset_paths || []).join("\n")}\n\nBitte den Datensatz (ODB++ / Gerber) neu auswählen.`,
+            [{ label: "Abbrechen", value: "cancel", cls: "btn-ghost" }, { label: "Datensatz auswählen…", value: "relocate", cls: "btn-primary" }]);
+        if (r === "relocate") return openProject(d.path, { relocate: true });
+        return;
+    }
+    if (d.status === "ok") {
+        await reloadAllViews(true);
+        showToast(extra.recovered ? "♻️ Sitzung wiederhergestellt" : `📂 Projekt geöffnet: ${d.path}`);
+        if (d.warnings?.length) setTimeout(() => showToast(`⚠️ ${d.warnings.join(" ")}`, 6000), 1200);
+    } else if (d.status !== "cancelled") {
+        showToast(`❌ Projekt konnte nicht geöffnet werden: ${d.message}`, 6000);
+    }
+}
+
+async function renderRecentProjects() {
+    const box = document.getElementById("recentProjectsList");
+    if (!box) return;
+    const d = await (await fetch("/api/project/recent")).json();
+    box.innerHTML = "";
+    if (!d.projects?.length) { box.innerHTML = '<div class="dropdown-empty">Noch keine Projekte</div>'; return; }
+    for (const p of d.projects) {
+        const b = document.createElement("button");
+        b.textContent = p.split(/[\\/]/).pop();
+        b.title = p;
+        b.addEventListener("click", () => { closeProjectMenu(); openProject(p); });
+        box.appendChild(b);
+    }
+}
+
+function closeProjectMenu() { document.getElementById("projectMenuList")?.classList.add("hidden"); }
+
+function setupProjectUI() {
+    document.getElementById("btnUndo")?.addEventListener("click", doUndo);
+    document.getElementById("btnRedo")?.addEventListener("click", doRedo);
+    const menu = document.getElementById("projectMenuList");
+    document.getElementById("btnProjectMenu")?.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const willOpen = menu.classList.contains("hidden");
+        menu.classList.toggle("hidden");
+        if (willOpen) await renderRecentProjects();
+    });
+    document.addEventListener("click", (e) => { if (!e.target.closest("#projectMenu")) closeProjectMenu(); });
+    menu?.querySelectorAll("button[data-act]").forEach(b => b.addEventListener("click", () => {
+        closeProjectMenu();
+        if (b.dataset.act === "open") openProject();
+        else if (b.dataset.act === "save") saveProject(false);
+        else if (b.dataset.act === "saveas") saveProject(true);
+    }));
+}
+
+// Nach Absturz: automatische Sicherung anbieten
+async function offerRecovery() {
+    try {
+        const info = await (await fetch("/api/project/recovery")).json();
+        if (!info.exists) return;
+        const r = await askChoice("Sitzung wiederherstellen?",
+            `Es gibt eine automatische Sicherung mit ungespeicherten Änderungen:\n${info.dataset || "Unbenannt"}\n\nMöchten Sie diese wiederherstellen?`,
+            [{ label: "Verwerfen", value: "discard", cls: "btn-ghost" }, { label: "Wiederherstellen", value: "restore", cls: "btn-primary" }]);
+        if (r === "restore") await openProject(info.path, { recovered: true });
+        else if (r === "discard") await fetch("/api/project/discard_recovery", { method: "POST" });
+    } catch (e) { /* ohne Sicherung weiter */ }
+}
+
+// Desktop: Fenster schließen mit ungespeicherten Änderungen
+window.scHandleCloseRequest = async () => {
+    if (await guardUnsaved("die Anwendung beenden")) {
+        await fetch("/api/project/discard_recovery", { method: "POST" });
+        window.__TAURI__?.core.invoke("confirm_close");
+    }
+};
+
+
+// -------------------------------------------------------------
+// TOP / BOT
+// -------------------------------------------------------------
+async function refreshSides() {
+    try {
+        const d = await (await fetch("/api/sides")).json();
+        for (const sd of d.sides) {
+            const btn = document.querySelector(`#sideSwitch button[data-side="${sd.side}"]`);
+            if (!btn) continue;
+            btn.classList.toggle("active", sd.active);
+            btn.disabled = !sd.loaded && !sd.active;
+            const cnt = document.getElementById(sd.side === "top" ? "cntSideTop" : "cntSideBot");
+            if (cnt) cnt.textContent = sd.loaded ? `(${sd.apertures})` : "";
+            btn.title = sd.loaded ? `${sd.side.toUpperCase()}: ${sd.apertures} Pastenöffnungen` : `${sd.side.toUpperCase()}: keine Pastenlage im Datensatz`;
+        }
+        state.side = d.active;
+    } catch (e) { /* Web-Version ohne Seitenwechsel */ }
+}
+
+async function switchSide(side) {
+    const res = await fetch("/api/side", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ side }) });
+    if (!res.ok) return;
+    setPackageHighlight(null);
+    state.selectedApertureId = null;
+    state.selectedAperture = null;
+    await loadLayers();
+    await reloadAllViews(false);
+    await refreshSides();
+    showToast(`Seite ${side.toUpperCase()} aktiv`, 1800);
+}
+window.switchSide = switchSide;
+
+document.querySelectorAll("#sideSwitch button").forEach(b => b.addEventListener("click", () => {
+    if (!b.classList.contains("active")) switchSide(b.dataset.side);
+}));
+
+// -------------------------------------------------------------
+// Export-Dialog
+// -------------------------------------------------------------
+const exportState = { job: "Schablone", sides: null, lastDir: null, lastReport: null };
+
+function exportOptionsFromForm() {
+    return {
+        target_dir: document.getElementById("expDir").value.trim(),
+        pattern: document.getElementById("expPattern").value.trim() || "{job}_{side}_{dicke}um",
+        sides: document.getElementById("expSides").value,
+        zones: document.getElementById("expZones").checked,
+        outline: document.getElementById("expOutline").checked,
+        report: document.getElementById("expReport").checked,
+        x2: document.getElementById("expX2").checked
+    };
+}
+
+function updateExportPreview() {
+    const o = exportOptionsFromForm();
+    const today = new Date().toISOString().slice(0, 10);
+    const thick = Math.round((state.stats?.base_thickness || 0.12) * 1000);
+    const active = exportState.sides?.active || "top";
+    const loaded = (exportState.sides?.sides || []).filter(x => x.loaded).map(x => x.side);
+    const sides = o.sides === "both" ? loaded : (o.sides === "active" ? [active] : [o.sides]);
+    const name = (side) => o.pattern.replaceAll("{job}", exportState.job).replaceAll("{side}", side === "Kontur" ? side : side.toUpperCase()).replaceAll("{dicke}", thick).replaceAll("{datum}", today);
+    const lines = [];
+    for (const sd of sides) {
+        lines.push(`${name(sd)}.gbr`);
+        if (o.zones) lines.push(`${name(sd)}_zonen.gbr (falls Zonen vorhanden)`);
+    }
+    if (o.outline) lines.push(`${name("Kontur")}.gbr`);
+    if (o.report) lines.push(`${exportState.job}_Pruefbericht_${today}.html`);
+    document.getElementById("expPreview").innerHTML = lines.map(l => `<div>${l}</div>`).join("") || "–";
+}
+
+async function openExportDialog() {
+    const d = await (await fetch("/api/export/settings")).json().catch(() => null);
+    if (d && d.settings) {
+        const st = d.settings;
+        exportState.job = d.job;
+        exportState.sides = d.sides;
+        document.getElementById("expDir").value = st.target_dir || "";
+        document.getElementById("expDir").placeholder = d.default_dir;
+        document.getElementById("expPattern").value = st.pattern;
+        document.getElementById("expSides").value = st.sides;
+        document.getElementById("expZones").checked = st.zones;
+        document.getElementById("expOutline").checked = st.outline;
+        document.getElementById("expReport").checked = st.report;
+        document.getElementById("expX2").checked = st.x2;
+        const bothLoaded = (d.sides?.sides || []).filter(x => x.loaded).length > 1;
+        document.querySelector('#expSides option[value="both"]').disabled = !bothLoaded;
+        for (const sd of d.sides?.sides || []) {
+            const opt = document.querySelector(`#expSides option[value="${sd.side}"]`);
+            if (opt) opt.disabled = !sd.loaded;
+        }
+    }
+    document.getElementById("exportForm").classList.remove("hidden");
+    document.getElementById("exportResult").classList.add("hidden");
+    document.getElementById("btnExpRun").classList.remove("hidden");
+    document.getElementById("btnExpOpenDir").classList.add("hidden");
+    document.getElementById("btnExpOpenReport").classList.add("hidden");
+    updateExportPreview();
+    document.getElementById("exportModal").classList.remove("hidden");
+}
+window.openExportDialog = openExportDialog;
+
+function setupExportDialog() {
+    ["expPattern", "expSides", "expZones", "expOutline", "expReport", "expX2", "expDir"].forEach(id => {
+        const el = document.getElementById(id);
+        el?.addEventListener("input", updateExportPreview);
+        el?.addEventListener("change", updateExportPreview);
+    });
+    document.getElementById("btnCloseExportModal")?.addEventListener("click", () => document.getElementById("exportModal").classList.add("hidden"));
+    document.getElementById("btnExpPickDir")?.addEventListener("click", async () => {
+        const d = await (await fetch("/api/export/pick_dir", { method: "POST" })).json();
+        if (d.status === "ok") { document.getElementById("expDir").value = d.path; updateExportPreview(); }
+    });
+    const openPath = (p) => p && window.__TAURI__?.core.invoke("open_path", { path: p }).catch(e => showToast(`❌ ${e}`));
+    document.getElementById("btnExpOpenDir")?.addEventListener("click", () => openPath(exportState.lastDir));
+    document.getElementById("btnExpOpenReport")?.addEventListener("click", () => openPath(exportState.lastReport));
+    document.getElementById("btnExpRun")?.addEventListener("click", async () => {
+        const btn = document.getElementById("btnExpRun");
+        btn.disabled = true;
+        try {
+            const res = await fetch("/api/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ options: exportOptionsFromForm() }) });
+            const d = await res.json();
+            if (d.status !== "ok") { showToast(`❌ Export fehlgeschlagen: ${d.message}`, 6000); return; }
+            exportState.lastDir = d.export_dir;
+            exportState.lastReport = d.report_file;
+            const icon = { stencil: "🟪", zones: "🟧", outline: "⬜", report: "📄" };
+            document.getElementById("exportMsg").textContent = d.message;
+            document.getElementById("exportFileList").innerHTML = d.files.map(f => `<div>${icon[f.kind] || "📄"} ${f.path}${f.count !== undefined ? ` (${f.count})` : ""}</div>`).join("");
+            document.getElementById("exportForm").classList.add("hidden");
+            document.getElementById("exportResult").classList.remove("hidden");
+            btn.classList.add("hidden");
+            const desktop = Boolean(window.__TAURI__);
+            document.getElementById("btnExpOpenDir").classList.toggle("hidden", !desktop);
+            document.getElementById("btnExpOpenReport").classList.toggle("hidden", !desktop || !d.report_file);
+            showToast("💾 Export abgeschlossen");
+        } finally {
+            btn.disabled = false;
+        }
+    });
+}

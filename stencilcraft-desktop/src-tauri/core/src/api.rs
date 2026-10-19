@@ -4,7 +4,7 @@
 
 use crate::engine::dfm::{calculate_pip, calculate_transfer_calculator};
 use crate::engine::types::{r2, r3, r4, val_bool, val_f64, val_str};
-use crate::engine::{StencilEngine, NO_DATASET};
+use crate::engine::{project, StencilEngine, NO_DATASET};
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -69,6 +69,14 @@ fn query_map(q: &str) -> Map<String, Value> {
 pub trait Dialogs {
     fn pick_files(&self) -> Option<Vec<PathBuf>>;
     fn pick_folder(&self) -> Option<PathBuf>;
+    /// Projektdatei zum Öffnen wählen
+    fn pick_project(&self) -> Option<PathBuf> {
+        None
+    }
+    /// Speicherort für Projektdatei wählen
+    fn pick_save_project(&self, _default_name: &str) -> Option<PathBuf> {
+        None
+    }
 }
 
 /// Ohne GUI (Tests/Headless): Dialoge gelten als abgebrochen.
@@ -108,10 +116,85 @@ pub fn dispatch(engine: &Mutex<StencilEngine>, method: &str, url: &str, body: &V
             let mut e = lock(engine);
             import_response(&mut e, &[f.clone()], Body(body_map), name, Some(f))
         }
+        ("POST", "/api/export/pick_dir") => match dialogs.pick_folder() {
+            Some(d) => ok(json!({"status": "ok", "path": d.to_string_lossy()})),
+            None => ok(json!({"status": "cancelled"})),
+        },
+        // Projekt öffnen (Dialog ohne Engine-Sperre)
+        ("POST", "/api/project/open") => {
+            let b = Body(body_map);
+            let path = match b.s("path").filter(|p| !p.is_empty()) {
+                Some(p) => PathBuf::from(p),
+                None => match dialogs.pick_project() {
+                    Some(p) => p,
+                    None => return ok(json!({"status": "cancelled"})),
+                },
+            };
+            // Datensatz verschoben: neuen Ort wählen lassen
+            let relocate = if b.b("relocate", false) {
+                match dialogs.pick_files().filter(|f| !f.is_empty()).or_else(|| dialogs.pick_folder().map(|f| vec![f])) {
+                    Some(f) => Some(f.iter().map(|p| p.to_string_lossy().to_string()).collect()),
+                    None => return ok(json!({"status": "cancelled"})),
+                }
+            } else {
+                None
+            };
+            let recovered = b.b("recovered", false);
+            let mut e = lock(engine);
+            match e.open_project(&path, relocate) {
+                Ok(project::OpenResult::Opened { warnings }) => {
+                    if recovered {
+                        // Wiederhergestellte Sitzung: noch nicht als Projekt gespeichert
+                        e.project_path = None;
+                        e.dirty = true;
+                    }
+                    ok(json!({
+                    "status": "ok",
+                    "path": path.to_string_lossy(),
+                    "warnings": warnings,
+                    "dataset_name": e.dataset_name,
+                    "history": e.history_json(),
+                    }))
+                }
+                Ok(project::OpenResult::MissingDataset { paths }) => ok(json!({"status": "missing_dataset", "path": path.to_string_lossy(), "dataset_paths": paths})),
+                Err(m) => err(500, m),
+            }
+        }
+        // Projekt speichern (Dialog nur bei "Speichern unter" oder neuem Projekt)
+        ("POST", "/api/project/save") => {
+            let b = Body(body_map);
+            let (current, default_name) = {
+                let e = lock(engine);
+                (e.project_path.clone(), e.dataset_name.clone())
+            };
+            let target = match (b.b("save_as", false), b.s("path").filter(|p| !p.is_empty()), current) {
+                (_, Some(p), _) => PathBuf::from(p),
+                (false, None, Some(p)) => p,
+                _ => {
+                    let clean: String = default_name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+                    match dialogs.pick_save_project(&clean) {
+                        Some(p) => p,
+                        None => return ok(json!({"status": "cancelled"})),
+                    }
+                }
+            };
+            let mut e = lock(engine);
+            match e.save_project(&target) {
+                Ok(p) => ok(json!({"status": "ok", "path": p, "history": e.history_json()})),
+                Err(m) => err(500, m),
+            }
+        }
         _ => {
             let mut e = lock(engine);
             let q = query_map(query);
-            handle(&mut e, method, path, body_map, &q)
+            let (status, mut v) = handle(&mut e, method, path, body_map, &q);
+            // Bearbeitungsstand (Undo/Redo, ungespeichert) an jede ändernde Antwort hängen
+            if method != "GET" {
+                if let Some(o) = v.as_object_mut() {
+                    o.insert("history".into(), e.history_json());
+                }
+            }
+            (status, v)
         }
     }
 }
@@ -156,7 +239,37 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
     let seg: Vec<String> = path.trim_start_matches('/').split('/').map(url_decode).collect();
     let seg: Vec<&str> = seg.iter().map(String::as_str).collect();
 
+    // Bearbeitungen für Undo/Redo aufzeichnen (Schlüssel = Route, fasst schnelle Folgeänderungen zusammen)
+    if let Some(label) = project::edit_label(method, &seg, body) {
+        e.record_undo(&label, &format!("{method} {path}"));
+    }
+
     match (method, seg.as_slice()) {
+        ("GET", ["api", "history"]) => ok(e.history_json()),
+        ("GET", ["api", "sides"]) => ok(e.sides_json()),
+        ("POST", ["api", "side"]) => {
+            let side = b.s("side").unwrap_or_else(|| "top".into());
+            e.switch_side(&side);
+            ok(json!({"status": "ok", "sides": e.sides_json(), "stats": stats(e)}))
+        }
+        ("POST", ["api", "undo"]) => {
+            let l = e.undo();
+            ok(json!({"status": if l.is_some() { "ok" } else { "error" }, "label": l, "stats": stats(e)}))
+        }
+        ("POST", ["api", "redo"]) => {
+            let l = e.redo();
+            ok(json!({"status": if l.is_some() { "ok" } else { "error" }, "label": l, "stats": stats(e)}))
+        }
+        ("GET", ["api", "project", "recent"]) => ok(json!({"projects": e.recent_projects()})),
+        ("GET", ["api", "project", "recovery"]) => ok(e.recovery_info()),
+        ("POST", ["api", "project", "autosave"]) => match e.autosave() {
+            Ok(w) => ok(json!({"status": "ok", "written": w})),
+            Err(m) => err(500, m),
+        },
+        ("POST", ["api", "project", "discard_recovery"]) => {
+            e.discard_autosave();
+            ok(json!({"status": "ok"}))
+        }
         ("POST", ["api", "load_dataset"]) => {
             let key = b.s("dataset").unwrap_or_else(|| "top".into());
             let side = if key == "bot" { "bot" } else { "top" };
@@ -307,26 +420,27 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             }
             ok(json!({"status": "ok", "layers": e.layers_summary()}))
         }
+        ("GET", ["api", "export", "settings"]) => ok(json!({"settings": e.export_settings(), "default_dir": e.export_dir().to_string_lossy(), "job": e.job_name(), "sides": e.sides_json()})),
         ("POST", ["api", "export"]) => {
-            let req = b.s("side").unwrap_or_default().to_lowercase();
-            let mut side = if matches!(req.as_str(), "top" | "bot" | "bottom") { req } else { e.current_side.clone() };
-            if side == "bottom" {
-                side = "bot".into();
+            // Optionen aus dem Dialog (werden gemerkt); ohne Optionen die gespeicherten verwenden
+            let mut opts = e.export_settings();
+            if let Some(o) = body.get("options").filter(|o| o.is_object()) {
+                if let Ok(parsed) = serde_json::from_value::<crate::engine::export::ExportSettings>(o.clone()) {
+                    opts = parsed;
+                    e.save_export_settings(&opts);
+                }
             }
-            let dir = b.s("target_dir").map(PathBuf::from).unwrap_or_else(|| e.export_dir());
-            let stencil = dir.join(format!("stencil_{side}.ger"));
-            let zones = dir.join(format!("stencil_{side}_zones.ger"));
-            if let Err(m) = e.export_modified_gerber(&stencil).and_then(|_| e.export_zones_gerber(&zones)) {
-                return err(500, m);
+            // Kompatibilität zur Web-App: Seite / Zielordner direkt im Body
+            if let Some(sd) = b.s("side").map(|v| v.to_lowercase()).filter(|v| matches!(v.as_str(), "top" | "bot" | "bottom")) {
+                opts.sides = if sd == "bottom" { "bot".into() } else { sd };
             }
-            ok(json!({
-                "status": "ok",
-                "side": side,
-                "stencil_file": stencil.to_string_lossy(),
-                "zones_file": zones.to_string_lossy(),
-                "export_dir": dir.to_string_lossy(),
-                "message": format!("Separate Schablonen-Dateien für {} exportiert: {}", side.to_uppercase(), stencil.display()),
-            }))
+            if let Some(td) = b.s("target_dir").filter(|v| !v.is_empty()) {
+                opts.target_dir = td;
+            }
+            match e.export_all(&opts) {
+                Ok(v) => ok(v),
+                Err(m) => err(500, m),
+            }
         }
         ("GET", ["api", "packages"]) => {
             let cat = query.get("category").and_then(|v| v.as_str()).unwrap_or("");
@@ -374,6 +488,19 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
         (m @ ("POST" | "DELETE"), ["api", "package", name, "pin", pin, "override"]) => {
             let Ok(pin) = pin.parse::<i64>() else { return err(400, "Ungültige Pin-Nummer") };
             let s = if m == "POST" { e.override_package_pin(name, pin, body.clone()) } else { e.reset_package_pin(name, pin) };
+            ok(json!({"status": if s { "ok" } else { "error" }, "preview": e.get_package_preview_data(name), "stats": stats(e)}))
+        }
+        ("POST", ["api", "package", name, "pins", "override"]) => {
+            let empty = Map::new();
+            let data = body.get("override").and_then(|v| v.as_object()).unwrap_or(&empty);
+            let w = body.get("w").and_then(val_f64).filter(|v| *v > 0.0);
+            let h = body.get("h").and_then(val_f64).filter(|v| *v > 0.0);
+            let match_pin = body.get("match_pin").and_then(val_f64).map(|v| v as i64);
+            let n = e.override_package_pins_bulk(name, data, w, h, match_pin);
+            ok(json!({"status": if n > 0 { "ok" } else { "error" }, "pins": n, "preview": e.get_package_preview_data(name), "stats": stats(e)}))
+        }
+        ("DELETE", ["api", "package", name, "pins", "override"]) => {
+            let s = e.reset_package_pins_all(name);
             ok(json!({"status": if s { "ok" } else { "error" }, "preview": e.get_package_preview_data(name), "stats": stats(e)}))
         }
         ("POST", ["api", "package", name, "rename"]) => {
@@ -427,6 +554,11 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             let c = e.auto_classify_and_apply_rules();
             ok(json!({"status": "ok", "classification": c, "panel_stats": stats(e), "packages": e.packages.values().map(|p| p.to_json()).collect::<Vec<_>>()}))
         }
+        ("POST", ["api", "set_squeegee"]) => {
+            let d = b.s("dir").unwrap_or_else(|| "Y".into()).to_uppercase();
+            e.squeegee_dir = if d == "X" { "X".into() } else { "Y".into() };
+            ok(json!({"status": "ok", "squeegee_dir": e.squeegee_dir, "stats": stats(e)}))
+        }
         ("POST", ["api", "set_paste_type"]) => {
             let t = e.set_paste_type(&b.s("paste_type").unwrap_or_else(|| "type4".into()));
             ok(json!({"status": "ok", "paste_type": t, "stats": stats(e)}))
@@ -473,6 +605,7 @@ fn apertures_payload(e: &StencilEngine) -> Value {
                 "grain_warn": ipc.grain_warn,
                 "grain_msg": ipc.grain_msg,
                 "sliced": ap.custom_slices.as_ref().map_or(false, |s| !s.is_empty()),
+                "pin_number": ap.pin_number,
             });
             if let Some(s) = ap.custom_slices.as_ref() {
                 v["slices"] = json!(s);
@@ -484,7 +617,13 @@ fn apertures_payload(e: &StencilEngine) -> Value {
         .collect();
 
     let profile: Vec<Value> = e.profile_paths.iter().take(5000).map(|s| json!([[s[0].0, s[0].1], [s[1].0, s[1].1]])).collect();
-    let components: Vec<Value> = e.components.iter().map(|c| serde_json::to_value(c).unwrap_or(Value::Null)).collect();
+    // Nur Bauteile der aktiven Seite anzeigen
+    let components: Vec<Value> = e
+        .components
+        .iter()
+        .filter(|c| c.side.eq_ignore_ascii_case(&e.current_side))
+        .map(|c| serde_json::to_value(c).unwrap_or(Value::Null))
+        .collect();
     let pads: Vec<Value> = e.pads.iter().take(2000).map(|p| json!({"x0": p.x0, "y0": p.y0, "x1": p.x1, "y1": p.y1, "w": p.w, "h": p.h})).collect();
     json!({
         "bounds": e.bounds.iter().map(|b| r2(*b)).collect::<Vec<_>>(),
@@ -497,6 +636,8 @@ fn apertures_payload(e: &StencilEngine) -> Value {
         "paste_type": e.paste_type,
         "min_bridge": e.min_bridge_width,
         "bridge_violations": &e.bridge_violations[..e.bridge_violations.len().min(100)],
+        "side": e.current_side,
+        "base_thickness": e.base_thickness,
     })
 }
 
@@ -563,9 +704,53 @@ mod tests {
         let body = json!({"side": "top", "target_dir": dir.to_string_lossy()});
         let (st, v) = handle(&mut e, "POST", "/api/export", body.as_object().unwrap(), &empty);
         assert_eq!(st, 200, "{v}");
-        let text = std::fs::read_to_string(dir.join("stencil_top.ger")).unwrap();
+        let path = v["stencil_file"].as_str().unwrap().to_string();
+        assert!(path.ends_with(".gbr"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("%TF.FileFunction,Paste,Top*%"));
         let back = crate::engine::gerber::parse_gerber(&text).paste_apertures();
         assert_eq!(back.len(), 11);
+    }
+
+    #[test]
+    fn both_sides_export_and_report() {
+        let root = std::env::temp_dir().join("stencilcraft_sides_test");
+        let _ = std::fs::remove_dir_all(&root);
+        let data = root.join("job");
+        std::fs::create_dir_all(&data).unwrap();
+        let g = |n: usize| {
+            let mut s = String::from("%FSLAX46Y46*%%MOMM*%%ADD10R,1.2X1.3*%D10*
+");
+            for i in 0..n {
+                s.push_str(&format!("X{}Y10000000D03*
+", 10_000_000 + i as i64 * 5_000_000));
+            }
+            s + "M02*"
+        };
+        std::fs::write(data.join("job_top_paste.ger"), g(4)).unwrap();
+        std::fs::write(data.join("job_bot_paste.ger"), g(2)).unwrap();
+        let mut e = StencilEngine::new(0.12, root.clone());
+        e.import_files_or_zip(&[data.to_string_lossy().to_string()], "top", true).unwrap();
+        assert_eq!(e.apertures.len(), 4);
+        let empty = Map::new();
+        let (_, v) = handle(&mut e, "POST", "/api/side", json!({"side": "bot"}).as_object().unwrap(), &empty);
+        assert_eq!(v["sides"]["active"], "bot");
+        assert_eq!(e.apertures.len(), 2);
+        handle(&mut e, "POST", "/api/zone", json!({"x0": 0, "y0": 0, "x1": 30, "y1": 30, "thickness": 0.1}).as_object().unwrap(), &empty);
+        handle(&mut e, "POST", "/api/side", json!({"side": "top"}).as_object().unwrap(), &empty);
+        assert!(e.zones.is_empty(), "Zonen gehören zur Seite");
+        let out = root.join("out");
+        let opts = json!({"options": {"target_dir": out.to_string_lossy(), "pattern": "{job}_{side}", "sides": "both", "zones": true, "outline": false, "report": true, "x2": true}});
+        let (st, v) = handle(&mut e, "POST", "/api/export", opts.as_object().unwrap(), &empty);
+        assert_eq!(st, 200, "{v}");
+        let files = v["files"].as_array().unwrap();
+        assert_eq!(files.iter().filter(|f| f["kind"] == "stencil").count(), 2);
+        assert_eq!(files.iter().filter(|f| f["kind"] == "zones").count(), 1);
+        let report = std::fs::read_to_string(v["report_file"].as_str().unwrap()).unwrap();
+        assert!(report.contains("Seite TOP") && report.contains("Seite BOT") && report.contains("<svg"));
+        assert_eq!(e.current_side, "top", "aktive Seite nach Export unverändert");
+        let bot = std::fs::read_to_string(files.iter().find(|f| f["side"] == "bot" && f["kind"] == "stencil").unwrap()["path"].as_str().unwrap()).unwrap();
+        assert!(bot.contains("%TF.FileFunction,Paste,Bot*%"));
     }
 
     #[test]

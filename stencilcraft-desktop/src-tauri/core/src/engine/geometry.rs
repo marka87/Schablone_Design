@@ -70,17 +70,22 @@ pub fn rect_pts(cx: f64, cy: f64, w: f64, h: f64) -> Vec<Pt> {
 }
 
 /// Achteck mit 45°-gebrochenen Ecken (Approximation der Eckverrundung wie im Web-Original).
+/// Rechteck mit echten Kreisbogen-Ecken (Radius `r`, je Ecke 6 Segmente).
 pub fn rounded_rect_pts(cx: f64, cy: f64, w: f64, h: f64, r: f64) -> Vec<Pt> {
-    vec![
-        (cx - w / 2.0 + r, cy + h / 2.0),
-        (cx + w / 2.0 - r, cy + h / 2.0),
-        (cx + w / 2.0, cy + h / 2.0 - r),
-        (cx + w / 2.0, cy - h / 2.0 + r),
-        (cx + w / 2.0 - r, cy - h / 2.0),
-        (cx - w / 2.0 + r, cy - h / 2.0),
-        (cx - w / 2.0, cy - h / 2.0 + r),
-        (cx - w / 2.0, cy + h / 2.0 - r),
-    ]
+    let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
+    if r < 1e-6 {
+        return rect_pts(cx, cy, w, h);
+    }
+    let (hw, hh) = (w / 2.0 - r, h / 2.0 - r);
+    let seg = 6;
+    let mut pts = Vec::with_capacity(4 * (seg + 1));
+    for (ccx, ccy, a0) in [(cx + hw, cy + hh, 0.0f64), (cx - hw, cy + hh, 90.0), (cx - hw, cy - hh, 180.0), (cx + hw, cy - hh, 270.0)] {
+        for k in 0..=seg {
+            let a = (a0 + 90.0 * k as f64 / seg as f64).to_radians();
+            pts.push((ccx + r * a.cos(), ccy + r * a.sin()));
+        }
+    }
+    pts
 }
 
 pub fn circle_pts(cx: f64, cy: f64, r: f64, n: usize) -> Vec<Pt> {

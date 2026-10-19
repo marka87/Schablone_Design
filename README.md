@@ -96,6 +96,15 @@ Eigenständige Windows-Anwendung ohne Python-Laufzeit. Oberfläche und Funktions
 | `ui/app.js`, `ui/style.css`, `ui/index.html` | Kopie der Web-Oberfläche (wird von `build_desktop.bat` synchronisiert) |
 | `src-tauri/legacy/` | Vorherige Rust-Module (nicht mehr kompiliert, nur zur Referenz) |
 
+**Bedienung (Auszug):**
+- Projekt: `Strg+S` speichern, `Strg+Umschalt+S` speichern unter, Menü „📁 Projekt“ mit „Zuletzt geöffnet“. Projektdateien (`*.stencilproj`) enthalten Datensatzpfad, Parameter, Regeln, Pin-Anpassungen, Zonen und alle Öffnungen; verschobene Datensätze können beim Öffnen neu ausgewählt werden.
+- Rückgängig/Wiederholen: `Strg+Z` / `Strg+Y` (schnelle Folgeänderungen an derselben Stelle zählen als ein Schritt).
+- Autospeichern jede Minute nach `Autosave/`; nach einem Absturz wird die Wiederherstellung angeboten.
+- „⧉ Eigenes Fenster“ öffnet den Stencil Generator separat (z. B. zweiter Monitor); Auswahl und Änderungen werden zwischen beiden Fenstern synchronisiert, das gewählte Package wird im Board orange hervorgehoben.
+- TOP/BOT: ODB++ und Gerber-Archive mit beiden Pastenlagen laden beide Seiten; Umschalter in der Werkzeugleiste. Öffnungen, Zonen und Blechdicke gelten je Seite, Package-Regeln für beide.
+- Export-Dialog (`Strg+E`): Zielordner, Dateinamen-Muster (`{job}` `{side}` `{dicke}` `{datum}`), Seiten (aktiv/TOP/BOT/beide), Stufenzonen, Platinenkontur, Gerber-X2-Attribute und Prüfbericht (HTML, druckbar/als PDF). Die Optionen werden gemerkt.
+- UI-Größe oben rechts (Auto / 80–140 %), Bereiche per Ziehleiste in der Größe veränderbar, Doppelklick klappt sie ein.
+
 **Bauen:** `build_desktop.bat` (synchronisiert die Web-UI, führt die Engine-Tests aus, baut `target\release\stencilcraft-desktop.exe`).
 **Starten:** `start_desktop.bat`.
 **Tests:** `cargo test -p stencil_core` im Ordner `stencilcraft-desktop/src-tauri`.

@@ -55,6 +55,8 @@ pub struct Slice {
     pub d_inner: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub d_outer: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pin: Option<i64>,
 }
 
 impl Slice {
@@ -80,11 +82,13 @@ pub struct PadBox {
     pub y1: f64,
     pub w: f64,
     pub h: f64,
+    #[serde(default)]
+    pub round: bool,
 }
 
 impl PadBox {
     pub fn new(x0: f64, y0: f64, x1: f64, y1: f64) -> Self {
-        PadBox { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0 }
+        PadBox { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0, round: false }
     }
 }
 
@@ -168,7 +172,7 @@ pub struct ComponentItem {
     pub outline: Vec<Pt>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StencilZone {
     pub id: String,
     pub name: String,
@@ -294,6 +298,18 @@ pub struct PackageRule {
     pub chamfer_size: f64,
     pub chamfer_mode: String,
     pub pin_minus_mask: bool,
+    /// Feste Öffnungsgröße (0 = aus Padgröße abgeleitet) – "Size Width/Height in MM"
+    pub size_w: f64,
+    pub size_h: f64,
+    // Parameter der Regel "Package-Gruppe" (PCB Investigator: Handle Stencil Creation by Package Group)
+    pub bga_threshold_square: f64,
+    pub chip_threshold_houses: f64,
+    pub invert_house_below: f64,
+    pub mini_chip_reduction: f64,
+    pub min_array_field: f64,
+    pub distance_array_fields: f64,
+    pub utilization_array_pct: f64,
+    pub utilization_house_pct: f64,
 }
 
 impl Default for PackageRule {
@@ -303,7 +319,7 @@ impl Default for PackageRule {
             rule_type: "simple_rect".into(),
             undersize_w: 0.025,
             undersize_h: 0.025,
-            corner_radius: 0.0,
+            corner_radius: 0.075,
             offset_x: 0.0,
             offset_y: 0.0,
             offset_move_away: 0.0,
@@ -320,6 +336,16 @@ impl Default for PackageRule {
             chamfer_size: 0.0,
             chamfer_mode: "all".into(),
             pin_minus_mask: false,
+            size_w: 0.0,
+            size_h: 0.0,
+            bga_threshold_square: 0.41,
+            chip_threshold_houses: 2.49,
+            invert_house_below: 0.75,
+            mini_chip_reduction: 0.075,
+            min_array_field: 0.75,
+            distance_array_fields: 0.25,
+            utilization_array_pct: 40.0,
+            utilization_house_pct: 0.0,
         }
     }
 }
@@ -376,6 +402,16 @@ impl PackageRule {
                 "donut_inner_dia" => { if let Some(f) = val_f64(v) { self.donut_inner_dia = f } }
                 "toe_heel_shift" => { if let Some(f) = val_f64(v) { self.toe_heel_shift = f } }
                 "chamfer_size" => { if let Some(f) = val_f64(v) { self.chamfer_size = f } }
+                "size_w" => { if let Some(f) = val_f64(v) { self.size_w = f.max(0.0) } }
+                "size_h" => { if let Some(f) = val_f64(v) { self.size_h = f.max(0.0) } }
+                "bga_threshold_square" => { if let Some(f) = val_f64(v) { self.bga_threshold_square = f } }
+                "chip_threshold_houses" => { if let Some(f) = val_f64(v) { self.chip_threshold_houses = f } }
+                "invert_house_below" => { if let Some(f) = val_f64(v) { self.invert_house_below = f } }
+                "mini_chip_reduction" => { if let Some(f) = val_f64(v) { self.mini_chip_reduction = f } }
+                "min_array_field" => { if let Some(f) = val_f64(v) { self.min_array_field = f } }
+                "distance_array_fields" => { if let Some(f) = val_f64(v) { self.distance_array_fields = f } }
+                "utilization_array_pct" => { if let Some(f) = val_f64(v) { self.utilization_array_pct = f } }
+                "utilization_house_pct" => { if let Some(f) = val_f64(v) { self.utilization_house_pct = f } }
                 "rotate_bridges_45" => { if let Some(b) = val_bool(v) { self.rotate_bridges_45 = b } }
                 "try_find_direction" => { if let Some(b) = val_bool(v) { self.try_find_direction = b } }
                 "pin_minus_mask" => { if let Some(b) = val_bool(v) { self.pin_minus_mask = b } }
@@ -406,6 +442,16 @@ pub struct PadRel {
     /// Padform: "rect" oder "circle"
     #[serde(default = "rect_shape")]
     pub shape: String,
+    /// Lötstopp-Freistellung (Package-Rahmen), falls bekannt
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask_w: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask_h: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask_round: Option<bool>,
+    /// Bohrdurchmesser (THT), falls bekannt
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drill: Option<f64>,
 }
 
 fn rect_shape() -> String {
@@ -414,7 +460,7 @@ fn rect_shape() -> String {
 
 impl PadRel {
     pub fn new(pin: i64, cx: f64, cy: f64, w: f64, h: f64, facing: &str) -> Self {
-        PadRel { pin, cx, cy, w, h, facing: facing.into(), is_thermal: false, shape: rect_shape() }
+        PadRel { pin, cx, cy, w, h, facing: facing.into(), is_thermal: false, shape: rect_shape(), mask_w: None, mask_h: None, mask_round: None, drill: None }
     }
 
     pub fn round(mut self, round: bool) -> Self {
@@ -427,13 +473,13 @@ impl PadRel {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Outline {
     pub w: f64,
     pub h: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageTemplate {
     pub name: String,
     pub pin_count: usize,
@@ -446,6 +492,13 @@ pub struct PackageTemplate {
     pub category: String,
     pub outline: Outline,
     pub pad_overrides: BTreeMap<i64, Map<String, Value>>,
+    /// Baumgruppe wie PCB Investigator: "SMD", "THT", "Other", "Fiducial"
+    #[serde(default = "default_group")]
+    pub group: String,
+}
+
+fn default_group() -> String {
+    "SMD".into()
 }
 
 impl PackageTemplate {
@@ -462,6 +515,7 @@ impl PackageTemplate {
             category: "SMD Passives".into(),
             outline: Outline { w: 2.0, h: 1.25 },
             pad_overrides: BTreeMap::new(),
+            group: "SMD".into(),
         }
     }
 
@@ -482,6 +536,7 @@ impl PackageTemplate {
             "pad_height": r3(self.pad_height),
             "component_count": self.component_count,
             "category": self.category,
+            "group": self.group,
             "outline": self.outline,
             "pads_relative": self.pads_relative,
             "rule": self.rule.to_json(),

@@ -2,6 +2,7 @@
 //! Länglich & Schmal, Array Slicing orthogonal und 45°-diagonal).
 
 use super::geometry::{bounds, centroid, circle_pts, clip_halfplane, polygon_area, rect_pts, rounded_rect_pts};
+use super::donut_segments;
 use super::types::{r4, r5, round_pts, PackageRule, Pt, Slice};
 use serde_json::{Map, Value};
 
@@ -16,6 +17,69 @@ fn poly_slice(cx: f64, cy: f64, w: f64, h: f64, pts: &[Pt], kind: &str) -> Slice
         pts: Some(round_pts(pts)),
         ..Default::default()
     }
+}
+
+/// Rechteckige Öffnung, bei Radius > 0 mit echten Bogenecken.
+fn rounded_slice(cx: f64, cy: f64, w: f64, h: f64, r: f64, kind: &str) -> Slice {
+    let r = r.min(w / 2.2).min(h / 2.2).max(0.0);
+    if r > 0.005 {
+        let mut s = poly_slice(cx, cy, w, h, &rounded_rect_pts(cx, cy, w, h, r), kind);
+        s.radius = Some(r4(r));
+        s
+    } else {
+        rect_slice(cx, cy, w, h, Some(kind))
+    }
+}
+
+fn circle_slice(cx: f64, cy: f64, d: f64, kind: &str) -> Slice {
+    Slice {
+        cx: r4(cx),
+        cy: r4(cy),
+        w: r4(d),
+        h: r4(d),
+        shape: Some("circle".into()),
+        kind: Some(kind.into()),
+        pts: Some(round_pts(&circle_pts(cx, cy, d / 2.0, 36))),
+        ..Default::default()
+    }
+}
+
+/// Gitter aus Teilöffnungen (gx × gy) mit Stegbreite `web`, Ecken gerundet.
+fn grid_slices(cx: f64, cy: f64, w: f64, h: f64, gx: usize, gy: usize, web: f64, r: f64, kind: &str) -> Option<Vec<Slice>> {
+    let sub_w = (w - (gx as f64 - 1.0) * web) / gx as f64;
+    let sub_h = (h - (gy as f64 - 1.0) * web) / gy as f64;
+    if sub_w <= 0.0 || sub_h <= 0.0 {
+        return None;
+    }
+    let start_x = cx - w / 2.0 + sub_w / 2.0;
+    let start_y = cy - h / 2.0 + sub_h / 2.0;
+    let mut out = Vec::with_capacity(gx * gy);
+    for ix in 0..gx {
+        for iy in 0..gy {
+            out.push(rounded_slice(start_x + ix as f64 * (sub_w + web), start_y + iy as f64 * (sub_h + web), sub_w, sub_h, r, kind));
+        }
+    }
+    Some(out)
+}
+
+/// Array-Felder für große Pads: Feldanzahl so, dass jedes Feld ≥ `min_field` ist und der Abstand
+/// `gap` eingehalten wird; Feldgröße so, dass die Gesamtöffnung `util` (0..1) der Padfläche ergibt.
+pub fn array_fields(cx: f64, cy: f64, w: f64, h: f64, min_field: f64, gap: f64, util: f64, r: f64) -> Vec<Slice> {
+    let nx = (((w + gap) / (min_field + gap)).floor() as usize).max(1);
+    let ny = (((h + gap) / (min_field + gap)).floor() as usize).max(1);
+    let (px, py) = (w / nx as f64, h / ny as f64);
+    let s = util.clamp(0.05, 1.0).sqrt();
+    let fw = (px * s).min(px - gap).max(min_field.min(px));
+    let fh = (py * s).min(py - gap).max(min_field.min(py));
+    let mut out = Vec::with_capacity(nx * ny);
+    for ix in 0..nx {
+        for iy in 0..ny {
+            let fx = cx - w / 2.0 + px * (ix as f64 + 0.5);
+            let fy = cy - h / 2.0 + py * (iy as f64 + 0.5);
+            out.push(rounded_slice(fx, fy, fw, fh, r, "array_fields"));
+        }
+    }
+    out
 }
 
 fn rect_slice(cx: f64, cy: f64, w: f64, h: f64, kind: Option<&str>) -> Slice {
@@ -50,20 +114,57 @@ pub fn resolve_pin_rule(base: &PackageRule, pin_data: &Map<String, Value>) -> Pa
     rule
 }
 
+/// Geometrischer Kontext eines Kupferpads für die Regelanwendung.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PadCtx<'a> {
+    pub w: f64,
+    pub h: f64,
+    pub cx: f64,
+    pub cy: f64,
+    pub facing: &'a str,
+    /// Lötstopp-Freistellung (für Pin-minus-Mask)
+    pub mask: Option<(f64, f64)>,
+    pub round: bool,
+    /// Mittenabstand zum Nachbarpad quer zur Padlänge (Pitch), falls bekannt
+    pub pitch: Option<f64>,
+    /// Mindest-Stegbreite im Schablonenblech
+    pub min_bridge: f64,
+    /// Anzahl Pins des Packages (für die Regel "Package-Gruppe")
+    pub pin_count: usize,
+    /// Bohrdurchmesser bei THT-Pads (für Donut)
+    pub drill: Option<f64>,
+}
+
+impl<'a> PadCtx<'a> {
+    pub fn new(w: f64, h: f64, cx: f64, cy: f64, facing: &'a str) -> Self {
+        PadCtx { w, h, cx, cy, facing, ..Default::default() }
+    }
+}
+
+/// Breite der Pastenöffnung quer zur Padlänge für "Länglich & Schmal".
+/// Grundsätzlich `Padbreite × (1 − Reduktion)`. Sind die Pads breiter als der Kupferabstand
+/// (Fine-Pitch-Stecker, ICs), wird zusätzlich so weit verschmälert, dass der Abstand zwischen
+/// den Pastenöffnungen mindestens der Kupfer-Padbreite entspricht – und nie unter die
+/// Mindest-Stegbreite fällt.
+pub fn elongated_narrow_width(narrow: f64, reduction_pct: f64, pitch: Option<f64>, min_bridge: f64) -> f64 {
+    let mut n = narrow * (1.0 - reduction_pct / 100.0);
+    if let Some(p) = pitch.filter(|p| *p > narrow * 0.5) {
+        let gap = p - narrow;
+        if narrow > gap {
+            n = n.min(gap);
+        }
+        if min_bridge > 0.0 {
+            n = n.min(p - min_bridge);
+        }
+    }
+    n.max(0.10_f64.min(narrow))
+}
+
 /// Erzeugt die Schablonenöffnung(en) für ein Pad nach einer Package-Regel.
 /// `None` = Original übernehmen (take_existing), leere Liste = Pad ignorieren.
-#[allow(clippy::too_many_arguments)]
-pub fn generate_rule_aperture_geometry(
-    pad_w: f64,
-    pad_h: f64,
-    pad_cx: f64,
-    pad_cy: f64,
-    rule: &PackageRule,
-    facing_dir: &str,
-    mask_w: Option<f64>,
-    mask_h: Option<f64>,
-    round: bool,
-) -> Option<Vec<Slice>> {
+pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Option<Vec<Slice>> {
+    let (pad_w, pad_h, pad_cx, pad_cy, facing_dir, round) = (pad.w, pad.h, pad.cx, pad.cy, pad.facing, pad.round);
+    let (mask_w, mask_h) = pad.mask.map(|(a, b)| (Some(a), Some(b))).unwrap_or((None, None));
     let rtype = rule.rule_type.as_str();
     if rtype == "take_existing" {
         return None;
@@ -108,6 +209,19 @@ pub fn generate_rule_aperture_geometry(
 
     // Runde Pads (Stecker, THT, BGA) bleiben rund: Undersize/Offsets wirken auf den Durchmesser.
     // Rechteck-spezifische Formen (House, Chamfer, Länglich) sind für Kreise nicht sinnvoll.
+    // Regel "Package-Gruppe": wählt je Pad die passende Form (PCB Investigator "Inherit")
+    if rtype == "package_group" {
+        return Some(package_group_geometry(pad, rule, cx, cy, w_eff, h_eff));
+    }
+    if rtype == "donut" {
+        // Ringöffnung um die Bohrung, segmentiert mit Haltestegen (Bridge Width)
+        let d_out = w_eff.min(h_eff);
+        let d_in = if rule.donut_inner_dia > 0.0 { rule.donut_inner_dia } else { pad.drill.map_or(d_out * 0.5, |d| d + 0.1) };
+        if d_in >= d_out * 0.95 {
+            return Some(vec![circle_slice(cx, cy, d_out, "donut")]);
+        }
+        return Some(donut_segments(cx, cy, d_in, d_out, rule.bridge_width.max(0.1)));
+    }
     if round && rtype != "array_slicing" && rtype != "array_pads" {
         let d = w_eff.min(h_eff);
         return Some(vec![Slice {
@@ -165,14 +279,22 @@ pub fn generate_rule_aperture_geometry(
 
     match rtype {
         "simple_rect" => {
-            let r = rule.corner_radius.min(w_eff / 2.2).min(h_eff / 2.2);
-            if r > 0.01 {
-                let mut s = poly_slice(cx, cy, w_eff, h_eff, &rounded_rect_pts(cx, cy, w_eff, h_eff, r), "simple_rect");
-                s.radius = Some(r4(r));
-                Some(vec![s])
-            } else {
-                Some(vec![rect_slice(cx, cy, w_eff, h_eff, Some("simple_rect"))])
+            let w = if rule.size_w > 0.0 { rule.size_w } else { w_eff };
+            let h = if rule.size_h > 0.0 { rule.size_h } else { h_eff };
+            if rule.bridge_count_x > 0 || rule.bridge_count_y > 0 {
+                if rule.rotate_bridges_45 {
+                    let d = diagonal_slices(cx, cy, w, h, rule);
+                    if !d.is_empty() {
+                        return Some(d);
+                    }
+                }
+                let gx = (rule.bridge_count_x + 1) as usize;
+                let gy = (rule.bridge_count_y + 1) as usize;
+                if let Some(g) = grid_slices(cx, cy, w, h, gx, gy, rule.bridge_width.max(0.08), rule.corner_radius, "simple_rect") {
+                    return Some(g);
+                }
             }
+            Some(vec![rounded_slice(cx, cy, w, h, rule.corner_radius, "simple_rect")])
         }
         "house_builder" => {
             let cut_w = w_eff * (rule.house_cut_pct / 100.0);
@@ -200,9 +322,9 @@ pub fn generate_rule_aperture_geometry(
         }
         "elongated_pitch" => {
             let (new_w, new_h) = if pad_w <= pad_h {
-                (pad_w * (1.0 - rule.pitch_reduction_pct / 100.0), pad_h * (rule.length_usage_pct / 100.0))
+                (elongated_narrow_width(pad_w, rule.pitch_reduction_pct, pad.pitch, pad.min_bridge), pad_h * (rule.length_usage_pct / 100.0))
             } else {
-                (pad_w * (rule.length_usage_pct / 100.0), pad_h * (1.0 - rule.pitch_reduction_pct / 100.0))
+                (pad_w * (rule.length_usage_pct / 100.0), elongated_narrow_width(pad_h, rule.pitch_reduction_pct, pad.pitch, pad.min_bridge))
             };
             let r = rule.corner_radius.min(new_w / 2.5).min(new_h / 2.5).max(0.0);
             let mut s = poly_slice(cx, cy, new_w, new_h, &rounded_rect_pts(cx, cy, new_w, new_h, r), "elongated_pitch");
@@ -218,24 +340,67 @@ pub fn generate_rule_aperture_geometry(
             }
             let gx = (rule.bridge_count_x + 1).max(1) as usize;
             let gy = (rule.bridge_count_y + 1).max(1) as usize;
-            let web = rule.bridge_width.max(0.08);
-            let sub_w = (w_eff - (gx as f64 - 1.0) * web) / gx as f64;
-            let sub_h = (h_eff - (gy as f64 - 1.0) * web) / gy as f64;
-            if sub_w <= 0.0 || sub_h <= 0.0 {
-                return Some(vec![rect_slice(cx, cy, w_eff, h_eff, None)]);
-            }
-            let start_x = cx - w_eff / 2.0 + sub_w / 2.0;
-            let start_y = cy - h_eff / 2.0 + sub_h / 2.0;
-            let mut out = Vec::with_capacity(gx * gy);
-            for ix in 0..gx {
-                for iy in 0..gy {
-                    out.push(rect_slice(start_x + ix as f64 * (sub_w + web), start_y + iy as f64 * (sub_h + web), sub_w, sub_h, Some("array_slicing")));
-                }
-            }
-            Some(out)
+            Some(grid_slices(cx, cy, w_eff, h_eff, gx, gy, rule.bridge_width.max(0.08), rule.corner_radius, "array_slicing")
+                .unwrap_or_else(|| vec![rect_slice(cx, cy, w_eff, h_eff, None)]))
         }
-        _ => Some(vec![rect_slice(cx, cy, w_eff, h_eff, None)]),
+        _ => Some(vec![rounded_slice(cx, cy, w_eff, h_eff, rule.corner_radius, "simple_rect")]),
     }
+}
+
+/// Regel "Package-Gruppe" (angelehnt an PCB Investigator "Handle Stencil Creation by Package Group"):
+/// - BGA: runde/quadratische Pads ≤ BGA-Schwelle → 1:1-Form minus Undersize
+/// - Große Flächen (beide Seiten ≥ 2 × Mindestfeldgröße) → Array-Felder mit Feldabstand und Flächennutzung
+/// - 2-Pin-Chips mit Pad ≤ Chip-Schwelle → HouseBuilder; Pads kleiner als "Invert House" → Inverted House
+///   mit zusätzlicher Mini-Chip-Reduktion
+/// - sonst Rechteck mit Undersize und Eckradius
+fn package_group_geometry(pad: &PadCtx, rule: &PackageRule, cx: f64, cy: f64, w_eff: f64, h_eff: f64) -> Vec<Slice> {
+    let (pw, ph) = (pad.w, pad.h);
+    let small = pw.min(ph);
+    let large = pw.max(ph);
+    let squareish = (pw - ph).abs() <= 0.1 * large;
+
+    if pad.round || (squareish && large <= rule.bga_threshold_square) {
+        if large <= rule.bga_threshold_square || pad.round {
+            return if pad.round {
+                vec![circle_slice(cx, cy, w_eff.min(h_eff), "package_group_bga")]
+            } else {
+                vec![rounded_slice(cx, cy, w_eff, h_eff, rule.corner_radius, "package_group_bga")]
+            };
+        }
+    }
+    if rule.min_array_field > 0.0 && small >= 2.0 * rule.min_array_field && pad.pin_count != 2 {
+        return array_fields(cx, cy, w_eff, h_eff, rule.min_array_field, rule.distance_array_fields, rule.utilization_array_pct / 100.0, rule.corner_radius);
+    }
+    if pad.pin_count == 2 && large <= rule.chip_threshold_houses {
+        let mut r = rule.clone();
+        let (mut w, mut h) = (w_eff, h_eff);
+        if small < rule.invert_house_below {
+            r.rule_type = "inverted_house_builder".into();
+            w = (w - 2.0 * rule.mini_chip_reduction).max(0.04);
+            h = (h - 2.0 * rule.mini_chip_reduction).max(0.04);
+        } else {
+            r.rule_type = "house_builder".into();
+        }
+        if rule.utilization_house_pct > 0.0 {
+            let s = (rule.utilization_house_pct / 100.0).clamp(0.05, 1.0).sqrt();
+            w *= s;
+            h *= s;
+        }
+        r.undersize_w = 0.0;
+        r.undersize_h = 0.0;
+        r.offset_x = 0.0;
+        r.offset_y = 0.0;
+        r.offset_move_away = 0.0;
+        r.toe_heel_shift = 0.0;
+        let sub = PadCtx { w, h, cx, cy, mask: None, ..*pad };
+        if let Some(mut g) = generate_rule_aperture_geometry(&sub, &r) {
+            for s in g.iter_mut() {
+                s.kind = Some(format!("package_group_{}", r.rule_type));
+            }
+            return g;
+        }
+    }
+    vec![rounded_slice(cx, cy, w_eff, h_eff, rule.corner_radius, "package_group_rect")]
 }
 
 /// Erlaubte Intervalle entlang einer Richtung, die nach Abzug paralleler Stege übrig bleiben.
@@ -313,7 +478,7 @@ mod tests {
     #[test]
     fn diagonal_slicing_removes_web_area() {
         let rule = PackageRule { rule_type: "array_slicing".into(), rotate_bridges_45: true, bridge_count_x: 2, bridge_count_y: 2, bridge_width: 0.3, undersize_w: 0.0, undersize_h: 0.0, ..Default::default() };
-        let s = generate_rule_aperture_geometry(4.0, 4.0, 0.0, 0.0, &rule, "center", None, None, false).unwrap();
+        let s = generate_rule_aperture_geometry(&PadCtx::new(4.0, 4.0, 0.0, 0.0, "center"), &rule).unwrap();
         assert!(s.len() >= 4);
         let total: f64 = s.iter().map(|x| x.area.unwrap()).sum();
         assert!(total < 16.0 && total > 8.0, "Restfläche {total}");
@@ -322,7 +487,7 @@ mod tests {
     #[test]
     fn orthogonal_slicing_grid() {
         let rule = PackageRule { rule_type: "array_slicing".into(), bridge_count_x: 1, bridge_count_y: 1, bridge_width: 0.2, undersize_w: 0.0, undersize_h: 0.0, ..Default::default() };
-        let s = generate_rule_aperture_geometry(2.2, 2.2, 0.0, 0.0, &rule, "center", None, None, false).unwrap();
+        let s = generate_rule_aperture_geometry(&PadCtx::new(2.2, 2.2, 0.0, 0.0, "center"), &rule).unwrap();
         assert_eq!(s.len(), 4);
         assert!((s[0].w - 1.0).abs() < 1e-9);
     }
@@ -331,18 +496,59 @@ mod tests {
     fn take_existing_and_ignore() {
         let mut rule = PackageRule::default();
         rule.rule_type = "take_existing".into();
-        assert!(generate_rule_aperture_geometry(1.0, 1.0, 0.0, 0.0, &rule, "right", None, None, false).is_none());
+        assert!(generate_rule_aperture_geometry(&PadCtx::new(1.0, 1.0, 0.0, 0.0, "right"), &rule).is_none());
         rule.rule_type = "ignore".into();
-        assert!(generate_rule_aperture_geometry(1.0, 1.0, 0.0, 0.0, &rule, "right", None, None, false).unwrap().is_empty());
+        assert!(generate_rule_aperture_geometry(&PadCtx::new(1.0, 1.0, 0.0, 0.0, "right"), &rule).unwrap().is_empty());
     }
 
     #[test]
     fn round_pads_stay_round() {
         let rule = PackageRule { rule_type: "house_builder".into(), undersize_w: 0.05, undersize_h: 0.05, ..Default::default() };
-        let s = generate_rule_aperture_geometry(1.5, 1.5, 2.0, 3.0, &rule, "right", None, None, true).unwrap();
+        let s = generate_rule_aperture_geometry(&PadCtx { round: true, ..PadCtx::new(1.5, 1.5, 2.0, 3.0, "right") }, &rule).unwrap();
         assert_eq!(s.len(), 1);
         assert!(s[0].is_circle());
         assert!((s[0].w - 1.4).abs() < 1e-9);
+    }
+
+    #[test]
+    fn elongated_respects_pitch() {
+        // Stecker: 1.0 mm breite Pads im 1.5 mm Raster → Kupferabstand 0.5 mm < Padbreite.
+        // Paste wird auf 0.5 mm verschmälert, damit der Pastenabstand (1.0 mm) ≥ Padbreite ist.
+        let rule = PackageRule { rule_type: "elongated_pitch".into(), pitch_reduction_pct: 20.0, ..Default::default() };
+        let ctx = PadCtx { pitch: Some(1.5), min_bridge: 0.1, ..PadCtx::new(3.0, 1.0, 0.0, 0.0, "left") };
+        let s = generate_rule_aperture_geometry(&ctx, &rule).unwrap();
+        assert!((s[0].h - 0.5).abs() < 1e-9, "Breite {}", s[0].h);
+        assert!((s[0].w - 2.85).abs() < 1e-9);
+        // Großzügiger Pitch: nur die prozentuale Reduktion
+        let ctx = PadCtx { pitch: Some(3.0), ..ctx };
+        let s = generate_rule_aperture_geometry(&ctx, &rule).unwrap();
+        assert!((s[0].h - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn package_group_picks_shape_per_pad() {
+        let rule = PackageRule { rule_type: "package_group".into(), ..Default::default() };
+        // 0603-Chip → HouseBuilder
+        let chip = PadCtx { pin_count: 2, ..PadCtx::new(0.9, 0.95, 0.0, 0.0, "right") };
+        let s = generate_rule_aperture_geometry(&chip, &rule).unwrap();
+        assert_eq!(s[0].kind.as_deref(), Some("package_group_house_builder"));
+        // Thermal-Pad 4×4 mm im QFN → Array-Felder mit ≈ 40 % Fläche
+        let th = PadCtx { pin_count: 49, ..PadCtx::new(4.0, 4.0, 0.0, 0.0, "center") };
+        let s = generate_rule_aperture_geometry(&th, &rule).unwrap();
+        assert!(s.len() >= 4);
+        let area: f64 = s.iter().map(|x| x.w * x.h).sum();
+        assert!(area > 0.25 * 15.8 && area < 0.6 * 15.8, "Fläche {area}");
+        // BGA-Ball rund bleibt rund
+        let bga = PadCtx { round: true, pin_count: 201, ..PadCtx::new(0.3, 0.3, 0.0, 0.0, "center") };
+        assert!(generate_rule_aperture_geometry(&bga, &rule).unwrap()[0].is_circle());
+    }
+
+    #[test]
+    fn simple_rect_rounded_and_fixed_size() {
+        let rule = PackageRule { size_w: 0.8, size_h: 0.5, corner_radius: 0.075, ..Default::default() };
+        let s = generate_rule_aperture_geometry(&PadCtx::new(1.2, 1.3, 0.0, 0.0, "right"), &rule).unwrap();
+        assert!((s[0].w - 0.8).abs() < 1e-9 && (s[0].h - 0.5).abs() < 1e-9);
+        assert!(s[0].pts.as_ref().unwrap().len() > 20, "echte Bogenecken erwartet");
     }
 
     #[test]

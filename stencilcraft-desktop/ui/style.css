@@ -1729,3 +1729,192 @@ select:focus, input:focus {
 
 
 
+
+/* Hinweis: ungespeicherte Änderung im Pin-Editor (Alle Pins) */
+.btn-pulse { box-shadow: 0 0 0 2px #facc15; animation: btnPulse 1.2s ease-in-out infinite; }
+@keyframes btnPulse { 50% { box-shadow: 0 0 0 4px rgba(250, 204, 21, 0.35); } }
+
+/* Stencil Generator: Regelbeschreibung & Paketbaum im PCB-Investigator-Stil */
+.rule-description { font-size: 0.72rem; color: var(--text-muted, #94a3b8); padding: 4px 10px 2px; min-height: 1.2em; font-style: italic; }
+.prop-item.rule-hidden { display: none; }
+.pkg-group-header { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 0.75rem; font-weight: 700; color: var(--text-main, #e2e8f0); cursor: pointer; user-select: none; border-bottom: 1px solid rgba(148, 163, 184, 0.12); }
+.pkg-group-header .pkg-group-count { margin-left: auto; font-weight: 500; color: #94a3b8; }
+.pkg-group-header .caret { width: 10px; display: inline-block; color: #94a3b8; }
+.pkg-pin-list { padding: 2px 0 6px 34px; }
+.pkg-pin-item { font-size: 0.72rem; font-family: "JetBrains Mono", monospace; color: #cbd5e1; padding: 2px 6px; border-radius: 4px; cursor: pointer; display: flex; gap: 6px; }
+.pkg-pin-item:hover { background: rgba(56, 189, 248, 0.12); }
+.pkg-pin-item.active { background: rgba(56, 189, 248, 0.25); color: #fff; }
+.pkg-pin-item .pin-ov { color: #facc15; }
+
+
+/* ========================================================= */
+/* RESPONSIVE LAYOUT (alle Auflösungen / Skalierungen)        */
+/* ========================================================= */
+:root {
+    --left-panel-w: 320px;
+    --right-panel-w: 360px;
+    --pkg-sidebar-w: 320px;
+    --rule-card-h: 250px;
+}
+
+/* Kopfzeile: zwei Zeilen, umbrechend statt abgeschnitten */
+.app-header {
+    height: auto;
+    min-height: 48px;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding: 0;
+    flex-shrink: 0;
+}
+.header-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 6px 12px;
+    min-width: 0;
+}
+.header-tools {
+    border-top: 1px solid var(--border-color);
+    background-color: var(--bg-base);
+    padding-top: 5px;
+    padding-bottom: 5px;
+}
+.header-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.header-spacer { flex: 1 1 0; min-width: 0; }
+.header-sep { width: 1px; align-self: stretch; background: var(--border-color); margin: 0 2px; }
+.app-header .btn, .mode-tab-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.app-header .ico { font-size: 1em; line-height: 1; }
+.mono-small { font-family: var(--font-mono); font-size: 0.85em; opacity: 0.85; }
+.badge-danger { background: #ef4444 !important; color: #fff !important; margin-left: 4px; }
+.btn-close-dataset { color: #f87171 !important; border-color: rgba(248, 113, 113, 0.3) !important; }
+.ipc-control select, .squeegee-control select { max-width: 22em; }
+.ui-size-control { display: flex; align-items: center; gap: 4px; font-size: 0.85rem; margin-left: auto; }
+.ui-size-control select { padding: 4px 6px; }
+.stats-pills { flex-wrap: wrap; }
+body:not(.is-desktop) .desktop-only { display: none !important; }
+
+/* Bereiche mit variabler Größe */
+.layer-panel { width: var(--left-panel-w); min-width: 0; max-width: none; flex-shrink: 0; }
+.sidebar { width: var(--right-panel-w); min-width: 0; flex-shrink: 0; overflow: hidden; }
+.pkg-sidebar { width: var(--pkg-sidebar-w); min-width: 0; flex-shrink: 0; }
+.rule-config-card { height: var(--rule-card-h); min-height: 0; flex-shrink: 0; }
+.canvas-container, .pkg-main-content { min-width: 0; }
+.panel-collapsed { width: 0 !important; height: 0 !important; overflow: hidden !important; border: none !important; }
+.layer-panel.panel-collapsed, .sidebar.panel-collapsed, .pkg-sidebar.panel-collapsed { height: 100% !important; }
+.rule-config-card.panel-collapsed { width: auto !important; }
+
+.splitter { flex-shrink: 0; background: var(--border-color); position: relative; z-index: 9; transition: background 0.15s; }
+.splitter:hover, .splitter.dragging { background: var(--accent); }
+.splitter-v { width: 5px; cursor: col-resize; }
+.splitter-h { height: 5px; cursor: row-resize; }
+.splitter::after { content: ""; position: absolute; inset: -3px; }
+body.resizing, body.resizing * { cursor: inherit; user-select: none !important; }
+
+/* Dialoge passen sich an das Fenster an */
+.modal-box, .calc-modal-box { max-width: min(95vw, 1100px); max-height: 92vh; overflow: auto; }
+
+/* Regelparameter: Spaltenzahl nach verfügbarer Breite */
+.rule-property-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); }
+.prop-item { gap: 8px; min-width: 0; }
+.prop-item label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.prop-item input[type="number"] { width: 6.5em; flex-shrink: 0; }
+.rule-top-bar { flex-wrap: wrap; gap: 8px 16px; }
+.pkg-status-summary { flex-wrap: wrap; gap: 6px 14px; }
+.rule-dropdown-group select { min-width: 0; max-width: 100%; }
+.pkg-preview-toolbar { flex-wrap: wrap; gap: 6px; }
+.preview-toggles { flex-wrap: wrap; }
+.single-pad-bar { max-width: calc(100% - 24px); flex-wrap: wrap; }
+.pad-bar-inputs { flex-wrap: wrap; }
+
+/* Package-Hervorhebung im Board */
+.pkg-highlight-chip {
+    position: absolute; bottom: 64px; left: 50%; transform: translateX(-50%); z-index: 12; white-space: nowrap;
+    display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-radius: 20px;
+    background: rgba(15, 23, 42, 0.92); border: 1px solid #fb923c; font-size: 0.8rem; color: var(--text-primary);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+.pkg-highlight-chip .dot { width: 10px; height: 10px; border-radius: 50%; background: #fb923c; }
+.pkg-highlight-chip strong { color: #fdba74; font-family: var(--font-mono); }
+.pkg-highlight-chip label { display: flex; align-items: center; gap: 4px; color: var(--text-secondary); }
+
+/* Eigenes Generator-Fenster: nur Stencil Generator zeigen */
+body.view-package-only .mode-switcher-group,
+body.view-package-only #btnOpenDataset,
+body.view-package-only #btnCloseDataset,
+body.view-package-only #btnNewZone { display: none !important; }
+
+/* Mittlere Breiten: Beschriftungen der Werkzeuge ausblenden (Symbole + Tooltip bleiben) */
+@media (max-width: 1500px) {
+    .header-tools .btn .lbl { display: none; }
+    .ipc-control select { max-width: 15em; }
+}
+@media (max-width: 1250px) {
+    .header-main .lbl { display: none; }
+    .logo-text { display: none; }
+    :root { --left-panel-w: 260px; --right-panel-w: 300px; --pkg-sidebar-w: 260px; }
+}
+@media (max-width: 1000px) {
+    .header-tools label { display: none; }
+    .stats-pills .pill.total { display: none; }
+}
+@media (max-height: 820px) {
+    :root { --rule-card-h: 200px; }
+    .header-row { padding-top: 3px; padding-bottom: 3px; }
+}
+
+/* Paketbaum: einzeilige Namen mit Auslassung, Filter umbrechen */
+.pkg-category-bar { flex-wrap: wrap; gap: 4px; }
+.pkg-tree-list { overflow-x: hidden; }
+.pkg-tree-item { gap: 6px; min-width: 0; }
+.pkg-item-main { min-width: 0; flex: 1 1 auto; }
+.pkg-item-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pkg-item-badges { flex-shrink: 0; }
+.lib-selector-row { flex-wrap: wrap; }
+
+/* Projektmenü, Undo/Redo, Projektname */
+.dropdown { position: relative; }
+.dropdown-menu {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 50; min-width: 280px; max-width: 460px;
+    background: var(--bg-surface-elevated); border: 1px solid var(--border-color); border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); padding: 6px; display: flex; flex-direction: column;
+}
+.dropdown-menu button {
+    background: none; border: none; color: var(--text-primary); text-align: left; padding: 7px 10px; border-radius: 5px;
+    font-size: 0.85rem; cursor: pointer; display: flex; justify-content: space-between; gap: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dropdown-menu button:hover { background: var(--bg-hover); }
+.dropdown-menu kbd { font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-secondary); }
+.dropdown-sep { height: 1px; background: var(--border-color); margin: 4px 2px; }
+.dropdown-title { font-size: 0.7rem; text-transform: uppercase; color: var(--text-muted); padding: 4px 10px; }
+.dropdown-empty { font-size: 0.8rem; color: var(--text-muted); padding: 4px 10px; }
+.icon-btn { font-size: 1.05rem; padding: 3px 9px; }
+.icon-btn:disabled { opacity: 0.35; cursor: default; }
+.project-name { font-size: 0.82rem; color: var(--text-secondary); max-width: 18em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-name.dirty::before { content: "● "; color: #fbbf24; }
+.choice-box { max-width: min(92vw, 560px); }
+.choice-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 14px; }
+#choiceText { white-space: pre-line; margin-top: 10px; }
+body.view-package-only #projectMenu, body.view-package-only #lblProjectName { display: none !important; }
+@media (max-width: 1250px) { .project-name { max-width: 9em; } }
+
+/* Seitenumschalter TOP / BOT */
+.side-switch { display: inline-flex; border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; }
+.side-switch button { background: var(--bg-surface-elevated); color: var(--text-secondary); border: none; padding: 5px 12px; font-weight: 700; font-size: 0.8rem; cursor: pointer; }
+.side-switch button + button { border-left: 1px solid var(--border-color); }
+.side-switch button.active { background: var(--accent); color: #fff; }
+.side-switch button:disabled { opacity: 0.35; cursor: default; }
+.side-count { font-weight: 500; opacity: 0.8; font-size: 0.72rem; }
+
+/* Export-Dialog */
+.export-box { width: min(92vw, 640px); }
+.export-form { display: grid; grid-template-columns: max-content 1fr; gap: 10px 14px; align-items: center; margin-top: 12px; }
+.export-form > label { font-size: 0.82rem; color: var(--text-secondary); }
+.export-form input[type="text"], .export-form select { width: 100%; }
+.row-flex { display: flex; gap: 6px; }
+.hint { display: block; color: var(--text-muted); font-size: 0.72rem; margin-top: 3px; }
+.exp-checks { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.85rem; }
+.exp-preview { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary); line-height: 1.5; word-break: break-all; }
+.export-file-list div { font-family: var(--font-mono); font-size: 0.78rem; padding: 2px 0; word-break: break-all; }

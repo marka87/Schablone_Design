@@ -4,16 +4,19 @@
 //! alle Modifikationen landen als `custom_slices` auf den Arbeits-Aperturen (Zwischenspeicher).
 
 pub mod dfm;
+pub mod export;
 pub mod geometry;
 pub mod gerber;
 pub mod import;
 pub mod odb;
 pub mod packages;
+pub mod project;
+pub mod report;
 pub mod rules;
 pub mod types;
 
 use geometry::circle_pts;
-use rules::{generate_rule_aperture_geometry, resolve_pin_rule};
+use rules::{elongated_narrow_width, generate_rule_aperture_geometry, resolve_pin_rule, PadCtx};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -48,11 +51,36 @@ pub struct StencilEngine {
     pub bridge_violations: Vec<BridgeViolation>,
     /// ODB++ Toeprints (RefDes, [(Pin, x, y)]) der aktiven Seite für die Pin-Zuordnung
     pub odb_toeprints: Vec<(String, Vec<(i64, f64, f64)>)>,
+    /// Bohrungen (x, y, Durchmesser) aus den Bohrlagen
+    pub drills: Vec<(f64, f64, f64)>,
+
+    /// Quelle des geladenen Datensatzes (für Projektdateien)
+    pub source_paths: Vec<String>,
+    pub source_side: String,
+    /// Pfad der geöffneten Projektdatei
+    pub project_path: Option<PathBuf>,
+    /// Ungespeicherte Änderungen vorhanden
+    pub dirty: bool,
+    pub history: project::History,
+    /// Arbeitsstand der nicht aktiven Seite(n)
+    pub sides: BTreeMap<String, SideData>,
 
     pub data_root: PathBuf,
 }
 
 pub const NO_DATASET: &str = "Kein Datensatz geladen";
+
+/// Seitenspezifischer Arbeitsstand (für die jeweils nicht aktive Seite TOP/BOT).
+#[derive(Debug, Clone, Default)]
+pub struct SideData {
+    pub apertures: Vec<ApertureItem>,
+    pub original_apertures: Vec<ApertureItem>,
+    pub zones: Vec<StencilZone>,
+    pub pads: Vec<PadBox>,
+    pub odb_toeprints: Vec<(String, Vec<(i64, f64, f64)>)>,
+    pub bridge_violations: Vec<BridgeViolation>,
+    pub base_thickness: f64,
+}
 
 /// Ermittelt das Datenverzeichnis (enthält `Libraries/` und `Export/`).
 /// Reihenfolge: Umgebungsvariable `STENCILCRAFT_HOME`, erstes Elternverzeichnis der EXE mit
@@ -111,6 +139,13 @@ impl StencilEngine {
             min_bridge_width: 0.10,
             bridge_violations: Vec::new(),
             odb_toeprints: Vec::new(),
+            drills: Vec::new(),
+            source_paths: Vec::new(),
+            source_side: "top".into(),
+            project_path: None,
+            dirty: false,
+            history: project::History::default(),
+            sides: BTreeMap::new(),
             data_root,
         };
         e.init_standard_packages();
@@ -123,6 +158,81 @@ impl StencilEngine {
 
     pub fn export_dir(&self) -> PathBuf {
         self.data_root.join("Export")
+    }
+
+    // -------------------------------------------------------------
+    // TOP / BOT
+    // -------------------------------------------------------------
+    /// Nimmt den Arbeitsstand der aktiven Seite heraus (Felder bleiben leer zurück).
+    pub fn take_side_data(&mut self) -> SideData {
+        SideData {
+            apertures: std::mem::take(&mut self.apertures),
+            original_apertures: std::mem::take(&mut self.original_apertures),
+            zones: std::mem::take(&mut self.zones),
+            pads: std::mem::take(&mut self.pads),
+            odb_toeprints: std::mem::take(&mut self.odb_toeprints),
+            bridge_violations: std::mem::take(&mut self.bridge_violations),
+            base_thickness: self.base_thickness,
+        }
+    }
+
+    fn put_side_data(&mut self, d: SideData) {
+        self.apertures = d.apertures;
+        self.original_apertures = d.original_apertures;
+        self.zones = d.zones;
+        self.pads = d.pads;
+        self.odb_toeprints = d.odb_toeprints;
+        self.bridge_violations = d.bridge_violations;
+        if d.base_thickness > 0.0 {
+            self.base_thickness = d.base_thickness;
+        }
+    }
+
+    /// Wechselt die aktive Seite ("top" / "bot"). Liefert false, wenn bereits aktiv.
+    pub fn switch_side(&mut self, side: &str) -> bool {
+        let side = if side.starts_with('b') { "bot" } else { "top" };
+        if self.current_side == side {
+            return false;
+        }
+        let current = self.take_side_data();
+        let old = std::mem::replace(&mut self.current_side, side.to_string());
+        self.sides.insert(old, current);
+        let next = self.sides.remove(side).unwrap_or_else(|| SideData { base_thickness: self.base_thickness, ..Default::default() });
+        self.put_side_data(next);
+        self.apply_side_visibility();
+        self.annotate_packages();
+        true
+    }
+
+    /// Lagen der aktiven Seite einblenden, die der anderen Seite ausblenden.
+    pub fn apply_side_visibility(&mut self) {
+        let side = self.current_side.clone();
+        for l in self.layers.iter_mut() {
+            let s = l.side.to_lowercase();
+            if s != "top" && s != "bot" {
+                continue;
+            }
+            let own = s == side;
+            match l.layer_type.as_str() {
+                "paste" | "mask" | "copper" | "component" => l.visible = own && !l.name.to_lowercase().contains("copy"),
+                "paste_orig" | "silk" | "other" if !own => l.visible = false,
+                _ => {}
+            }
+        }
+    }
+
+    /// Seiten mit Pastendaten (aktive + gespeicherte).
+    pub fn sides_json(&self) -> Value {
+        let mut list = Vec::new();
+        for s in ["top", "bot"] {
+            let (n, loaded) = if s == self.current_side {
+                (self.apertures.len(), !self.apertures.is_empty())
+            } else {
+                self.sides.get(s).map_or((0, false), |d| (d.apertures.len(), !d.apertures.is_empty()))
+            };
+            list.push(json!({"side": s, "apertures": n, "loaded": loaded, "active": s == self.current_side}));
+        }
+        json!({"active": self.current_side, "sides": list})
     }
 
     pub fn set_paste_type(&mut self, ptype: &str) -> String {
@@ -216,6 +326,12 @@ impl StencilEngine {
         self.package_aliases.clear();
         self.bridge_violations.clear();
         self.odb_toeprints.clear();
+        self.drills.clear();
+        self.source_paths.clear();
+        self.project_path = None;
+        self.dirty = false;
+        self.history.clear();
+        self.sides.clear();
         self.bounds = [0.0; 4];
         self.dataset_name = NO_DATASET.into();
         self.init_standard_packages();
@@ -349,13 +465,16 @@ impl StencilEngine {
 
     pub fn apply_elongated_narrowing(&mut self, target_id: i64, width_red: f64, length_use: f64, corner_r: f64, all_identical: bool) -> usize {
         let ids = self.target_ids(target_id, all_identical);
+        let pitches = self.aperture_pitches(&ids);
+        let min_bridge = self.min_bridge_width;
         for &id in &ids {
+            let pitch = pitches.get(&id).copied();
             let ap = &mut self.apertures[id];
             let (w, h) = (ap.width, ap.height);
             let (nw, nh) = if w <= h {
-                (w * (1.0 - width_red / 100.0), h * (length_use / 100.0))
+                (elongated_narrow_width(w, width_red, pitch, min_bridge), h * (length_use / 100.0))
             } else {
-                (w * (length_use / 100.0), h * (1.0 - width_red / 100.0))
+                (w * (length_use / 100.0), elongated_narrow_width(h, width_red, pitch, min_bridge))
             };
             let r = corner_r.min(nw / 3.0).min(nh / 3.0).max(0.0);
             let pts = geometry::rounded_rect_pts(ap.cx, ap.cy, nw, nh, r);
@@ -393,17 +512,55 @@ impl StencilEngine {
         true
     }
 
-    /// Regelgeometrie einer Apertur gemäß ihrem Package (inkl. Pin-Override) neu berechnen.
-    fn regenerate_from_package(&self, ap: &ApertureItem, pkg: &PackageTemplate) -> Option<Vec<Slice>> {
-        let (mw, mh) = ap.pad_ref.as_ref().map(|p| (Some(p.w), Some(p.h))).unwrap_or((None, None));
-        if let Some(ov) = pkg.pad_overrides.get(&ap.pin_number) {
-            let rule = resolve_pin_rule(&pkg.rule, ov);
-            let pw = ov.get("w").and_then(val_f64).unwrap_or(ap.width);
-            let ph = ov.get("h").and_then(val_f64).unwrap_or(ap.height);
-            generate_rule_aperture_geometry(pw, ph, ap.cx, ap.cy, &rule, &ap.facing_dir, mw, mh, ap.shape_type == "circle")
-        } else {
-            generate_rule_aperture_geometry(ap.width, ap.height, ap.cx, ap.cy, &pkg.rule, &ap.facing_dir, mw, mh, ap.shape_type == "circle")
+    /// Pitch (Mittenabstand quer zur Padlänge) jeder Apertur innerhalb ihres Bauteils.
+    pub fn aperture_pitches(&self, ids: &[usize]) -> std::collections::HashMap<usize, f64> {
+        let mut by_comp: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+        for ap in &self.apertures {
+            if !ap.component_id.is_empty() {
+                by_comp.entry(ap.component_id.as_str()).or_default().push(ap.id);
+            }
         }
+        let mut out = std::collections::HashMap::new();
+        for &id in ids {
+            let ap = &self.apertures[id];
+            let Some(group) = by_comp.get(ap.component_id.as_str()) else { continue };
+            let pads: Vec<(f64, f64, f64, f64)> = group.iter().map(|&j| {
+                let a = &self.apertures[j];
+                (a.cx, a.cy, a.width, a.height)
+            }).collect();
+            let me = group.iter().position(|&j| j == id).unwrap_or(0);
+            if let Some(p) = neighbor_pitch(&pads, me) {
+                out.insert(id, p);
+            }
+        }
+        out
+    }
+
+    /// Regelgeometrie einer Apertur gemäß ihrem Package (inkl. Pin-Override) neu berechnen.
+    fn regenerate_from_package(&self, ap: &ApertureItem, pkg: &PackageTemplate, pitch: Option<f64>) -> Option<Vec<Slice>> {
+        let (rule, pw, ph) = match pkg.pad_overrides.get(&ap.pin_number) {
+            Some(ov) => {
+                let (mut ow, mut oh) = (ov.get("w").and_then(val_f64), ov.get("h").and_then(val_f64));
+                // Override-Maße gelten im Package-Rahmen; liegt die Instanz um 90° gedreht auf der
+                // Platine (Template-Pad B×H = Board-Pad H×B), werden sie getauscht.
+                if let Some(tp) = pkg.pads_relative.iter().find(|p| p.pin == ap.pin_number) {
+                    if is_rotated_instance(tp.w, tp.h, ap.width, ap.height) {
+                        std::mem::swap(&mut ow, &mut oh);
+                    }
+                }
+                (resolve_pin_rule(&pkg.rule, ov), ow.unwrap_or(ap.width), oh.unwrap_or(ap.height))
+            }
+            None => (pkg.rule.clone(), ap.width, ap.height),
+        };
+        let ctx = PadCtx {
+            mask: ap.pad_ref.as_ref().map(|p| (p.w, p.h)),
+            round: ap.shape_type == "circle",
+            pitch,
+            min_bridge: self.min_bridge_width,
+            pin_count: pkg.pads_relative.len().max(pkg.pin_count),
+            ..PadCtx::new(pw, ph, ap.cx, ap.cy, &ap.facing_dir)
+        };
+        generate_rule_aperture_geometry(&ctx, &rule)
     }
 
     pub fn reset_single_pad(&mut self, ap_id: i64) -> bool {
@@ -413,8 +570,9 @@ impl StencilEngine {
         let id = ap_id as usize;
         self.apertures[id].is_manually_overridden = false;
         let target = self.resolve_alias(&self.apertures[id].package_name);
+        let pitch = self.aperture_pitches(&[id]).get(&id).copied();
         let slices = match self.packages.get(&target) {
-            Some(pkg) => self.regenerate_from_package(&self.apertures[id], pkg),
+            Some(pkg) => self.regenerate_from_package(&self.apertures[id], pkg, pitch),
             None => None,
         };
         self.apertures[id].custom_slices = slices;
@@ -557,18 +715,20 @@ impl StencilEngine {
     fn regenerate_package_apertures(&mut self, target: &str, only_pin: Option<i64>) -> usize {
         let Some(pkg) = self.packages.get(target) else { return 0 };
         let aliases = &self.package_aliases;
-        let mut updates = Vec::new();
-        for ap in &self.apertures {
-            let cur = aliases.get(&ap.package_name).map(String::as_str).unwrap_or(&ap.package_name);
-            if cur != target {
-                continue;
-            }
-            match only_pin {
-                Some(pin) if ap.pin_number != pin => continue,
-                None if ap.is_manually_overridden => continue,
-                _ => {}
-            }
-            updates.push((ap.id, self.regenerate_from_package(ap, pkg)));
+        let ids: Vec<usize> = self
+            .apertures
+            .iter()
+            .filter(|ap| aliases.get(&ap.package_name).map(String::as_str).unwrap_or(&ap.package_name) == target)
+            .filter(|ap| match only_pin {
+                Some(pin) => ap.pin_number == pin,
+                None => !ap.is_manually_overridden,
+            })
+            .map(|ap| ap.id)
+            .collect();
+        let pitches = self.aperture_pitches(&ids);
+        let mut updates = Vec::with_capacity(ids.len());
+        for &id in &ids {
+            updates.push((id, self.regenerate_from_package(&self.apertures[id], pkg, pitches.get(&id).copied())));
         }
         let n = updates.len();
         for (id, slices) in updates {
@@ -582,6 +742,43 @@ impl StencilEngine {
         let Some(pkg) = self.packages.get_mut(&target) else { return false };
         pkg.pad_overrides.insert(pin, data);
         self.regenerate_package_apertures(&target, Some(pin));
+        true
+    }
+
+    /// Übersteuerung für alle Pins eines Packages. Breite/Höhe werden nur auf Pins übertragen, deren
+    /// Kupfergröße dem Referenzpin `match_pin` entspricht (gleichartige Pads); ohne Referenz auf alle.
+    pub fn override_package_pins_bulk(&mut self, pkg_name: &str, data: &Map<String, Value>, w: Option<f64>, h: Option<f64>, match_pin: Option<i64>) -> usize {
+        let target = self.resolve_alias(pkg_name);
+        let Some(pkg) = self.packages.get_mut(&target) else { return 0 };
+        let reference = match_pin.and_then(|mp| pkg.pads_relative.iter().find(|p| p.pin == mp)).map(|p| (p.w, p.h));
+        let pins: Vec<(i64, f64, f64)> = pkg.pads_relative.iter().map(|p| (p.pin, p.w, p.h)).collect();
+        let mut clean = data.clone();
+        clean.remove("w");
+        clean.remove("h");
+        for (pin, pw, ph) in &pins {
+            let entry = pkg.pad_overrides.entry(*pin).or_default();
+            for (k, v) in &clean {
+                entry.insert(k.clone(), v.clone());
+            }
+            let same = reference.map_or(true, |(rw, rh)| (rw - pw).abs() < 0.01 && (rh - ph).abs() < 0.01);
+            if same {
+                if let Some(w) = w {
+                    entry.insert("w".into(), json!(w));
+                }
+                if let Some(h) = h {
+                    entry.insert("h".into(), json!(h));
+                }
+            }
+        }
+        self.regenerate_package_apertures(&target, None);
+        pins.len()
+    }
+
+    pub fn reset_package_pins_all(&mut self, pkg_name: &str) -> bool {
+        let target = self.resolve_alias(pkg_name);
+        let Some(pkg) = self.packages.get_mut(&target) else { return false };
+        pkg.pad_overrides.clear();
+        self.regenerate_package_apertures(&target, None);
         true
     }
 
@@ -637,17 +834,26 @@ impl StencilEngine {
                 &fallback
             }
         };
+        let rel: Vec<(f64, f64, f64, f64)> = pkg.pads_relative.iter().map(|p| (p.cx, p.cy, p.w, p.h)).collect();
         let mut paste = Vec::new();
-        for p in &pkg.pads_relative {
-            let geom = if let Some(ov) = pkg.pad_overrides.get(&p.pin) {
-                let rule = resolve_pin_rule(&pkg.rule, ov);
-                let pw = ov.get("w").and_then(val_f64).unwrap_or(p.w);
-                let ph = ov.get("h").and_then(val_f64).unwrap_or(p.h);
-                generate_rule_aperture_geometry(pw, ph, p.cx, p.cy, &rule, &p.facing, None, None, p.is_round())
-            } else {
-                generate_rule_aperture_geometry(p.w, p.h, p.cx, p.cy, &pkg.rule, &p.facing, None, None, p.is_round())
+        for (i, p) in pkg.pads_relative.iter().enumerate() {
+            let (rule, pw, ph) = match pkg.pad_overrides.get(&p.pin) {
+                Some(ov) => (resolve_pin_rule(&pkg.rule, ov), ov.get("w").and_then(val_f64).unwrap_or(p.w), ov.get("h").and_then(val_f64).unwrap_or(p.h)),
+                None => (pkg.rule.clone(), p.w, p.h),
             };
-            if let Some(g) = geom {
+            let ctx = PadCtx {
+                round: p.is_round(),
+                pitch: neighbor_pitch(&rel, i),
+                min_bridge: self.min_bridge_width,
+                pin_count: pkg.pads_relative.len(),
+                mask: p.mask_w.zip(p.mask_h),
+                drill: p.drill,
+                ..PadCtx::new(pw, ph, p.cx, p.cy, &p.facing)
+            };
+            if let Some(mut g) = generate_rule_aperture_geometry(&ctx, &rule) {
+                for s in g.iter_mut() {
+                    s.pin = Some(p.pin);
+                }
                 paste.extend(g);
             }
         }
@@ -658,6 +864,7 @@ impl StencilEngine {
             "pad_width": pkg.pad_width,
             "pad_height": pkg.pad_height,
             "category": pkg.category,
+            "group": pkg.group,
             "component_count": pkg.component_count,
             "outline": pkg.outline,
             "pads": pkg.pads_relative,
@@ -761,6 +968,121 @@ fn write_file(path: &Path, content: &str) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| format!("Konnte Zielverzeichnis nicht erstellen: {e}"))?;
     }
     std::fs::write(path, content).map_err(|e| format!("Fehler beim Schreiben von {}: {e}", path.display()))
+}
+
+/// Liegt eine Pad-Instanz gegenüber dem Template um 90° gedreht? (Vergleich der Ausrichtung,
+/// unabhängig von Undersize/Paste-Reduktion)
+pub fn is_rotated_instance(tw: f64, th: f64, aw: f64, ah: f64) -> bool {
+    let t_square = (tw - th).abs() <= 0.05 * tw.max(th);
+    let a_square = (aw - ah).abs() <= 0.05 * aw.max(ah);
+    !t_square && !a_square && (tw > th) != (aw > ah)
+}
+
+impl StencilEngine {
+    /// Ergänzt Package-Templates um Lötstopp-Freistellung und Bohrung je Pin (aus der ersten Instanz
+    /// auf der Platine) und ordnet sie den Gruppen SMD / THT / Other / Fiducial / Library zu.
+    pub fn annotate_packages(&mut self) {
+        // Erste Board-Instanz je (Package, Pin): Pasten-Apertur (Position, Lage)
+        let mut first: std::collections::HashMap<(String, i64), (f64, f64, bool)> = std::collections::HashMap::new();
+        let mut instances: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let comp_rot: std::collections::HashMap<&str, f64> = self.components.iter().map(|c| (c.refdes.as_str(), c.rotation)).collect();
+        let quarter = |rot: f64| ((rot.rem_euclid(180.0)) - 90.0).abs() < 1.0;
+        for ap in &self.apertures {
+            let pkg = self.package_aliases.get(&ap.package_name).cloned().unwrap_or_else(|| ap.package_name.clone());
+            *instances.entry(pkg.clone()).or_default() += 1;
+            let rotated = match comp_rot.get(ap.component_id.as_str()) {
+                Some(r) => quarter(*r),
+                None => self.packages.get(&pkg).and_then(|t| t.pads_relative.iter().find(|p| p.pin == ap.pin_number)).map_or(false, |tp| is_rotated_instance(tp.w, tp.h, ap.width, ap.height)),
+            };
+            first.entry((pkg, ap.pin_number)).or_insert((ap.cx, ap.cy, rotated));
+        }
+        // Bauteile ohne Paste (THT-Stecker): Pinpositionen aus den ODB++ Toeprints
+        let comp_pkg: std::collections::HashMap<&str, (&str, f64)> = self.components.iter().map(|c| (c.refdes.as_str(), (c.package.as_str(), c.rotation))).collect();
+        for (refdes, pins) in &self.odb_toeprints {
+            if let Some(&(pkg, rot)) = comp_pkg.get(refdes.as_str()) {
+                for &(pin, x, y) in pins {
+                    first.entry((pkg.to_string(), pin)).or_insert((x, y, quarter(rot)));
+                }
+            }
+        }
+        let nearest_mask = |x: f64, y: f64| -> Option<&PadBox> {
+            self.pads
+                .iter()
+                .map(|m| (m, ((m.x0 + m.x1) / 2.0 - x).hypot((m.y0 + m.y1) / 2.0 - y)))
+                .filter(|(_, d)| *d < 0.5)
+                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(m, _)| m)
+        };
+        let mut updates: Vec<(String, Vec<(i64, Option<(f64, f64, bool)>, Option<f64>)>)> = Vec::new();
+        for (name, pkg) in &self.packages {
+            let mut per_pin = Vec::new();
+            for p in &pkg.pads_relative {
+                let Some(&(x, y, rotated)) = first.get(&(name.clone(), p.pin)) else { continue };
+                let mask = nearest_mask(x, y).map(|m| if rotated { (m.h, m.w, m.round) } else { (m.w, m.h, m.round) });
+                let tol = (p.w.min(p.h) / 2.0).max(0.3);
+                let drill = self
+                    .drills
+                    .iter()
+                    .map(|d| (d, (d.0 - x).hypot(d.1 - y)))
+                    .filter(|(_, dist)| *dist <= tol)
+                    .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+                    .map(|(d, _)| d.2);
+                per_pin.push((p.pin, mask, drill));
+            }
+            updates.push((name.clone(), per_pin));
+        }
+        for (name, per_pin) in updates {
+            let has_instances = instances.get(&name).copied().unwrap_or(0) > 0;
+            let Some(pkg) = self.packages.get_mut(&name) else { continue };
+            let mut any_drill = false;
+            for (pin, mask, drill) in per_pin {
+                if let Some(p) = pkg.pads_relative.iter_mut().find(|p| p.pin == pin) {
+                    if let Some((w, h, round)) = mask {
+                        p.mask_w = Some(r3(w));
+                        p.mask_h = Some(r3(h));
+                        p.mask_round = Some(round);
+                    }
+                    if let Some(d) = drill {
+                        p.drill = Some(r3(d));
+                        any_drill = true;
+                    }
+                }
+            }
+            let lname = name.to_lowercase();
+            pkg.group = if lname.contains("fiducial") || lname.starts_with("fid") {
+                "Fiducial"
+            } else if any_drill {
+                "THT"
+            } else if !has_instances && pkg.component_count == 0 {
+                "Library"
+            } else if !has_instances || (pkg.category == "Other" && pkg.pads_relative.len() <= 1) {
+                "Other"
+            } else {
+                "SMD"
+            }
+            .into();
+        }
+    }
+}
+
+/// Mittenabstand des nächsten seitlich benachbarten Pads (quer zur Padlänge).
+/// `pads` = (cx, cy, w, h); Nachbarn müssen sich entlang der Padlänge überlappen.
+pub fn neighbor_pitch(pads: &[(f64, f64, f64, f64)], i: usize) -> Option<f64> {
+    let (cx, cy, w, h) = *pads.get(i)?;
+    let narrow_is_x = w <= h;
+    let long = w.max(h);
+    let mut best: Option<f64> = None;
+    for (j, &(ox, oy, ow, oh)) in pads.iter().enumerate() {
+        if j == i {
+            continue;
+        }
+        let (d_narrow, d_long) = if narrow_is_x { ((ox - cx).abs(), (oy - cy).abs()) } else { ((oy - cy).abs(), (ox - cx).abs()) };
+        let other_long = ow.max(oh);
+        if d_narrow > 0.01 && d_long < (long + other_long) / 4.0 && best.map_or(true, |b| d_narrow < b) {
+            best = Some(d_narrow);
+        }
+    }
+    best
 }
 
 /// Segmentierte PiP-Ringöffnung (4 Kreisringsegmente mit radialen Haltestegen der Breite `web`).

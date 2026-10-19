@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Hauptfenster und Stencil-Generator-Fenster: Ereignisse, Fenster, Webview","local":true,"windows":["main","generator"],"permissions":["core:default"]}}

@@ -9,9 +9,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 </head>
 <body>
-    <!-- Top Header -->
+    <!-- Top Header: Zeile 1 = Navigation/Datei/Status, Zeile 2 = Prozessparameter & Werkzeuge -->
     <header class="app-header">
-        <div class="header-left">
+        <div class="header-row header-main">
             <div class="logo">
                 <span class="logo-icon">⚡</span>
                 <span class="logo-text">SMT Stencil<span class="accent">Craft</span></span>
@@ -20,21 +20,74 @@
             <!-- Workspace Mode Switcher -->
             <div class="mode-switcher-group">
                 <button id="btnViewBoard" class="mode-tab-btn active" title="Gesamte Platine analysieren">
-                    <span>🗺️</span> Board View
+                    <span class="ico">🗺️</span><span class="lbl">Board View</span>
                 </button>
                 <button id="btnViewPackage" class="mode-tab-btn" title="Stencil Generator & Package-Regeln">
-                    <span>📦</span> Stencil Generator
+                    <span class="ico">📦</span><span class="lbl">Stencil Generator</span>
+                </button>
+                <button id="btnDetachGenerator" class="mode-tab-btn desktop-only" title="Stencil Generator in eigenem Fenster öffnen (z. B. auf zweitem Monitor)">
+                    <span class="ico">⧉</span><span class="lbl">Eigenes Fenster</span>
                 </button>
             </div>
 
-            <button id="btnOpenDataset" class="btn btn-sm btn-primary" title="ODB++ Archiv (.zip/.tgz/Ordner) oder Gerber-Dateien öffnen">
-                <span>📂</span> ODB++ / Gerber öffnen
-            </button>
+            <div class="header-group project-group">
+                <div class="dropdown" id="projectMenu">
+                    <button id="btnProjectMenu" class="btn btn-sm btn-secondary" title="Projekt öffnen / speichern (Strg+S)">
+                        <span class="ico">📁</span><span class="lbl">Projekt</span> ▾
+                    </button>
+                    <div class="dropdown-menu hidden" id="projectMenuList">
+                        <button data-act="open">📂 Projekt öffnen…</button>
+                        <button data-act="save">💾 Speichern <kbd>Strg+S</kbd></button>
+                        <button data-act="saveas">🗂️ Speichern unter… <kbd>Strg+⇧+S</kbd></button>
+                        <div class="dropdown-sep"></div>
+                        <div class="dropdown-title">Zuletzt geöffnet</div>
+                        <div id="recentProjectsList"><div class="dropdown-empty">–</div></div>
+                    </div>
+                </div>
+                <button id="btnUndo" class="btn btn-sm btn-ghost icon-btn" title="Rückgängig (Strg+Z)" disabled>↶</button>
+                <button id="btnRedo" class="btn btn-sm btn-ghost icon-btn" title="Wiederholen (Strg+Y)" disabled>↷</button>
+                <span id="lblProjectName" class="project-name" title="Kein Projekt">–</span>
+            </div>
+
+            <div class="header-group">
+                <button id="btnOpenDataset" class="btn btn-sm btn-primary" title="ODB++ Archiv (.zip/.tgz/Ordner) oder Gerber-Dateien öffnen (Strg+O)">
+                    <span class="ico">📂</span><span class="lbl">Öffnen</span>
+                </button>
+                <button id="btnExport" class="btn btn-sm btn-primary" title="Schablone als Gerber exportieren (Strg+E)">
+                    <span class="ico">💾</span><span class="lbl">Gerber Export</span>
+                </button>
+                <button id="btnCloseDataset" class="btn btn-ghost btn-sm btn-close-dataset" title="Aktuellen Datensatz schließen">
+                    <span class="ico">✕</span><span class="lbl">Schließen</span>
+                </button>
+            </div>
+
+            <div class="header-spacer"></div>
+
+            <div class="stats-pills">
+                <div class="pill total" title="Gesamtzahl Pastenöffnungen">
+                    <span class="pill-label">Pads</span>
+                    <span id="statTotal" class="pill-val">0</span>
+                </div>
+                <div class="pill ok" title="IPC konform">
+                    <span class="pill-label">🟢</span>
+                    <span id="statOk" class="pill-val">0</span>
+                </div>
+                <div class="pill warn" title="Grenzwertig (Pastenauslösung schwankend)">
+                    <span class="pill-label">🟡</span>
+                    <span id="statWarn" class="pill-val">0</span>
+                </div>
+                <div class="pill crit" id="critPill" title="Kritisch: Pastenabriss-Risiko">
+                    <span class="pill-label">🔴</span>
+                    <span id="statCrit" class="pill-val">0</span>
+                </div>
+            </div>
+
+
         </div>
 
-        <div class="header-center">
+        <div class="header-row header-tools">
             <div class="ipc-control">
-                <label for="ipcModeSelect">IPC-Klasse:</label>
+                <label for="ipcModeSelect">IPC</label>
                 <select id="ipcModeSelect">
                     <option value="standard">IPC-7525 Standard (AR ≥ 0.66, Asp ≥ 1.5)</option>
                     <option value="nano">Nano-Coated / E-Polish (AR ≥ 0.55, Asp ≥ 1.3)</option>
@@ -43,7 +96,7 @@
             </div>
 
             <div class="ipc-control">
-                <label for="selectPasteType">Pastentyp:</label>
+                <label for="selectPasteType">Paste</label>
                 <select id="selectPasteType" title="Solder Paste Type für 5-Ball-Regel">
                     <option value="type3">Typ 3 (45 µm)</option>
                     <option value="type4" selected>Typ 4 (38 µm)</option>
@@ -52,60 +105,53 @@
             </div>
 
             <div class="squeegee-control">
-                <label for="squeegeeDir">Rakel:</label>
+                <label for="squeegeeDir">Rakel</label>
                 <select id="squeegeeDir">
                     <option value="Y">Y (Vertikal)</option>
                     <option value="X">X (Horizontal)</option>
                 </select>
             </div>
 
+            <div class="side-switch" id="sideSwitch" title="Bestückungsseite (TOP / BOT)">
+                <button data-side="top" class="active">TOP <span class="side-count" id="cntSideTop"></span></button>
+                <button data-side="bot">BOT <span class="side-count" id="cntSideBot"></span></button>
+            </div>
+
+            <div class="header-sep"></div>
+
             <button id="btnCheckBridges" class="btn btn-sm btn-secondary" title="Schablonenstegbreite prüfen (Web Check)">
-                <span id="bridgeWarnIcon">🔬</span> Stegprüfung (<span id="lblMinBridge">0.10</span> mm)
-                <span id="badgeBridgeViolations" class="badge-count hidden" style="background:#ef4444; color:#fff; margin-left:4px;">0</span>
+                <span id="bridgeWarnIcon" class="ico">🔬</span><span class="lbl">Stegprüfung</span> <span class="mono-small">(<span id="lblMinBridge">0.10</span> mm)</span>
+                <span id="badgeBridgeViolations" class="badge-count badge-danger hidden">0</span>
             </button>
 
             <button id="btnHeaderAutoClassify" class="btn btn-sm btn-secondary" title="Automatische Bauteil-Erkennung & Vorbelegung aller Schablonenregeln">
-                <span>⚡</span> Auto-Klassifizierung
+                <span class="ico">⚡</span><span class="lbl">Auto-Klassifizierung</span>
             </button>
 
-            <button id="btnOpenPipModal" class="btn btn-sm btn-secondary highlight-btn" title="Pin-in-Paste / Through-Hole Reflow Berechnungsmodul öffnen">
-                <span>🔌</span> Pin-in-Paste
+            <button id="btnOpenPipModal" class="btn btn-sm btn-secondary highlight-btn" title="Pin-in-Paste / Through-Hole Reflow Berechnungsmodul">
+                <span class="ico">🔌</span><span class="lbl">Pin-in-Paste</span>
             </button>
 
-            <button id="btnOpenCalculator" class="btn btn-sm btn-secondary highlight-btn" title="Auslösekalkulator für Schablonendicken öffnen">
-                <span>📊</span> Auslösekalkulator
+            <button id="btnOpenCalculator" class="btn btn-sm btn-secondary highlight-btn" title="Auslösekalkulator für Schablonendicken">
+                <span class="ico">📊</span><span class="lbl">Auslösekalkulator</span>
             </button>
-        </div>
 
-        <div class="header-right">
-            <div class="stats-pills">
-                <div class="pill total" title="Gesamtzahl Pastenöffnungen">
-                    <span class="pill-label">Pads:</span>
-                    <span id="statTotal" class="pill-val">0</span>
-                </div>
-                <div class="pill ok" title="IPC konform">
-                    <span class="pill-label">🟢 OK:</span>
-                    <span id="statOk" class="pill-val">0</span>
-                </div>
-                <div class="pill warn" title="Grenzwertig (Pastenauslösung schwankend)">
-                    <span class="pill-label">🟡 Warn:</span>
-                    <span id="statWarn" class="pill-val">0</span>
-                </div>
-                <div class="pill crit" id="critPill" title="Kritisch! Pastenabriss-Risiko (Klicken zum Filtern)">
-                    <span class="pill-label">🔴 Kritisch:</span>
-                    <span id="statCrit" class="pill-val">0</span>
-                </div>
+            <button id="btnNewZone" class="btn btn-sm btn-secondary" title="Stufenzone im Board aufziehen">
+                <span class="ico">➕</span><span class="lbl">Zone</span>
+            </button>
+
+            <div class="ui-size-control" title="Schriftgröße / Skalierung der Oberfläche">
+                <label for="selectUiScale">🔍</label>
+                <select id="selectUiScale">
+                    <option value="auto">Auto</option>
+                    <option value="0.8">80 %</option>
+                    <option value="0.9">90 %</option>
+                    <option value="1">100 %</option>
+                    <option value="1.1">110 %</option>
+                    <option value="1.25">125 %</option>
+                    <option value="1.4">140 %</option>
+                </select>
             </div>
-
-            <button id="btnNewZone" class="btn btn-secondary">
-                <span>➕</span> Zone
-            </button>
-            <button id="btnExport" class="btn btn-primary">
-                <span>💾</span> Gerber Export
-            </button>
-            <button id="btnCloseDataset" class="btn btn-ghost btn-sm" title="Aktuellen Datensatz schließen" style="color: #f87171; border-color: rgba(248,113,113,0.3);">
-                <span>✕</span> Schließen
-            </button>
         </div>
     </header>
 
@@ -170,8 +216,17 @@
                 </div>
             </aside>
 
+            <div class="splitter splitter-v" data-target="layerPanel" data-side="left" title="Ziehen zum Ändern der Breite, Doppelklick zum Ein-/Ausklappen"></div>
+
             <!-- CAD Canvas Viewport -->
             <div class="canvas-container" id="canvasContainer">
+                <div id="pkgHighlightChip" class="pkg-highlight-chip hidden">
+                    <span class="dot"></span>
+                    <span>Package <strong id="lblHighlightPkg">-</strong> · <span id="lblHighlightCount">0</span> Pads<span id="lblHighlightPin"></span></span>
+                    <label title="Andere Pads abdunkeln"><input type="checkbox" id="chkHighlightDim" checked> abdunkeln</label>
+                    <button id="btnHighlightZoom" class="btn btn-xs btn-ghost" title="Auf alle Instanzen zoomen">🔍 Zeigen</button>
+                    <button id="btnHighlightClear" class="btn btn-xs btn-ghost" title="Hervorhebung aufheben">×</button>
+                </div>
                 <canvas id="cadCanvas"></canvas>
 
                 <!-- Floating Controls (Oben links im Canvas) -->
@@ -217,7 +272,8 @@
             </div>
 
             <!-- Sidebar Inspector & Tools -->
-            <aside class="sidebar">
+            <div class="splitter splitter-v" data-target="boardSidebar" data-side="right" title="Ziehen zum Ändern der Breite, Doppelklick zum Ein-/Ausklappen"></div>
+            <aside class="sidebar" id="boardSidebar">
                 <div class="sidebar-tabs">
                     <button class="tab-btn active" data-tab="tabPad">Pad Inspector</button>
                     <button class="tab-btn" data-tab="tabZones">Stufenzonen (<span id="zonesCount">0</span>)</button>
@@ -415,7 +471,7 @@
         <!-- ========================================================= -->
         <div id="packageWorkspace" class="package-workspace hidden">
             <!-- Left Column: Customer Library & Package Tree -->
-            <div class="pkg-sidebar">
+            <div class="pkg-sidebar" id="pkgSidebar">
                 <!-- Customer Library Toolbar -->
                 <div class="library-header">
                     <div class="lib-selector-row">
@@ -443,9 +499,10 @@
                 <!-- Category Filters -->
                 <div class="pkg-category-bar">
                     <button class="cat-pill active" data-cat="">Alle (<span id="countAllPkgs">0</span>)</button>
-                    <button class="cat-pill" data-cat="SMD Passives">Passives</button>
-                    <button class="cat-pill" data-cat="ICs & Transistors">ICs</button>
-                    <button class="cat-pill" data-cat="BGA & Arrays">BGA</button>
+                    <button class="cat-pill" data-cat="SMD">SMD</button>
+                    <button class="cat-pill" data-cat="THT">THT</button>
+                    <button class="cat-pill" data-cat="Other">Other</button>
+                    <button class="cat-pill" data-cat="Library" title="Bibliotheks-Packages, die nicht auf der Platine vorkommen">Bibliothek</button>
                 </div>
 
                 <!-- Package Tree List -->
@@ -455,13 +512,15 @@
             </div>
 
             <!-- Right Column: Rule Config (Top) & CAD Preview (Bottom) -->
+            <div class="splitter splitter-v" data-target="pkgSidebar" data-side="left" title="Ziehen zum Ändern der Breite, Doppelklick zum Ein-/Ausklappen"></div>
             <div class="pkg-main-content">
                 <!-- Top Section: Rule Table / Grid (Matching PCB Investigator Screenshot 1) -->
-                <div class="rule-config-card">
+                <div class="rule-config-card" id="ruleConfigCard">
                     <div class="rule-top-bar">
                         <div class="rule-dropdown-group">
                             <label for="selectPkgRule">Select Rule:</label>
                             <select id="selectPkgRule">
+                                <option value="package_group">Inherit – Handle Stencil Creation by Package Group</option>
                                 <option value="simple_rect">Simple Rectangle Surface</option>
                                 <option value="house_builder">HouseBuilder</option>
                                 <option value="inverted_house_builder">InvertedHouseBuilder</option>
@@ -492,54 +551,55 @@
                     </div>
 
                     <!-- Rule Property Grid (Exact PCB Investigator Parameters) -->
+                    <div id="ruleDescription" class="rule-description"></div>
                     <div class="rule-property-grid">
-                        <div class="prop-item">
+                        <div class="prop-item" data-rules="package_group simple_rect elongated_pitch array_slicing">
                             <label>Corner Radius (MM):</label>
                             <input type="number" id="propCornerRadius" value="0.0" step="0.005" min="0" max="1.0">
                         </div>
-                        <div class="prop-item">
+                        <div class="prop-item" data-rules="package_group simple_rect house_builder inverted_house_builder array_slicing donut">
                             <label>Undersize Value (MM):</label>
                             <input type="number" id="propUndersize" value="0.025" step="0.005" min="-0.2" max="0.5">
                         </div>
-                        <div class="prop-item">
+                        <div class="prop-item" data-rules="package_group house_builder inverted_house_builder">
                             <label>House distance cut size (%):</label>
                             <input type="number" id="propHouseCut" value="35" step="5" min="5" max="75">
                         </div>
-                        <div class="prop-item">
+                        <div class="prop-item" data-rules="elongated_pitch">
                             <label>Pitch Reduction (%):</label>
                             <input type="number" id="propPitchRed" value="20" step="5" min="0" max="60">
                         </div>
-                        <div class="prop-item">
+                        <div class="prop-item" data-rules="elongated_pitch">
                             <label>Length Usage (%):</label>
                             <input type="number" id="propLengthUse" value="95" step="5" min="50" max="110">
                         </div>
-                        <div class="prop-item">
+                        <div class="prop-item" data-rules="simple_rect house_builder inverted_house_builder elongated_pitch">
                             <label>Offset move away distance (MM):</label>
                             <input type="number" id="propOffsetMoveAway" value="0.0" step="0.02" min="0" max="1.0">
                         </div>
-                        <div class="prop-item">
+                        <div class="prop-item" data-rules="package_group simple_rect house_builder inverted_house_builder elongated_pitch array_slicing donut">
                             <label>Offset to Center X / Y (MM):</label>
                             <div class="dual-row">
                                 <input type="number" id="propOffsetX" value="0.0" step="0.01" placeholder="X">
                                 <input type="number" id="propOffsetY" value="0.0" step="0.01" placeholder="Y">
                             </div>
                         </div>
-                        <div class="prop-item">
+                        <div class="prop-item" data-rules="simple_rect array_slicing">
                             <label>Bridge Count X / Y (Stege):</label>
                             <div class="dual-row">
                                 <input type="number" id="propBridgeX" value="0" step="1" min="0" max="6" placeholder="X">
                                 <input type="number" id="propBridgeY" value="0" step="1" min="0" max="6" placeholder="Y">
                             </div>
                         </div>
-                        <div class="prop-item">
+                        <div class="prop-item" data-rules="simple_rect array_slicing donut">
                             <label>Bridge Width (MM):</label>
                             <input type="number" id="propBridgeWidth" value="0.30" step="0.05" min="0.1" max="1.5">
                         </div>
-                        <div class="prop-item">
+                        <div class="prop-item" data-rules="simple_rect house_builder inverted_house_builder elongated_pitch">
                             <label>Toe-/Heel-Shift (MM):</label>
                             <input type="number" id="propToeHeelShift" value="0.0" step="0.01" min="-0.5" max="0.5" title="Systematischer Offset: >0 Toe (nach außen zur Spitze), <0 Heel (nach innen zur Ferse)">
                         </div>
-                        <div class="prop-item">
+                        <div class="prop-item" data-rules="simple_rect">
                             <label>Chamfer Size / Mode:</label>
                             <div class="dual-row">
                                 <input type="number" id="propChamferSize" value="0.0" step="0.01" min="0" max="0.5" placeholder="Anfasung (mm)" title="45° Eck-Anfasung">
@@ -551,13 +611,58 @@
                                 </select>
                             </div>
                         </div>
-                        <div class="prop-item checkbox-prop">
+                        <div class="prop-item" data-rules="simple_rect">
+                            <label>Size Width / Height (MM):</label>
+                            <div class="dual-row">
+                                <input type="number" id="propSizeW" value="0" step="0.05" min="0" placeholder="B" title="Feste Öffnungsbreite (0 = aus Padgröße)">
+                                <input type="number" id="propSizeH" value="0" step="0.05" min="0" placeholder="H" title="Feste Öffnungshöhe (0 = aus Padgröße)">
+                            </div>
+                        </div>
+                        <div class="prop-item" data-rules="donut">
+                            <label>Donut Inner Diameter (MM):</label>
+                            <input type="number" id="propDonutInner" value="0" step="0.05" min="0" title="0 = Bohrung + 0.1 mm">
+                        </div>
+                        <div class="prop-item" data-rules="package_group">
+                            <label>BGA Threshold Square (MM):</label>
+                            <input type="number" id="propBgaThreshold" value="0.41" step="0.01" min="0">
+                        </div>
+                        <div class="prop-item" data-rules="package_group">
+                            <label>CHIP Threshold Houses (MM):</label>
+                            <input type="number" id="propChipThreshold" value="2.49" step="0.05" min="0">
+                        </div>
+                        <div class="prop-item" data-rules="package_group">
+                            <label>Invert House Pad smaller than (MM):</label>
+                            <input type="number" id="propInvertHouse" value="0.75" step="0.05" min="0">
+                        </div>
+                        <div class="prop-item" data-rules="package_group">
+                            <label>Mini Chip Size (MM):</label>
+                            <input type="number" id="propMiniChip" value="0.075" step="0.005" min="0" title="Zusätzliche Reduktion für Mini-Chips (Inverted House)">
+                        </div>
+                        <div class="prop-item" data-rules="package_group">
+                            <label>Minimum Array Field Size (MM):</label>
+                            <input type="number" id="propMinArrayField" value="0.75" step="0.05" min="0">
+                        </div>
+                        <div class="prop-item" data-rules="package_group">
+                            <label>Distance Array Fields (MM):</label>
+                            <input type="number" id="propArrayDistance" value="0.25" step="0.05" min="0">
+                        </div>
+                        <div class="prop-item" data-rules="package_group">
+                            <label>Utilization Array Area (%):</label>
+                            <input type="number" id="propUtilArray" value="40" step="5" min="5" max="100">
+                        </div>
+                        <div class="prop-item" data-rules="package_group">
+                            <label>Utilization House Area (%):</label>
+                            <input type="number" id="propUtilHouse" value="0" step="5" min="0" max="100" title="0 = keine Flächenanpassung">
+                        </div>
+                        <div class="prop-item checkbox-prop" data-rules="package_group simple_rect house_builder inverted_house_builder elongated_pitch array_slicing donut">
                             <label><input type="checkbox" id="propRotate45"> Rotate Bridges 45°</label>
                             <label><input type="checkbox" id="propPinMinusMask"> Pin-minus-Mask (SMD)</label>
                             <label><input type="checkbox" id="propTryDirection" checked> Try Find Direction</label>
                         </div>
                     </div>
                 </div>
+
+                <div class="splitter splitter-h" data-target="ruleConfigCard" data-side="top" title="Ziehen zum Ändern der Höhe, Doppelklick zum Ein-/Ausklappen"></div>
 
                 <!-- Bottom Section: CAD Preview Canvas (Matching Screenshots 1 & 3) -->
                 <div class="pkg-preview-card">
@@ -573,16 +678,19 @@
                         <!-- Single Pad Override Bar -->
                         <div id="singlePadBar" class="single-pad-bar hidden">
                             <div class="pad-bar-info">
-                                <span>🎯 <strong>Pin <span id="lblSelectedPin">1</span></strong>:</span>
+                                <span>🎯 <strong><span id="lblPinBarPrefix">Pin </span><span id="lblSelectedPin">1</span></strong>:</span>
                             </div>
                             <div class="pad-bar-inputs">
                                 <select id="selectPinRule" title="Regel für diesen Pin" style="font-size: 0.75rem; padding: 3px 6px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border); border-radius: 4px;">
                                     <option value="inherit">Regel: Vom Package erben</option>
+                                    <option value="package_group">Package-Gruppe</option>
                                     <option value="simple_rect">Simple Rect</option>
                                     <option value="house_builder">HouseBuilder</option>
                                     <option value="inverted_house_builder">InvertedHouse</option>
                                     <option value="elongated_pitch">Länglich & Schmal</option>
                                     <option value="array_slicing">Array Slicing</option>
+                                    <option value="donut">Donut</option>
+                                    <option value="take_existing">Original übernehmen</option>
                                     <option value="ignore">Ignore</option>
                                 </select>
                                 <input type="number" id="inputPadCustomW" placeholder="B (mm)" step="0.05" style="width: 70px;">
@@ -590,6 +698,7 @@
                                 <input type="number" id="inputPadCustomUndersize" placeholder="Red. (mm)" step="0.005" style="width: 75px;" title="Undersize (mm)">
                                 <button id="btnSavePadOverride" class="btn btn-xs btn-primary">Anpassen</button>
                                 <button id="btnResetPadOverride" class="btn btn-xs btn-ghost">Reset</button>
+                                <button id="btnApplyPinToAll" class="btn btn-xs btn-ghost" title="Regel und Reduktion auf alle Pins übernehmen; Breite/Höhe nur auf Pins gleicher Kupfergröße">Für alle übernehmen</button>
                                 <button id="btnClosePadBar" class="btn-close-sm">&times;</button>
                             </div>
                         </div>
@@ -610,6 +719,7 @@
                             <label><input type="checkbox" id="chkPrevComponent" checked> <span class="dot-comp"></span> Show Component</label>
                             <label><input type="checkbox" id="chkPrevRuler" checked> Show Ruler</label>
                             <label><input type="checkbox" id="chkPrevPinLabels"> Show Pin Labels</label>
+                            <label><input type="checkbox" id="chkPrevDrills" checked> Show Drills</label>
                         </div>
 
                         <div class="preview-cta">
@@ -850,26 +960,56 @@
     </div>
 
     <!-- Datensatz Schließen Bestätigungsmodal -->
-    <div id="closeModal" class="modal hidden">
-        <div class="modal-box">
-            <h3>⚠️ Aktuellen Datensatz schließen?</h3>
-            <p class="modal-desc" style="margin: 12px 0;">Möchten Sie vor dem Schließen die bearbeiteten Schablonenöffnungen als Gerber exportieren?</p>
-            <div class="modal-actions" style="display: flex; gap: 8px; justify-content: flex-end;">
-                <button id="btnCancelCloseModal" class="btn btn-ghost">Abbrechen</button>
-                <button id="btnDiscardAndClose" class="btn btn-secondary" style="color: #f87171;">Ohne Speichern schließen</button>
-                <button id="btnExportAndClose" class="btn btn-primary">Exportieren & Schließen</button>
-            </div>
+    <!-- Allgemeiner Auswahl-Dialog -->
+    <div id="choiceModal" class="modal hidden">
+        <div class="modal-box choice-box">
+            <h3 id="choiceTitle">-</h3>
+            <p id="choiceText" class="modal-desc"></p>
+            <div id="choiceButtons" class="modal-actions choice-actions"></div>
         </div>
     </div>
 
-    <!-- Export Modal -->
+    <!-- Export-Dialog -->
     <div id="exportModal" class="modal hidden">
-        <div class="modal-box">
-            <h3>Gerber Export erfolgreich! 🎉</h3>
-            <p id="exportMsg">Die Dateien wurden im Ordner <code>A:\Schablone\Export\</code> gespeichert.</p>
-            <div class="export-file-list" id="exportFileList"></div>
-            <div class="modal-actions">
-                <button id="btnCloseExportModal" class="btn btn-primary">Schließen</button>
+        <div class="modal-box export-box">
+            <h3>💾 Export für den Schablonenhersteller</h3>
+            <div id="exportForm" class="export-form">
+                <label>Zielordner</label>
+                <div class="row-flex">
+                    <input type="text" id="expDir" placeholder="Standard-Exportordner">
+                    <button id="btnExpPickDir" class="btn btn-sm btn-secondary desktop-only" title="Ordner wählen">…</button>
+                </div>
+                <label>Dateiname</label>
+                <div>
+                    <input type="text" id="expPattern" spellcheck="false">
+                    <small class="hint">Platzhalter: {job} {side} {dicke} {datum}</small>
+                </div>
+                <label>Seiten</label>
+                <select id="expSides">
+                    <option value="active">Aktive Seite</option>
+                    <option value="top">TOP</option>
+                    <option value="bot">BOT</option>
+                    <option value="both">TOP + BOT</option>
+                </select>
+                <label>Dateien</label>
+                <div class="exp-checks">
+                    <label><input type="checkbox" id="expZones"> Stufenzonen</label>
+                    <label><input type="checkbox" id="expOutline"> Platinenkontur</label>
+                    <label><input type="checkbox" id="expReport"> Prüfbericht</label>
+                    <label><input type="checkbox" id="expX2"> Gerber X2-Attribute</label>
+                </div>
+                <label>Vorschau</label>
+                <div id="expPreview" class="exp-preview"></div>
+            </div>
+            <div id="exportResult" class="hidden">
+                <p id="exportMsg"></p>
+                <div class="export-file-list" id="exportFileList"></div>
+            </div>
+            <div class="modal-actions choice-actions">
+                <button id="btnExpOpenDir" class="btn btn-secondary hidden">📂 Ordner öffnen</button>
+                <button id="btnExpOpenReport" class="btn btn-secondary hidden">📄 Bericht öffnen</button>
+                <button id="btnCloseExportModal" class="btn btn-ghost">Schließen</button>
+                <button id="btnExpRun" class="btn btn-primary">Exportieren</button>
             </div>
         </div>
     </div>

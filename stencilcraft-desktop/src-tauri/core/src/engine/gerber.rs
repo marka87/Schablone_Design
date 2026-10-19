@@ -857,6 +857,22 @@ pub fn write_stencil(apertures: &[ApertureItem], title: &str) -> String {
     out
 }
 
+/// Platinenkontur als Linienzug (0,1 mm Strich), z. B. zur Ausrichtung beim Schablonenhersteller.
+pub fn write_outline(segments: &[[Pt; 2]]) -> String {
+    let mut out = header("Board Outline");
+    out.push_str("%ADD10C,0.1000*%
+G01*
+D10*
+");
+    for s in segments {
+        let _ = writeln!(out, "X{}Y{}D02*", c46(s[0].0), c46(s[0].1));
+        let _ = writeln!(out, "X{}Y{}D01*", c46(s[1].0), c46(s[1].1));
+    }
+    out.push_str("M02*
+");
+    out
+}
+
 /// Stufenzonen als gefüllte Rechteck-Regionen (Fräs-/Ätz-Layer für den Schablonenhersteller).
 pub fn write_zones(zones: &[StencilZone], base_thickness: f64) -> String {
     let mut out = header("Step Stencil Zones");
