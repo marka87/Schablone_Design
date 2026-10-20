@@ -431,6 +431,22 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             ok(json!({"status": "ok", "stats": stats(e)}))
         }
         ("GET", ["api", "thickness", "overview"]) => ok(e.thickness_overview()),
+        // Stufenzonen vorschlagen / anlegen
+        ("POST", ["api", "zones", "propose"]) => {
+            let pkg = b.s("package").unwrap_or_default();
+            let gap = b.f("merge_gap", 0.0);
+            let step = e.package_step(&pkg);
+            ok(json!({"package": pkg, "thickness": step.min(e.base_thickness), "needed": step < e.base_thickness - 1e-9, "t_step": step, "zones": e.propose_zones_for_package(&pkg, gap)}))
+        }
+        ("GET", ["api", "zones", "suggest"]) => ok(json!({"suggestions": e.suggest_zones(Body(query).f("merge_gap", 0.0))})),
+        ("POST", ["api", "zones", "create"]) => {
+            let rects: Vec<[f64; 4]> = body.get("zones").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|z| {
+                let f = |k: &str| z.get(k).and_then(val_f64);
+                Some([f("x0")?, f("y0")?, f("x1")?, f("y1")?])
+            }).collect()).unwrap_or_default();
+            let n = e.create_zones(&rects, b.f("thickness", 0.10), &b.s("name").unwrap_or_else(|| "Stufe".into()));
+            ok(json!({"status": "ok", "created": n, "stats": stats(e)}))
+        }
         ("POST", ["api", "zone", "around_component"]) => {
             let refdes = b.s("component").unwrap_or_default();
             match e.add_zone_around_component(&refdes, b.f("thickness", 0.10)) {
@@ -447,7 +463,12 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             ok(json!({"status": "ok", "stats": stats(e)}))
         }
         ("PUT" | "POST", ["api", "zone", id]) => {
-            e.update_zone(id, b.f("thickness", 0.100), b.s("name"));
+            // Geometrie (verschieben / Größe ziehen) und/oder Dicke
+            if ["x0", "y0", "x1", "y1"].iter().all(|k| body.contains_key(*k)) {
+                e.set_zone_geometry(id, [b.f("x0", 0.0), b.f("y0", 0.0), b.f("x1", 0.0), b.f("y1", 0.0)]);
+            }
+            let cur = e.zones.iter().find(|z| z.id == *id).map(|z| z.thickness).unwrap_or(0.1);
+            e.update_zone(id, b.f("thickness", cur), b.s("name"));
             ok(json!({"status": "ok", "stats": stats(e)}))
         }
         ("POST", ["api", "elongate"]) => {

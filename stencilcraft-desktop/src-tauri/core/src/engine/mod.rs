@@ -19,6 +19,7 @@ pub mod rules;
 pub mod rulesets;
 pub mod tombstone;
 pub mod types;
+pub mod zone_plan;
 
 use geometry::circle_pts;
 use rules::{elongated_narrow_width, generate_rule_aperture_geometry, resolve_pin_rule, PadCtx};

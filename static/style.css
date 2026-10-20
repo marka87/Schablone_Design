@@ -2245,6 +2245,26 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: none; outli
 ::-webkit-scrollbar-thumb { background: rgba(121, 121, 121, 0.4); }
 ::-webkit-scrollbar-thumb:hover { background: rgba(100, 100, 100, 0.7); }
 
+/* Stufenzonen: Vorschlag für ein Package, Auswahl/Bearbeitung */
+.step-panel { position: absolute; left: 50%; bottom: 110px; transform: translateX(-50%); z-index: 13; min-width: 340px;
+    background: #252526; border: 1px solid #454545; border-radius: 4px; padding: 8px 10px; box-shadow: 0 6px 20px rgba(0,0,0,.5); font-size: 12px; }
+.step-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.step-form { display: flex; gap: 12px; flex-wrap: wrap; }
+.step-form label { display: flex; align-items: center; gap: 4px; color: var(--text-secondary); }
+.step-form input { width: 5em; padding: 2px 6px; text-align: right; }
+.step-info { margin: 6px 0; color: var(--text-secondary); }
+.step-info .warn { color: #d29922; }
+.step-actions { display: flex; align-items: center; gap: 10px; }
+.step-hint { color: var(--text-muted); font-size: 11px; }
+.zone-card { cursor: pointer; }
+.zone-card.selected { outline: 1px solid var(--accent); outline-offset: -1px; background: var(--list-active); }
+.zone-edit { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 6px; margin-top: 6px; font-size: 11px; color: var(--text-secondary); }
+.zone-edit label { display: flex; flex-direction: column; gap: 2px; }
+.zone-edit input { width: 100%; padding: 2px 4px; text-align: right; font-family: var(--font-mono); }
+.zone-edit .full { grid-column: 1 / -1; display: flex; gap: 6px; justify-content: flex-end; }
+.zone-suggest-list .sug { border: 1px dashed var(--border-strong); border-radius: 4px; padding: 6px 8px; margin-bottom: 6px; font-size: 12px; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.zone-suggest-list .sug .meta { color: var(--text-secondary); font-size: 11px; }
+
 /* Regelpanel bearbeitet einen einzelnen Pin */
 .rule-source-banner.pin-target { border-left: 3px solid #d29922; background: rgba(210, 153, 34, 0.10); }
 

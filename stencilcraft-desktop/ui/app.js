@@ -228,6 +228,98 @@ function setupPackageHighlight() {
     document.getElementById("btnHighlightClear")?.addEventListener("click", () => setPackageHighlight(null));
     document.getElementById("btnHighlightZoom")?.addEventListener("click", zoomToHighlight);
     document.getElementById("chkHighlightDim")?.addEventListener("change", (e) => { state.highlightDim = e.target.checked; render(); });
+    document.getElementById("btnHighlightStep")?.addEventListener("click", () => openStepPanel(state.highlightPkg));
+    document.getElementById("btnStepClose")?.addEventListener("click", closeStepPanel);
+    document.getElementById("stepThick")?.addEventListener("change", () => updateStepProposal());
+    document.getElementById("stepGap")?.addEventListener("change", () => updateStepProposal());
+    document.getElementById("btnStepCreate")?.addEventListener("click", createProposedZones);
+    document.getElementById("btnSuggestZones")?.addEventListener("click", suggestZones);
+}
+
+// Stufenzonen um alle Bauteile eines Packages vorschlagen (Vorschau gestrichelt, dann anlegen)
+async function openStepPanel(pkg, thicknessUm = null) {
+    if (!pkg) return;
+    state.stepPkg = pkg;
+    document.getElementById("stepPkg").textContent = pkg;
+    document.getElementById("stepPanel").classList.remove("hidden");
+    await updateStepProposal(thicknessUm);
+}
+
+function closeStepPanel() {
+    document.getElementById("stepPanel")?.classList.add("hidden");
+    state.zoneProposals = null;
+    state.stepPkg = null;
+    render();
+}
+
+async function updateStepProposal(thicknessUm = null) {
+    if (!state.stepPkg) return;
+    const gap = parseFloat(document.getElementById("stepGap").value) || 0;
+    const d = await (await fetch("/api/zones/propose", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ package: state.stepPkg, merge_gap: gap }) })).json();
+    const th = document.getElementById("stepThick");
+    if (thicknessUm) th.value = thicknessUm;
+    else if (!th.dataset.pkg || th.dataset.pkg !== state.stepPkg) th.value = Math.round(d.thickness * 1000);
+    th.dataset.pkg = state.stepPkg;
+    state.zoneProposals = d.zones;
+    const comps = d.zones.reduce((n, z) => n + z.components.length, 0);
+    const foreign = d.zones.reduce((n, z) => n + z.foreign_pads, 0);
+    const overl = d.zones.filter(z => z.overlaps_zone).length;
+    const base = Math.round((state.stats?.base_thickness || 0.12) * 1000);
+    const need = d.needed ? `Empfehlung ${Math.round(d.t_step * 1000)} µm (Grundblech ${base} µm)` : `Pads passen bis ${Math.round(d.t_step * 1000)} µm – Stufe nicht nötig, Dicke frei wählbar`;
+    document.getElementById("stepInfo").innerHTML = `${d.zones.length} Zone(n) für ${comps} Bauteil(e) · ${need}`
+        + (foreign ? `<br><span class="warn">${foreign} Pads anderer Bauteile liegen mit in den Zonen und werden ebenfalls dünner.</span>` : "")
+        + (overl ? `<br><span class="warn">${overl} Zone(n) überschneiden bestehende Stufenzonen.</span>` : "");
+    render();
+}
+
+async function createProposedZones() {
+    if (!state.zoneProposals?.length) return;
+    const um = parseFloat(document.getElementById("stepThick").value);
+    const d = await (await fetch("/api/zones/create", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zones: state.zoneProposals, thickness: um / 1000, name: `Stufe ${state.stepPkg} ${um}µm` }) })).json();
+    const pkg = state.stepPkg;
+    closeStepPanel();
+    await refreshApertureData();
+    await refreshHistory();
+    document.querySelector('.tab-btn[data-tab="tabZones"]')?.click();
+    showToast(`${d.created} Stufenzone(n) ${um} µm für ${pkg} angelegt (Strg+Z rückgängig)`);
+}
+
+// Vorschläge für alle Packages, die bei der Grunddicke nicht reichen
+async function suggestZones() {
+    const d = await (await fetch("/api/zones/suggest")).json();
+    const box = document.getElementById("zoneSuggestList");
+    box.innerHTML = "";
+    if (!d.suggestions.length) { box.innerHTML = `<p class="empty-state" style="padding:6px">Alle Pads außerhalb von Zonen passen zur Grunddicke.</p>`; return; }
+    for (const s of d.suggestions) {
+        const row = document.createElement("div");
+        row.className = "sug";
+        const um = Math.round(s.thickness * 1000);
+        row.innerHTML = `<div><strong>${escapeHtml(s.package)}</strong> → ${um} µm<div class="meta">${s.zones.length} Zone(n), zulässig ≤ ${Math.round(s.t_max * 1000)} µm</div></div>
+            <button class="btn btn-xs btn-secondary">Vorschau</button>`;
+        row.querySelector("button").addEventListener("click", async () => {
+            setPackageHighlight(s.package, null);
+            await openStepPanel(s.package, um);
+            zoomToHighlight();
+        });
+        box.appendChild(row);
+    }
+}
+
+// Gestrichelte Vorschau der vorgeschlagenen Zonen
+function renderZoneProposals() {
+    if (!state.zoneProposals?.length) return;
+    ctx.save();
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 1.5;
+    for (const z of state.zoneProposals) {
+        const p0 = worldToScreen(z.x0, z.y1), p1 = worldToScreen(z.x1, z.y0);
+        ctx.fillStyle = "rgba(55, 148, 255, 0.10)";
+        ctx.strokeStyle = z.overlaps_zone ? "#d29922" : "#3794ff";
+        ctx.fillRect(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
+        ctx.strokeRect(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
+    }
+    ctx.restore();
 }
 
 function setPackageHighlight(pkg, pin = null) {
@@ -1175,7 +1267,43 @@ function renderZones() {
         ctx.fillStyle = z.is_step_down ? "#e9d5ff" : "#fecdd3";
         const label = `${z.name} (${Math.round(z.thickness * 1000)} µm)`;
         ctx.fillText(label, p0.x + 6, p0.y + 16);
+        if (z.id === state.selectedZoneId) {
+            ctx.strokeStyle = "#3794ff";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(p0.x, p0.y, sw, sh);
+            ctx.fillStyle = "#3794ff";
+            for (const h of zoneHandles(z)) ctx.fillRect(h.x - 4, h.y - 4, 8, 8);
+        }
     }
+    renderZoneProposals();
+}
+
+// Griffe einer Zone in Bildschirmkoordinaten (Ecken und Kantenmitten)
+function zoneHandles(z) {
+    const a = worldToScreen(z.x0, z.y1), b = worldToScreen(z.x1, z.y0);
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    return [
+        { k: "nw", x: a.x, y: a.y }, { k: "n", x: mx, y: a.y }, { k: "ne", x: b.x, y: a.y }, { k: "e", x: b.x, y: my },
+        { k: "se", x: b.x, y: b.y }, { k: "s", x: mx, y: b.y }, { k: "sw", x: a.x, y: b.y }, { k: "w", x: a.x, y: my },
+    ];
+}
+
+function selectZone(id, zoom = true) {
+    state.selectedZoneId = id;
+    const z = (state.zones || []).find(x => x.id === id);
+    if (z && zoom) {
+        const m = Math.max(z.x1 - z.x0, z.y1 - z.y0) * 0.25 + 1;
+        fitToWorldBox(z.x0 - m, z.y0 - m, z.x1 + m, z.y1 + m);
+    }
+    renderZonesList();
+    render();
+}
+
+async function saveZoneGeometry(z) {
+    await fetch(`/api/zone/${z.id}`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ x0: z.x0, y0: z.y0, x1: z.x1, y1: z.y1, thickness: z.thickness }) });
+    await refreshApertureData();
+    refreshHistory();
 }
 
 function renderFiducials() {
@@ -1970,6 +2098,18 @@ function setupEventListeners() {
                 return;
             }
 
+            const zsel = state.selectedZoneId && (state.zones || []).find(z => z.id === state.selectedZoneId);
+            if (zsel && e.button === 0 && !state.isDrawingZone) {
+                const rect = container.getBoundingClientRect();
+                const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+                const h = zoneHandles(zsel).find(h => Math.abs(h.x - sx) <= 7 && Math.abs(h.y - sy) <= 7);
+                const w = screenToWorld(sx, sy);
+                const inside = w.x >= zsel.x0 && w.x <= zsel.x1 && w.y >= zsel.y0 && w.y <= zsel.y1;
+                if (h || inside) {
+                    state.zoneEdit = { z: zsel, mode: h ? h.k : "move", start: w, orig: { x0: zsel.x0, y0: zsel.y0, x1: zsel.x1, y1: zsel.y1 }, moved: false };
+                    return;
+                }
+            }
             if (state.isDrawingZone) {
                 const rect = container.getBoundingClientRect();
                 state.drawStartWorld = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
@@ -1984,6 +2124,23 @@ function setupEventListeners() {
 
     window.addEventListener("mousemove", (e) => {
         const rect = container.getBoundingClientRect();
+        if (state.zoneEdit) {
+            const ze = state.zoneEdit, o = ze.orig;
+            const w = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+            const dx = w.x - ze.start.x, dy = w.y - ze.start.y;
+            const z = ze.z;
+            if (ze.mode === "move") { z.x0 = o.x0 + dx; z.x1 = o.x1 + dx; z.y0 = o.y0 + dy; z.y1 = o.y1 + dy; }
+            else {
+                // Bildschirm "oben" = größeres Y
+                if (ze.mode.includes("w")) z.x0 = Math.min(o.x0 + dx, o.x1 - 0.2);
+                if (ze.mode.includes("e")) z.x1 = Math.max(o.x1 + dx, o.x0 + 0.2);
+                if (ze.mode.includes("n")) z.y1 = Math.max(o.y1 + dy, o.y0 + 0.2);
+                if (ze.mode.includes("s")) z.y0 = Math.min(o.y0 + dy, o.y1 - 0.2);
+            }
+            ze.moved = true;
+            render();
+            return;
+        }
         if (state.isDragging) {
             const dx = e.clientX - state.dragStartX;
             const dy = e.clientY - state.dragStartY;
@@ -2139,11 +2296,19 @@ function setupEventListeners() {
     });
 
     window.addEventListener("mouseup", (e) => {
+        if (state.zoneEdit) {
+            const ze = state.zoneEdit;
+            state.zoneEdit = null;
+            if (ze.moved) saveZoneGeometry(ze.z);
+            return;
+        }
         if (state.isDragging) {
             const dist = Math.hypot(e.clientX - state.dragStartX, e.clientY - state.dragStartY);
             state.isDragging = false;
             if (dist < 4) {
                 const rect = container.getBoundingClientRect();
+                // Klick außerhalb der gewählten Zone hebt die Zonenauswahl auf
+                if (state.selectedZoneId) { state.selectedZoneId = null; renderZonesList(); }
                 handleCanvasClick(e.clientX - rect.left, e.clientY - rect.top);
             }
         } else if (state.isDrawingZone && state.drawStartWorld) {
@@ -2720,7 +2885,7 @@ function renderZonesList() {
 
     for (const z of state.zones) {
         const card = document.createElement("div");
-        card.className = "zone-card";
+        card.className = `zone-card ${z.id === state.selectedZoneId ? "selected" : ""}`;
         const thickUm = Math.round(z.thickness * 1000);
         card.innerHTML = `
             <div class="zone-card-info">
@@ -2750,8 +2915,31 @@ function renderZonesList() {
         card.querySelector(".btn-del-zone").addEventListener("click", async (e) => {
             e.stopPropagation();
             await fetch(`/api/zone/${z.id}`, { method: "DELETE" });
+            if (state.selectedZoneId === z.id) state.selectedZoneId = null;
             await refreshApertureData();
         });
+        card.addEventListener("click", () => selectZone(z.id === state.selectedZoneId ? null : z.id, z.id !== state.selectedZoneId));
+        if (z.id === state.selectedZoneId) {
+            // Dicke und Maße direkt bearbeiten
+            const f = (v) => (+v).toFixed(3);
+            const ed = document.createElement("div");
+            ed.className = "zone-edit";
+            ed.innerHTML = `<label>Dicke µm<input type="number" data-k="t" step="5" value="${thickUm}"></label>
+                <label>Breite mm<input type="number" data-k="w" step="0.1" value="${f(z.x1 - z.x0)}"></label>
+                <label>Höhe mm<input type="number" data-k="h" step="0.1" value="${f(z.y1 - z.y0)}"></label>
+                <label>Mitte X/Y<input type="text" data-k="c" value="${f((z.x0 + z.x1) / 2)} / ${f((z.y0 + z.y1) / 2)}"></label>
+                <div class="full"><button class="btn btn-xs btn-primary">Übernehmen</button></div>`;
+            ed.addEventListener("click", (e) => e.stopPropagation());
+            ed.querySelector("button").addEventListener("click", async () => {
+                const v = (k) => ed.querySelector(`[data-k="${k}"]`).value;
+                const [cx, cy] = v("c").split("/").map(s => parseFloat(s.replace(",", ".")));
+                const w = parseFloat(v("w")), h = parseFloat(v("h")), t = parseFloat(v("t"));
+                if (![cx, cy, w, h, t].every(Number.isFinite) || w <= 0 || h <= 0) { showToast("Ungültige Werte"); return; }
+                await saveZoneGeometry({ id: z.id, x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2, thickness: t / 1000 });
+                showToast(`${z.name} geändert`);
+            });
+            card.appendChild(ed);
+        }
         list.appendChild(card);
     }
 }

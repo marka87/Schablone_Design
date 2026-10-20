@@ -570,6 +570,7 @@ pub fn edit_label(method: &str, seg: &[&str], body: &Map<String, Value>) -> Opti
         ("POST", ["api", "pad", p, "reset"]) => format!("Pad {p} zurücksetzen"),
         ("POST", ["api", "zone"]) => "Zone anlegen".into(),
         ("POST", ["api", "zone", "around_component"]) => "Stufenzone um Bauteil".into(),
+        ("POST", ["api", "zones", "create"]) => "Stufenzonen angelegt".into(),
         ("POST", ["api", "ipc", "class"]) => "IPC-Klasse".into(),
         ("POST", ["api", "tombstone", "apply"]) => "Grabstein-Schutz übernommen".into(),
         ("POST", ["api", "tombstone", "revert"]) => "Grabstein-Schutz entfernt".into(),

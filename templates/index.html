@@ -283,7 +283,21 @@
                     <span>Package <strong id="lblHighlightPkg">-</strong> · <span id="lblHighlightCount">0</span> Pads<span id="lblHighlightPin"></span></span>
                     <label title="Andere Pads abdunkeln"><input type="checkbox" id="chkHighlightDim" checked> abdunkeln</label>
                     <button id="btnHighlightZoom" class="btn btn-xs btn-ghost" title="Auf alle Instanzen zoomen"><i class="ic ic-search"></i> Zeigen</button>
+                    <button id="btnHighlightStep" class="btn btn-xs btn-ghost" title="Stufenzonen um alle Bauteile dieses Packages vorschlagen"><i class="ic ic-layers"></i> Stufe</button>
                     <button id="btnHighlightClear" class="btn btn-xs btn-ghost" title="Hervorhebung aufheben">×</button>
+                </div>
+                <div id="stepPanel" class="step-panel hidden">
+                    <div class="step-head"><strong>Stufenzonen für <span id="stepPkg">-</span></strong>
+                        <button id="btnStepClose" class="btn btn-xs btn-ghost" title="Schließen">×</button></div>
+                    <div class="step-form">
+                        <label>Dicke <input type="number" id="stepThick" step="5" min="30" max="300"> µm</label>
+                        <label title="Bauteile, die näher als dieser Abstand beieinander liegen, bekommen eine gemeinsame Zone">Zusammenfassen bis <input type="number" id="stepGap" step="0.5" min="0" value="0"> mm</label>
+                    </div>
+                    <div id="stepInfo" class="step-info"></div>
+                    <div class="step-actions">
+                        <button id="btnStepCreate" class="btn btn-xs btn-primary">Zonen anlegen</button>
+                        <span class="step-hint">Vorschau gestrichelt auf dem Board</span>
+                    </div>
                 </div>
                 <canvas id="cadCanvas"></canvas>
 
@@ -519,8 +533,13 @@
                 <div id="tabZones" class="tab-content">
                     <div class="section-title">
                         <span>Definierte Stufenzonen</span>
-                        <button id="btnAddZoneTab" class="btn btn-sm btn-secondary">+ Neu</button>
+                        <span style="display:flex;gap:6px">
+                            <button id="btnSuggestZones" class="btn btn-sm btn-secondary" title="Zonen für alle Packages vorschlagen, die bei der Grunddicke nicht ausreichen">Vorschlagen</button>
+                            <button id="btnAddZoneTab" class="btn btn-sm btn-secondary">+ Neu</button>
+                        </span>
                     </div>
+                    <p class="section-desc">Zone anklicken: zeigt sie auf dem Board; dort verschieben (ziehen) oder an Ecken/Kanten die Größe ändern.</p>
+                    <div id="zoneSuggestList" class="zone-suggest-list"></div>
                     <div id="zonesList" class="zones-list">
                         <!-- Dynamisch -->
                     </div>
