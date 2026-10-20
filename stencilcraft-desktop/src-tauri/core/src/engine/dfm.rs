@@ -30,7 +30,130 @@ pub fn grain_diameter(paste_type: &str) -> f64 {
     }
 }
 
+/// Übliche Blechdicken (mm) für Empfehlungen und die Dicken-Übersicht.
+pub const STD_THICKNESSES: [f64; 7] = [0.08, 0.10, 0.11, 0.12, 0.125, 0.13, 0.15];
+
+/// Größte Standarddicke ≤ `t_max` (sonst die kleinste Standarddicke).
+pub fn recommended_step(t_max: f64) -> f64 {
+    STD_THICKNESSES.iter().copied().filter(|t| *t <= t_max + 1e-9).fold(STD_THICKNESSES[0], f64::max)
+}
+
+/// Area Ratio und Aspect Ratio bei 1 mm Dicke plus kleinste Öffnungsbreite.
+/// Beide Kennzahlen sind umgekehrt proportional zur Dicke: Wert(t) = Wert(1 mm) / t.
+fn ratios_at_unit_thickness(item: &ApertureItem) -> (f64, f64, f64) {
+    match item.custom_slices.as_ref().filter(|s| !s.is_empty()) {
+        Some(slices) => {
+            let (mut ar, mut aspect, mut min_dim) = (f64::INFINITY, f64::INFINITY, f64::INFINITY);
+            for s in slices {
+                let (a, p, d) = slice_metrics(s);
+                if p > 0.0 {
+                    ar = ar.min(a / p);
+                }
+                aspect = aspect.min(s.w.min(s.h));
+                min_dim = min_dim.min(d);
+            }
+            (if ar.is_finite() { ar } else { 0.0 }, aspect, min_dim)
+        }
+        None if item.shape_type == "circle" => (item.width / 4.0, item.width, item.width),
+        None => (
+            if item.perimeter > 0.0 { item.area / item.perimeter } else { 0.0 },
+            item.width.min(item.height),
+            item.width.min(item.height),
+        ),
+    }
+}
+
 impl StencilEngine {
+    /// Größte Blechdicke (mm), bei der die Öffnung Area- und Aspect-Ratio-Grenze noch einhält.
+    pub fn max_thickness_for(&self, item: &ApertureItem) -> f64 {
+        let (ar1, asp1, _) = ratios_at_unit_thickness(item);
+        let by_ar = if self.ipc_min_ar > 0.0 { ar1 / self.ipc_min_ar } else { f64::INFINITY };
+        let by_asp = if self.ipc_min_aspect > 0.0 { asp1 / self.ipc_min_aspect } else { f64::INFINITY };
+        by_ar.min(by_asp)
+    }
+
+    fn status_at(&self, item: &ApertureItem, t: f64) -> &'static str {
+        let (ar1, asp1, _) = ratios_at_unit_thickness(item);
+        let (ar, asp) = (ar1 / t, asp1 / t);
+        if ar >= self.ipc_min_ar && asp >= self.ipc_min_aspect {
+            "OK"
+        } else if ar >= self.ipc_min_ar * 0.90 && asp >= self.ipc_min_aspect * 0.90 {
+            "WARN"
+        } else {
+            "CRIT"
+        }
+    }
+
+    /// Übersicht: Pads außerhalb von Stufenzonen je Standarddicke und die begrenzenden Packages.
+    pub fn thickness_overview(&self) -> Value {
+        let free: Vec<&ApertureItem> = self.apertures.iter().filter(|a| self.get_effective_thickness(a.cx, a.cy).1.is_none()).collect();
+        let steps: Vec<Value> = STD_THICKNESSES
+            .iter()
+            .map(|&t| {
+                let (mut ok, mut warn, mut crit) = (0, 0, 0);
+                for a in &free {
+                    match self.status_at(a, t) {
+                        "OK" => ok += 1,
+                        "WARN" => warn += 1,
+                        _ => crit += 1,
+                    }
+                }
+                json!({"t": t, "ok": ok, "warn": warn, "crit": crit})
+            })
+            .collect();
+        // Packages, die die Grunddicke begrenzen (kleinste zulässige Dicke zuerst)
+        let mut by_pkg: HashMap<String, (f64, usize, usize)> = HashMap::new();
+        for a in &free {
+            let tm = self.max_thickness_for(a);
+            let e = by_pkg.entry(if a.package_name.is_empty() { a.package_group.clone() } else { a.package_name.clone() }).or_insert((f64::INFINITY, 0, 0));
+            e.0 = e.0.min(tm);
+            e.1 += 1;
+            if tm < self.base_thickness - 1e-9 {
+                e.2 += 1;
+            }
+        }
+        let mut limiting: Vec<(String, (f64, usize, usize))> = by_pkg.into_iter().filter(|(_, v)| v.0 < self.base_thickness - 1e-9).collect();
+        limiting.sort_by(|a, b| a.1 .0.total_cmp(&b.1 .0));
+        let recommended = STD_THICKNESSES
+            .iter()
+            .rev()
+            .copied()
+            .find(|&t| free.iter().all(|a| self.status_at(a, t) != "CRIT"))
+            .unwrap_or(STD_THICKNESSES[0]);
+        // Ideal: alle Pads grün (kein WARN, kein CRIT)
+        let recommended_ok = STD_THICKNESSES
+            .iter()
+            .rev()
+            .copied()
+            .find(|&t| free.iter().all(|a| self.status_at(a, t) == "OK"))
+            .unwrap_or(STD_THICKNESSES[0]);
+        json!({
+            "current": self.base_thickness,
+            "pads": free.len(),
+            "steps": steps,
+            "recommended": recommended,
+            "recommended_ok": recommended_ok,
+            "limiting": limiting.iter().take(10).map(|(n, (t, total, below))| json!({
+                "package": n, "t_max": r3(*t), "step": recommended_step(*t), "pads": total, "pads_below": below,
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    /// Stufenzone um ein Bauteil (alle Öffnungen) mit Rakel- und Querabstand zur Zonenkante.
+    pub fn add_zone_around_component(&mut self, refdes: &str, thickness: f64) -> Option<StencilZone> {
+        let mut b = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        for a in self.apertures.iter().filter(|a| a.component_id == refdes) {
+            b = [b[0].min(a.bbox[0]), b[1].min(a.bbox[1]), b[2].max(a.bbox[2]), b[3].max(a.bbox[3])];
+        }
+        if !b[0].is_finite() {
+            return None;
+        }
+        // Etwas mehr als der geforderte Abstand, damit keine Kantenwarnung entsteht
+        let (along, across) = (self.squeegee_clearance + 0.05, self.transverse_clearance + 0.05);
+        let (mx, my) = if self.squeegee_dir == "Y" { (across, along) } else { (along, across) };
+        Some(self.add_zone_ext(b[0] - mx, b[1] - my, b[2] + mx, b[3] + my, thickness, &format!("Stufe {refdes}"), true))
+    }
+
     /// IPC-7525 Kennzahlen einer Apertur unter ihrer effektiven Schablonendicke.
     pub fn calculate_aperture_ipc(&self, item: &ApertureItem) -> IpcResult {
         let (t, zone) = self.get_effective_thickness(item.cx, item.cy);
@@ -434,5 +557,22 @@ mod tests {
         let rows = r["results"].as_array().unwrap();
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0]["transfer_pct"], 100);
+    }
+}
+
+#[cfg(test)]
+mod thickness_tests {
+    use super::*;
+
+    #[test]
+    fn max_thickness_bga_pad() {
+        // BGA-Pad 0.23 × 0.23 mm, AR ≥ 0.66: t ≤ 0.23² / (4·0.23 · 0.66) = 0.0871 mm → 80 µm
+        let e = StencilEngine::new(0.12, std::env::temp_dir().join("sc_thick_test"));
+        let ap = ApertureItem::new(0, "rectangle", 0.0, 0.0, 0.23, 0.23);
+        let tm = e.max_thickness_for(&ap);
+        assert!((tm - 0.0871).abs() < 1e-3, "{tm}");
+        assert!((recommended_step(tm) - 0.08).abs() < 1e-9);
+        assert!((recommended_step(0.2) - 0.15).abs() < 1e-9);
+        assert!((recommended_step(0.05) - 0.08).abs() < 1e-9);
     }
 }

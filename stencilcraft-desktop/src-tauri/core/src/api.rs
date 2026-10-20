@@ -353,7 +353,10 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             };
             let ipc = e.calculate_aperture_ipc(ap);
             let identical = e.apertures.iter().filter(|a| a.package_group == ap.package_group).count();
+            let t_max = e.max_thickness_for(ap);
             ok(json!({
+                "t_max": r4(t_max),
+                "t_step": crate::engine::dfm::recommended_step(t_max),
                 "id": ap.id,
                 "cx": r4(ap.cx),
                 "cy": r4(ap.cy),
@@ -390,6 +393,14 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             let mode = b.s("mode").unwrap_or_else(|| "standard".into());
             e.set_ipc_mode(&mode, b.f("min_ar", 0.66), b.f("min_aspect", 1.50));
             ok(json!({"status": "ok", "stats": stats(e)}))
+        }
+        ("GET", ["api", "thickness", "overview"]) => ok(e.thickness_overview()),
+        ("POST", ["api", "zone", "around_component"]) => {
+            let refdes = b.s("component").unwrap_or_default();
+            match e.add_zone_around_component(&refdes, b.f("thickness", 0.10)) {
+                Some(z) => ok(json!({"status": "ok", "zone": z.to_json(), "stats": stats(e)})),
+                None => err(404, format!("Bauteil {refdes} hat keine Öffnungen")),
+            }
         }
         ("POST", ["api", "zone"]) => {
             let z = e.add_zone_ext(b.f("x0", 0.0), b.f("y0", 0.0), b.f("x1", 0.0), b.f("y1", 0.0), b.f("thickness", 0.100), &b.s("name").unwrap_or_default(), b.b("step", true));
@@ -706,6 +717,7 @@ fn apertures_payload(e: &StencilEngine) -> Value {
                 "grain_msg": ipc.grain_msg,
                 "sliced": ap.custom_slices.as_ref().map_or(false, |s| !s.is_empty()),
                 "pin_number": ap.pin_number,
+                "t_max": r3(e.max_thickness_for(ap)),
             });
             if let Some(s) = ap.custom_slices.as_ref() {
                 v["slices"] = json!(s);

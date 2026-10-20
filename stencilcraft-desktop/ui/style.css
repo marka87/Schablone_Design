@@ -1823,6 +1823,25 @@ body:not(.is-desktop) .desktop-only { display: none !important; }
 .layer-group-head .grp-eye:hover { opacity: 1; }
 .layer-empty-row td { padding: 10px !important; text-align: center; color: var(--text-secondary); font-size: 0.78rem; }
 
+/* Blechdicken-Empfehlung */
+.thick-rec { margin-top: 10px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border-color); background: rgba(16, 185, 129, 0.06); font-size: 0.8rem; }
+.thick-rec.bad { border-color: rgba(239, 68, 68, 0.55); background: rgba(239, 68, 68, 0.08); }
+.thick-rec-line { display: flex; justify-content: space-between; gap: 8px; }
+.thick-rec-line strong { font-family: var(--font-mono); }
+.thick-rec.bad .thick-rec-line strong { color: #f87171; }
+.thick-rec-note { margin-top: 4px; color: var(--text-secondary); font-size: 0.75rem; }
+.thick-rec-actions { margin-top: 6px; display: flex; gap: 6px; }
+.thick-popover { right: 0; left: auto; min-width: 340px; padding: 10px 12px; font-size: 0.78rem; }
+.thick-popover table { width: 100%; border-collapse: collapse; margin: 6px 0; }
+.thick-popover td, .thick-popover th { padding: 3px 6px; text-align: right; font-family: var(--font-mono); }
+.thick-popover th { color: var(--text-secondary); font-weight: 600; font-family: inherit; }
+.thick-popover td:first-child, .thick-popover th:first-child { text-align: left; }
+.thick-popover tr.cur td { color: var(--accent); font-weight: 700; }
+.thick-popover tr.rec td:first-child::after { content: " ★"; color: #34d399; }
+.thick-popover .crit { color: #f87171; }
+.thick-popover .lim { margin-top: 6px; color: var(--text-secondary); }
+.thick-popover .lim div { display: flex; justify-content: space-between; gap: 8px; }
+
 /* Fensterrolle: Übersicht (Board) zeigt Analyse, Bearbeitung (Generator) die Werkzeuge */
 body.ws-package .ov-only { display: none !important; }
 body:not(.ws-package) .ed-only { display: none !important; }
@@ -2005,3 +2024,89 @@ body.view-package-only #projectMenu, body.view-package-only #lblProjectName { di
 .li-badge { font-size: 0.68rem; padding: 1px 6px; border-radius: 8px; background: rgba(148, 163, 184, 0.18); color: #cbd5e1; white-space: nowrap; }
 .li-badge.rule { background: rgba(250, 204, 21, 0.2); color: #fde68a; }
 .li-badge.step { background: rgba(192, 132, 252, 0.2); color: #e9d5ff; }
+
+/* =====================================================================
+   Gestaltung 2: klare Flächenebenen, höherer Kontrast, Ribbon-Kopfzeile
+   ===================================================================== */
+:root {
+    /* Flächen: Hintergrund < Panel < Karte < hervorgehoben */
+    --surface-0: #0d1016;
+    --surface-1: #151922;
+    --surface-2: #1c212d;
+    --surface-3: #262d3d;
+    --border-strong: #3a445c;
+    /* bestehende Variablen auf die neuen Ebenen abbilden */
+    --bg-base: var(--surface-0);
+    --bg-surface: var(--surface-1);
+    --bg-surface-elevated: var(--surface-2);
+    --bg-hover: var(--surface-3);
+    --border-color: #2c3446;
+    /* Text: mindestens 4.5:1 auf den Panelflächen */
+    --text-primary: #f3f6fc;
+    --text-secondary: #b6c0d6;
+    --text-muted: #8591ab;
+    /* Schriftgrößen */
+    --fs-xs: 0.68rem;
+    --fs-sm: 0.78rem;
+    --fs-md: 0.86rem;
+    --fs-lg: 0.98rem;
+}
+
+/* --- Ribbon --- */
+.app-header.ribbon { background: var(--surface-0); border-bottom: 2px solid var(--border-strong); }
+.app-header.ribbon .header-main { background: linear-gradient(180deg, #181d29 0%, #12161f 100%); border-bottom: 1px solid var(--border-strong); padding: 5px 12px; gap: 8px 10px; }
+.app-header.ribbon .header-tools { background: var(--surface-1); border-top: none; padding: 5px 12px; gap: 8px 10px; }
+.rb-group {
+    display: flex; flex-direction: column; align-items: stretch; justify-content: space-between; gap: 2px;
+    padding: 4px 8px 2px; border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color);
+}
+.header-tools .rb-group { background: var(--surface-2); }
+.rb-body { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 30px; }
+.rb-cap {
+    font-size: 0.6rem; line-height: 1.2; text-transform: uppercase; letter-spacing: 0.09em;
+    color: var(--text-muted); text-align: center; user-select: none;
+}
+.rb-group .mode-switcher-group { background: var(--surface-0); }
+.rb-group .ui-size-control { margin-left: 0; }
+.rb-group .ipc-control label, .rb-group .squeegee-control label { color: var(--text-secondary); font-size: var(--fs-sm); font-weight: 600; }
+.app-header.ribbon .logo { padding-right: 4px; }
+body.view-package-only .rb-nav { display: none !important; }
+@media (max-height: 640px) { .rb-cap { display: none; } .rb-group { padding-bottom: 4px; } }
+
+/* --- Eingaben & Buttons: drei Stufen, klare Kanten --- */
+select, input[type="number"], input[type="text"], input[type="search"] {
+    background-color: var(--surface-0); border-color: var(--border-strong); color: var(--text-primary);
+}
+select:hover, input[type="number"]:hover, input[type="text"]:hover, input[type="search"]:hover { border-color: #4a5672; }
+select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25); }
+.btn-secondary { background-color: var(--surface-3); border-color: var(--border-strong); color: var(--text-primary); }
+.btn-secondary:hover { background-color: #2f3749; border-color: #4a5672; }
+.btn-ghost { color: var(--text-secondary); }
+.btn-ghost:hover { color: var(--text-primary); background: rgba(255, 255, 255, 0.05); }
+.btn:focus-visible, .mode-tab-btn:focus-visible, .tab-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.highlight-btn { box-shadow: none; }
+
+/* --- Einheitliche Bereichsköpfe und Reiter --- */
+.layer-panel-header, .library-header { background: var(--surface-2); border-bottom: 1px solid var(--border-strong); }
+.layer-panel-title strong { font-size: var(--fs-lg); }
+.sidebar-tabs, .gen-tabs { background: var(--surface-2); border-bottom: 1px solid var(--border-strong); }
+.tab-btn, .gen-tabs button { color: var(--text-secondary); font-size: var(--fs-sm); }
+.tab-btn.active, .gen-tabs button.active { color: #7cb2ff; border-bottom-color: var(--accent); background: rgba(59, 130, 246, 0.08); }
+.section-title { color: var(--text-primary); font-size: var(--fs-md); }
+
+/* --- Panels und Karten --- */
+.layer-panel, .sidebar, .pkg-sidebar { background: var(--surface-1); }
+.layer-panel { border-right: 1px solid var(--border-strong); }
+.sidebar { border-left: 1px solid var(--border-strong); }
+.action-card, .data-cell, .ipc-gauge-box { background: var(--surface-2); border-color: var(--border-color); }
+.data-label { color: var(--text-muted); font-size: var(--fs-xs); letter-spacing: 0.06em; }
+.data-val { font-family: var(--font-mono); color: var(--text-primary); }
+.layer-subname, .pkg-badge-pitch { color: var(--text-muted); }
+.prop-item label { color: var(--text-secondary); }
+.rule-config-card { background: var(--surface-1); }
+.rule-top-bar { background: var(--surface-2); border-bottom-color: var(--border-strong); }
+.rule-description { color: var(--text-muted); }
+
+/* Status-Pills: Farbe nur für Status */
+.pill { border: 1px solid var(--border-color); }

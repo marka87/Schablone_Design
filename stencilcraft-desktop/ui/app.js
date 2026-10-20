@@ -92,6 +92,10 @@ window.addEventListener("DOMContentLoaded", async () => {
         editTools.addEventListener("toggle", () => localStorage.setItem("sc.inspEdit", editTools.open ? "1" : "0"));
     }
     // Grund-Blechdicke
+    document.getElementById("btnThickInfo")?.addEventListener("click", (e) => { e.stopPropagation(); openThicknessOverview(); });
+    document.addEventListener("click", (e) => {
+        if (!e.target.closest?.("#thickInfoMenu")) document.getElementById("thickPopover")?.classList.add("hidden");
+    });
     document.getElementById("inputBaseThickness")?.addEventListener("change", async (e) => {
         const um = parseFloat(e.target.value);
         if (!(um >= 30 && um <= 500)) { updateThicknessInput(true); return; }
@@ -1319,6 +1323,63 @@ async function selectAperture(apId) {
     }
 }
 
+// Größte zulässige Dicke für das gewählte Pad und Vorschlag (Standardschritt, Stufenzone)
+function updateThicknessRecommendation(ap) {
+    const box = document.getElementById("thickRecBox");
+    if (!box || !ap.t_max) return;
+    const tMax = Math.round(ap.t_max * 1000), step = Math.round(ap.t_step * 1000);
+    const cur = Math.round(ap.ipc.effective_thickness * 1000);
+    const bad = cur > tMax;
+    box.classList.toggle("bad", bad);
+    document.getElementById("thickRecVal").innerText = tMax >= 1000 ? "unkritisch" : `≤ ${tMax} µm → ${step} µm`;
+    document.getElementById("thickRecNote").innerText = bad
+        ? `Bei ${cur} µm fehlen ${cur - tMax} µm (Area/Aspect Ratio unter Grenzwert). Abhilfe: Stufenzone ${step} µm, dünneres Grundblech oder größere Öffnung.`
+        : `Passt: ${cur} µm ≤ ${tMax} µm (Reserve ${tMax - cur} µm).`;
+    const btn = document.getElementById("btnZoneAroundComp");
+    const canZone = bad && ap.comp_id && step < cur;
+    btn.classList.toggle("hidden", !canZone);
+    if (canZone) {
+        btn.innerText = `▣ Stufenzone ${step} µm um ${ap.comp_id}`;
+        btn.onclick = async () => {
+            const res = await fetch("/api/zone/around_component", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ component: ap.comp_id, thickness: step / 1000 }) });
+            const d = await res.json();
+            if (!res.ok) { showToast(`❌ ${d.message || d.error}`); return; }
+            await refreshApertureData();
+            await refreshHistory();
+            if (state.selectedApertureId != null) await selectAperture(state.selectedApertureId);
+            showToast(`Stufenzone ${step} µm um ${ap.comp_id} angelegt (Rückgängig mit Strg+Z)`);
+        };
+    }
+}
+
+// Übersicht je Standarddicke (Pads außerhalb von Stufenzonen) mit begrenzenden Packages
+async function openThicknessOverview() {
+    const pop = document.getElementById("thickPopover");
+    if (!pop) return;
+    if (!pop.classList.contains("hidden")) { pop.classList.add("hidden"); return; }
+    const d = await (await fetch("/api/thickness/overview")).json();
+    const cur = Math.round(d.current * 1000), rec = Math.round(d.recommended_ok * 1000), noCrit = Math.round(d.recommended * 1000);
+    const rows = d.steps.map(s => {
+        const t = Math.round(s.t * 1000);
+        return `<tr class="${t === cur ? "cur" : ""} ${t === rec ? "rec" : ""}" data-t="${t}" style="cursor:pointer" title="${t} µm übernehmen">
+            <td>${t} µm</td><td>${s.ok}</td><td>${s.warn}</td><td class="${s.crit ? "crit" : ""}">${s.crit}</td></tr>`;
+    }).join("");
+    const lim = (d.limiting || []).slice(0, 6).map(l => `<div><span>${escapeHtml(l.package)}</span><span>≤ ${Math.round(l.t_max * 1000)} µm · ${l.pads_below}/${l.pads} Pads</span></div>`).join("");
+    pop.innerHTML = `<div><strong>Grund-Blechdicke</strong> – ${d.pads} Pads außerhalb von Stufenzonen</div>
+        <table><tr><th>Dicke</th><th>🟢</th><th>🟡</th><th>🔴</th></tr>${rows}</table>
+        <div>★ Empfehlung (alle Pads grün): <strong>${rec} µm</strong>${noCrit > rec ? ` · höchstens ${noCrit} µm ohne rote Pads` : ""}</div>
+        <div style="opacity:.75">Zeile anklicken, um die Dicke zu übernehmen</div>
+        ${lim ? `<div class="lim"><div><strong>Begrenzende Packages bei ${cur} µm</strong></div>${lim}<div>→ Für diese besser Stufenzonen statt dünnerem Grundblech</div></div>` : ""}`;
+    pop.querySelectorAll("tr[data-t]").forEach(tr => tr.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const el = document.getElementById("inputBaseThickness");
+        el.value = tr.dataset.t;
+        el.dispatchEvent(new Event("change"));
+        pop.classList.add("hidden");
+    }));
+    pop.classList.remove("hidden");
+}
+
 function updateInspectorUI(ap) {
     document.getElementById("noSelectionMsg").classList.add("hidden");
     document.getElementById("selectionDetails").classList.remove("hidden");
@@ -1336,6 +1397,8 @@ function updateInspectorUI(ap) {
     const badge = document.getElementById("padStatusBadge");
     badge.className = `badge ${ap.ipc.status.toLowerCase()}`;
     badge.innerText = ap.ipc.status;
+
+    updateThicknessRecommendation(ap);
 
     const ar = ap.ipc.area_ratio;
     document.getElementById("padArVal").innerText = ar.toFixed(3);

@@ -529,6 +529,7 @@ pub fn edit_label(method: &str, seg: &[&str], body: &Map<String, Value>) -> Opti
         ("POST", ["api", "pad", p, "override"]) => format!("Pad {p} anpassen"),
         ("POST", ["api", "pad", p, "reset"]) => format!("Pad {p} zurücksetzen"),
         ("POST", ["api", "zone"]) => "Zone anlegen".into(),
+        ("POST", ["api", "zone", "around_component"]) => "Stufenzone um Bauteil".into(),
         ("PUT" | "POST", ["api", "zone", z]) => format!("Zone {z} ändern"),
         ("DELETE", ["api", "zone", z]) => format!("Zone {z} löschen"),
         ("POST", ["api", "pcbi", "import"]) => "PCB-I-Kundenbibliothek importiert".into(),
