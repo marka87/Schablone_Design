@@ -84,6 +84,8 @@ window.addEventListener("DOMContentLoaded", async () => {
         switchWorkspace("package");
     }
     setupProjectUI();
+    document.getElementById("selectRuleLayout")?.addEventListener("change", (e) => applyRuleLayout(e.target.value));
+    applyRuleLayout(localStorage.getItem("sc.ruleLayout") || "top");
     await loadLayers();
     await refreshApertureData();
     fitToScreen();
@@ -102,7 +104,9 @@ const PANEL_VARS = {
     layerPanel: "--left-panel-w",
     boardSidebar: "--right-panel-w",
     pkgSidebar: "--pkg-sidebar-w",
-    ruleConfigCard: "--rule-card-h"
+    ruleConfigCard: "--rule-card-h",
+    // Breite der Regel-Einstellungen, wenn sie seitlich angeordnet sind
+    ruleConfigCard_w: "--rule-card-w"
 };
 
 function saveLayout() {
@@ -115,6 +119,26 @@ function saveLayout() {
     const collapsed = Object.keys(PANEL_VARS).filter(id => document.getElementById(id)?.classList.contains("panel-collapsed"));
     localStorage.setItem("sc.layout", JSON.stringify({ sizes, collapsed }));
 }
+
+// Regel-Einstellungen oben / rechts / links (wird gespeichert)
+function applyRuleLayout(mode) {
+    if (!["top", "right", "left"].includes(mode)) mode = "top";
+    const main = document.querySelector(".pkg-main-content");
+    if (!main) return;
+    main.classList.toggle("rules-right", mode === "right");
+    main.classList.toggle("rules-left", mode === "left");
+    const sp = main.querySelector('.splitter[data-target="ruleConfigCard"]');
+    if (sp) {
+        sp.classList.toggle("splitter-h", mode === "top");
+        sp.classList.toggle("splitter-v", mode !== "top");
+        sp.dataset.side = mode === "right" ? "right" : (mode === "left" ? "left" : "top");
+    }
+    const sel = document.getElementById("selectRuleLayout");
+    if (sel) sel.value = mode;
+    localStorage.setItem("sc.ruleLayout", mode);
+    onLayoutChanged();
+}
+window.applyRuleLayout = applyRuleLayout;
 
 function onLayoutChanged() {
     resizeCanvas();
@@ -137,10 +161,12 @@ function setupSplitters() {
     document.querySelectorAll(".splitter").forEach(sp => {
         const target = document.getElementById(sp.dataset.target);
         if (!target) return;
-        const horiz = sp.classList.contains("splitter-h");
-        const side = sp.dataset.side;
         sp.addEventListener("mousedown", (e) => {
             e.preventDefault();
+            // Ausrichtung zur Laufzeit lesen (Regel-Einstellungen können oben oder seitlich sitzen)
+            const horiz = sp.classList.contains("splitter-h");
+            const side = sp.dataset.side;
+            const sizeVar = (!horiz && PANEL_VARS[`${target.id}_w`]) || PANEL_VARS[target.id];
             target.classList.remove("panel-collapsed");
             const startPos = horiz ? e.clientY : e.clientX;
             const r = target.getBoundingClientRect();
@@ -152,7 +178,7 @@ function setupSplitters() {
                 const d = (horiz ? ev.clientY : ev.clientX) - startPos;
                 const limit = (horiz ? window.innerHeight : window.innerWidth) * 0.65;
                 const size = Math.max(140, Math.min(limit, side === "right" ? start - d : start + d));
-                root.style.setProperty(PANEL_VARS[target.id], `${Math.round(size)}px`);
+                root.style.setProperty(sizeVar, `${Math.round(size)}px`);
                 onLayoutChanged();
             };
             const up = () => {
@@ -3896,9 +3922,10 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
             await refreshApertureData();
             return;
         }
-        const override = { rule_type: v.ruleType };
-        if (!isNaN(v.red)) { override.undersize_w = v.red; override.undersize_h = v.red; }
-        const data = await applyPinsBulk(override, v.w, v.h, pkgState.selectedPin);
+        // Felder zeigen Bildschirmrichtung → in den Package-Rahmen umrechnen (sonst verdrehen alle Pads)
+        const built = buildPinPayload();
+        const override = { rule_type: built.rule_type, undersize_w: built.undersize_w, undersize_h: built.undersize_h };
+        const data = await applyPinsBulk(override, built.w, built.h, pkgState.selectedPin);
         if (data?.status === "ok") showToast(`Einstellungen von Pin ${pkgState.selectedPin} auf ${data.pins} Pins übernommen`);
         await refreshApertureData();
     });

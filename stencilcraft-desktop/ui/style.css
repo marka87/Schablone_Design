@@ -1757,6 +1757,7 @@ select:focus, input:focus {
     --right-panel-w: 360px;
     --pkg-sidebar-w: 320px;
     --rule-card-h: 250px;
+    --rule-card-w: 440px;
 }
 
 /* Kopfzeile: zwei Zeilen, umbrechend statt abgeschnitten */
@@ -1806,6 +1807,27 @@ body:not(.is-desktop) .desktop-only { display: none !important; }
 .panel-collapsed { width: 0 !important; height: 0 !important; overflow: hidden !important; border: none !important; }
 .layer-panel.panel-collapsed, .sidebar.panel-collapsed, .pkg-sidebar.panel-collapsed { height: 100% !important; }
 .rule-config-card.panel-collapsed { width: auto !important; }
+
+/* Regel-Einstellungen wahlweise als Seitenleiste neben der Vorschau */
+.rule-layout-select { font-size: 0.75rem; padding: 2px 6px; }
+.pkg-main-content.rules-right { flex-direction: row-reverse; }
+.pkg-main-content.rules-left { flex-direction: row; }
+.pkg-main-content.rules-right .rule-config-card,
+.pkg-main-content.rules-left .rule-config-card { height: auto; width: var(--rule-card-w); border-bottom: none; }
+.pkg-main-content.rules-right .rule-config-card { border-left: 2px solid var(--border-color); }
+.pkg-main-content.rules-left .rule-config-card { border-right: 2px solid var(--border-color); }
+.pkg-main-content.rules-right .rule-config-card.panel-collapsed,
+.pkg-main-content.rules-left .rule-config-card.panel-collapsed { width: 0 !important; height: auto !important; }
+.pkg-main-content.rules-right .rule-top-bar,
+.pkg-main-content.rules-left .rule-top-bar { flex-direction: column; align-items: stretch; }
+.pkg-main-content.rules-right .rule-dropdown-group,
+.pkg-main-content.rules-left .rule-dropdown-group { flex-direction: column; align-items: stretch; gap: 4px; }
+.pkg-main-content.rules-right .rule-property-grid,
+.pkg-main-content.rules-left .rule-property-grid { grid-template-columns: 1fr; align-content: start; }
+.pkg-main-content.rules-right .checkbox-prop,
+.pkg-main-content.rules-left .checkbox-prop { flex-direction: column; gap: 6px; }
+.pkg-main-content.rules-right .pkg-preview-card,
+.pkg-main-content.rules-left .pkg-preview-card { min-width: 0; }
 
 .splitter { flex-shrink: 0; background: var(--border-color); position: relative; z-index: 9; transition: background 0.15s; }
 .splitter:hover, .splitter.dragging { background: var(--accent); }
