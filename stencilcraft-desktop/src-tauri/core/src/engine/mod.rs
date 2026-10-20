@@ -246,12 +246,13 @@ impl StencilEngine {
     pub fn sides_json(&self) -> Value {
         let mut list = Vec::new();
         for s in ["top", "bot"] {
-            let (n, loaded) = if s == self.current_side {
-                (self.apertures.len(), !self.apertures.is_empty())
+            let (n, loaded, available) = if s == self.current_side {
+                (self.apertures.len(), !self.apertures.is_empty(), true)
             } else {
-                self.sides.get(s).map_or((0, false), |d| (d.apertures.len(), !d.apertures.is_empty()))
+                self.sides.get(s).map_or((0, false, false), |d| (d.apertures.len(), !d.apertures.is_empty(), true))
             };
-            list.push(json!({"side": s, "apertures": n, "loaded": loaded, "active": s == self.current_side}));
+            // available: Seite hat Daten (Bauteile/Kupfer), auch wenn die Kundenpaste fehlt
+            list.push(json!({"side": s, "apertures": n, "loaded": loaded, "available": available, "active": s == self.current_side}));
         }
         json!({"active": self.current_side, "sides": list})
     }
@@ -514,9 +515,9 @@ impl StencilEngine {
             let ap = &mut self.apertures[id];
             let (w, h) = (ap.width, ap.height);
             let (nw, nh) = if w <= h {
-                (elongated_narrow_width(w, width_red, pitch, min_bridge), h * (length_use / 100.0))
+                (elongated_narrow_width(w, width_red, pitch, min_bridge, 1.0), h * (length_use / 100.0))
             } else {
-                (w * (length_use / 100.0), elongated_narrow_width(h, width_red, pitch, min_bridge))
+                (w * (length_use / 100.0), elongated_narrow_width(h, width_red, pitch, min_bridge, 1.0))
             };
             let r = corner_r.min(nw / 3.0).min(nh / 3.0).max(0.0);
             let pts = geometry::rounded_rect_pts(ap.cx, ap.cy, nw, nh, r);

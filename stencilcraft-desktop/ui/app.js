@@ -344,17 +344,22 @@ async function updateStats() {
 // -------------------------------------------------------------
 // Coordinate Transforms (World mm <-> Screen px)
 // -------------------------------------------------------------
+// Viewport-Höhe pro Bild zwischenspeichern: getBoundingClientRect() erzwingt sonst bei jedem
+// Punkt eine Layout-Berechnung (bei großen ODB++-Daten zehntausende Male pro Bild).
+let viewHeightCache = null;
+function viewHeight() {
+    return viewHeightCache ?? container.getBoundingClientRect().height;
+}
+
 function worldToScreen(wx, wy) {
-    const rect = container.getBoundingClientRect();
     const sx = state.panX + wx * state.zoom;
-    const sy = rect.height - (state.panY + wy * state.zoom);
+    const sy = viewHeight() - (state.panY + wy * state.zoom);
     return { x: sx, y: sy };
 }
 
 function screenToWorld(sx, sy) {
-    const rect = container.getBoundingClientRect();
     const wx = (sx - state.panX) / state.zoom;
-    const wy = (rect.height - sy - state.panY) / state.zoom;
+    const wy = (viewHeight() - sy - state.panY) / state.zoom;
     return { x: wx, y: wy };
 }
 
@@ -736,8 +741,28 @@ function fitToScreen() {
 // -------------------------------------------------------------
 // High-Performance Rendering Loop (Canvas 2D)
 // -------------------------------------------------------------
+// Mehrere render()-Aufrufe (Mausbewegung, Zoom, Datenänderung) zu einem Bild je Frame bündeln
+let renderQueued = false;
 function render() {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => {
+        renderQueued = false;
+        renderNow();
+    });
+}
+
+function renderNow() {
     const rect = container.getBoundingClientRect();
+    viewHeightCache = rect.height;
+    try {
+        renderFrame(rect);
+    } finally {
+        viewHeightCache = null;
+    }
+}
+
+function renderFrame(rect) {
     ctx.clearRect(0, 0, rect.width, rect.height);
 
     // 1. Grid / Background
@@ -829,8 +854,46 @@ function renderBackgroundGrid(rect) {
     ctx.stroke();
 }
 
+// Lagen-Primitive einmalig zu Path2D (Weltkoordinaten) bündeln: eine Füllung + je Linienbreite ein Pfad
+const layerPathCache = new WeakMap();
+function layerPaths(prims) {
+    let c = layerPathCache.get(prims);
+    if (c) return c;
+    const fill = new Path2D();
+    const lines = new Map();
+    for (const p of prims) {
+        if (p.t === 'r') {
+            fill.rect(p.x - p.w / 2, p.y - p.h / 2, p.w, p.h);
+        } else if (p.t === 'c') {
+            fill.moveTo(p.x + p.r, p.y);
+            fill.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        } else if (p.t === 'l') {
+            const w = Math.round((p.w || 0.1) * 1000) / 1000;
+            let path = lines.get(w);
+            if (!path) { path = new Path2D(); lines.set(w, path); }
+            path.moveTo(p.x1, p.y1);
+            path.lineTo(p.x2, p.y2);
+        } else if (p.t === 'p' && p.pts && p.pts.length >= 3) {
+            // Einheitlicher Umlaufsinn (wie rect/arc), sonst löschen sich überlappende Flächen gegenseitig aus
+            let a2 = 0;
+            for (let i = 0, n = p.pts.length; i < n; i++) {
+                const q = p.pts[i], r = p.pts[(i + 1) % n];
+                a2 += q[0] * r[1] - r[0] * q[1];
+            }
+            const pts = a2 < 0 ? [...p.pts].reverse() : p.pts;
+            fill.moveTo(pts[0][0], pts[0][1]);
+            for (let i = 1; i < pts.length; i++) fill.lineTo(pts[i][0], pts[i][1]);
+            fill.closePath();
+        }
+    }
+    c = { fill, lines };
+    layerPathCache.set(prims, c);
+    return c;
+}
+
 function renderCustomLayers() {
     if (!state.layers || state.layers.length === 0) return;
+    const rect = container.getBoundingClientRect();
 
     // Layer types render order: outline -> copper -> mask -> zone -> component -> other -> fiducial -> paste_orig
     const typeOrder = { 'profile': 0, 'copper': 1, 'mask': 2, 'zone': 3, 'component': 4, 'other': 5, 'fiducial': 6, 'paste_orig': 7, 'paste': 8 };
@@ -843,43 +906,21 @@ function renderCustomLayers() {
 
         const data = state.layerPrimitives[layer.id];
         if (!data || !data.prims || data.prims.length === 0) continue;
+        const paths = layerPaths(data.prims);
 
         ctx.save();
         ctx.globalAlpha = (layer.opacity || 0.85) * state.globalLayerOpacity;
         ctx.fillStyle = layer.color || "#10b981";
         ctx.strokeStyle = layer.color || "#10b981";
-
-        for (const p of data.prims) {
-            if (p.t === 'r') {
-                const sp = worldToScreen(p.x - p.w / 2, p.y + p.h / 2);
-                const sw = Math.max(1, p.w * state.zoom);
-                const sh = Math.max(1, p.h * state.zoom);
-                ctx.fillRect(sp.x, sp.y, sw, sh);
-            } else if (p.t === 'c') {
-                const sp = worldToScreen(p.x, p.y);
-                const sr = Math.max(0.5, p.r * state.zoom);
-                ctx.beginPath();
-                ctx.arc(sp.x, sp.y, sr, 0, Math.PI * 2);
-                ctx.fill();
-            } else if (p.t === 'l') {
-                const p1 = worldToScreen(p.x1, p.y1);
-                const p2 = worldToScreen(p.x2, p.y2);
-                ctx.lineWidth = Math.max(1, (p.w || 0.1) * state.zoom);
-                ctx.beginPath();
-                ctx.moveTo(p1.x, p1.y);
-                ctx.lineTo(p2.x, p2.y);
-                ctx.stroke();
-            } else if (p.t === 'p' && p.pts && p.pts.length >= 3) {
-                ctx.beginPath();
-                const p0 = worldToScreen(p.pts[0][0], p.pts[0][1]);
-                ctx.moveTo(p0.x, p0.y);
-                for (let i = 1; i < p.pts.length; i++) {
-                    const pi = worldToScreen(p.pts[i][0], p.pts[i][1]);
-                    ctx.lineTo(pi.x, pi.y);
-                }
-                ctx.closePath();
-                ctx.fill();
-            }
+        ctx.lineCap = "round";
+        // Weltkoordinaten → Bildschirm als eine Transformation; die Pfade werden nicht neu aufgebaut
+        const dpr = window.devicePixelRatio || 1;
+        const z = state.zoom;
+        ctx.setTransform(dpr * z, 0, 0, -dpr * z, dpr * state.panX, dpr * (rect.height - state.panY));
+        ctx.fill(paths.fill);
+        for (const [w, path] of paths.lines) {
+            ctx.lineWidth = Math.max(w, 1 / z);
+            ctx.stroke(path);
         }
         ctx.restore();
     }
@@ -1351,6 +1392,7 @@ async function loadLayers() {
 
         state.layers = dataLayers.layers || [];
         state.layerPrimitives = dataPrims.layers || {};
+        refreshSides();
 
         renderLayerTable();
         render();
@@ -2906,6 +2948,9 @@ function populateRuleInputs(rule) {
     document.getElementById("propHouseCut").value = rule.house_cut_pct ?? 35;
     document.getElementById("propPitchRed").value = rule.pitch_reduction_pct ?? 20;
     document.getElementById("propLengthUse").value = rule.length_usage_pct ?? 95;
+    document.getElementById("propGapRatio").value = rule.gap_ratio ?? 1.0;
+    document.getElementById("propLengthComp").value = rule.length_comp_pct ?? 70;
+    document.getElementById("propOutwardShift").value = rule.outward_shift ?? 0.025;
     document.getElementById("propOffsetMoveAway").value = rule.offset_move_away ?? 0.0;
     document.getElementById("propOffsetX").value = rule.offset_x ?? 0.0;
     document.getElementById("propOffsetY").value = rule.offset_y ?? 0.0;
@@ -2948,7 +2993,7 @@ const RULE_DESCRIPTIONS = {
     simple_rect: "Create one surface with fix size and offset away from the center. Optional mit Stegen (Bridge Count) und fester Größe.",
     house_builder: "Hausform: Spitze zum Bauteilkörper, verhindert Tombstoning und Lotperlen bei Chip-Bauteilen.",
     inverted_house_builder: "Umgekehrte Hausform: Kerbe zur Bauteilaußenseite.",
-    elongated_pitch: "Länglich & Schmal: verschmälert quer zum Pitch so, dass der Pastenabstand mindestens der Padbreite entspricht.",
+    elongated_pitch: "Länglich & Schmal: verschmälert quer zum Pitch (Pastenabstand = Faktor × Öffnungsbreite), verlängert im Verhältnis zur Verschmälerung und versetzt die Öffnung nach außen.",
     array_slicing: "Teilt die Fläche in Felder mit Stegen (Bridge Count / Width), optional 45° gedreht.",
     donut: "Ringöffnung um die Bohrung (THT / Pin-in-Paste), segmentiert mit Haltestegen (Bridge Width).",
     take_existing: "Übernimmt die Pastenöffnungen unverändert aus dem Kundendatensatz.",
@@ -2983,6 +3028,9 @@ function collectRuleFromInputs() {
         house_cut_pct: numInput("propHouseCut", 35),
         pitch_reduction_pct: numInput("propPitchRed", 20),
         length_usage_pct: numInput("propLengthUse", 95),
+        gap_ratio: numInput("propGapRatio", 1.0),
+        length_comp_pct: numInput("propLengthComp", 70),
+        outward_shift: numInput("propOutwardShift", 0.025),
         offset_move_away: numInput("propOffsetMoveAway", 0),
         offset_x: numInput("propOffsetX", 0),
         offset_y: numInput("propOffsetY", 0),
@@ -3452,7 +3500,7 @@ function setupPkgEventListeners() {
     // Rule Inputs live sync (0ms / 35ms schnelles Live-Update)
     document.getElementById("selectPkgRule").addEventListener("change", () => { updateRuleFieldVisibility(); onRuleParamChanged(); });
     [
-        "propCornerRadius", "propUndersize", "propHouseCut", "propPitchRed", "propLengthUse",
+        "propCornerRadius", "propUndersize", "propHouseCut", "propPitchRed", "propLengthUse", "propGapRatio", "propLengthComp", "propOutwardShift",
         "propOffsetMoveAway", "propOffsetX", "propOffsetY", "propBridgeX", "propBridgeY", "propBridgeWidth",
         "propToeHeelShift", "propChamferSize", "propSizeW", "propSizeH", "propDonutInner",
         "propBgaThreshold", "propChipThreshold", "propInvertHouse", "propMiniChip",
@@ -4308,10 +4356,13 @@ async function refreshSides() {
             const btn = document.querySelector(`#sideSwitch button[data-side="${sd.side}"]`);
             if (!btn) continue;
             btn.classList.toggle("active", sd.active);
-            btn.disabled = !sd.loaded && !sd.active;
+            const usable = sd.loaded || sd.available;
+            btn.disabled = !usable && !sd.active;
             const cnt = document.getElementById(sd.side === "top" ? "cntSideTop" : "cntSideBot");
-            if (cnt) cnt.textContent = sd.loaded ? `(${sd.apertures})` : "";
-            btn.title = sd.loaded ? `${sd.side.toUpperCase()}: ${sd.apertures} Pastenöffnungen` : `${sd.side.toUpperCase()}: keine Pastenlage im Datensatz`;
+            if (cnt) cnt.textContent = usable ? `(${sd.apertures})` : "";
+            btn.title = sd.loaded ? `${sd.side.toUpperCase()}: ${sd.apertures} Pastenöffnungen`
+                : sd.available ? `${sd.side.toUpperCase()}: keine Kundenpaste – Öffnungen können aus dem Kupfer ergänzt werden`
+                : `${sd.side.toUpperCase()}: keine Daten für diese Seite`;
         }
         state.side = d.active;
     } catch (e) { /* Web-Version ohne Seitenwechsel */ }
@@ -4327,6 +4378,9 @@ async function switchSide(side) {
     await reloadAllViews(false);
     await refreshSides();
     showToast(`Seite ${side.toUpperCase()} aktiv`, 1800);
+    // Seite ohne Kundenpaste: Öffnungen aus dem Kupfer anbieten
+    const sd = (await (await fetch("/api/sides")).json()).sides.find(x => x.side === side);
+    if (sd && !sd.loaded) await offerMissingPaste(true);
 }
 window.switchSide = switchSide;
 

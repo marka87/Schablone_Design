@@ -1,7 +1,7 @@
 //! Regelbasierte Apertur-Geometrie (Simple Rectangle, HouseBuilder, Inverted House, Chamfer,
 //! Länglich & Schmal, Array Slicing orthogonal und 45°-diagonal).
 
-use super::geometry::{bounds, centroid, circle_pts, clip_halfplane, polygon_area, rect_pts, rounded_rect_pts};
+use super::geometry::{bounds, centroid, circle_pts, clip_halfplane, fillet_polygon, polygon_area, rect_pts, rounded_rect_pts};
 use super::donut_segments;
 use super::types::{r4, r5, round_pts, PackageRule, Pt, Slice};
 use serde_json::{Map, Value};
@@ -29,6 +29,16 @@ fn rounded_slice(cx: f64, cy: f64, w: f64, h: f64, r: f64, kind: &str) -> Slice 
     } else {
         rect_slice(cx, cy, w, h, Some(kind))
     }
+}
+
+/// Haus-Öffnung; Ecken und Spitze mit dem Eckradius abgerundet (wie PCB Investigator).
+fn house_slice(cx: f64, cy: f64, w: f64, h: f64, pts: &[Pt], r: f64, kind: &str) -> Slice {
+    let r = r.min(w / 2.2).min(h / 2.2).max(0.0);
+    let mut s = poly_slice(cx, cy, w, h, &fillet_polygon(pts, r, 6), kind);
+    if r > 0.005 {
+        s.radius = Some(r4(r));
+    }
+    s
 }
 
 fn circle_slice(cx: f64, cy: f64, d: f64, kind: &str) -> Slice {
@@ -150,18 +160,22 @@ impl<'a> PadCtx<'a> {
 /// (Fine-Pitch-Stecker, ICs), wird zusätzlich so weit verschmälert, dass der Abstand zwischen
 /// den Pastenöffnungen mindestens der Kupfer-Padbreite entspricht – und nie unter die
 /// Mindest-Stegbreite fällt.
-pub fn elongated_narrow_width(narrow: f64, reduction_pct: f64, pitch: Option<f64>, min_bridge: f64) -> f64 {
+pub fn elongated_narrow_width(narrow: f64, reduction_pct: f64, pitch: Option<f64>, min_bridge: f64, gap_ratio: f64) -> f64 {
     let mut n = narrow * (1.0 - reduction_pct / 100.0);
     if let Some(p) = pitch.filter(|p| *p > narrow * 0.5) {
-        let gap = p - narrow;
-        if narrow > gap {
-            n = n.min(gap);
-        }
+        // Pastenabstand = gap_ratio × Öffnungsbreite → Breite = Pitch / (1 + gap_ratio)
+        n = n.min(p / (1.0 + gap_ratio.max(0.2)));
         if min_bridge > 0.0 {
             n = n.min(p - min_bridge);
         }
     }
     n.max(0.10_f64.min(narrow))
+}
+
+/// Länge für "Länglich & Schmal": Längennutzung plus `comp_pct` % der relativen Verschmälerung.
+pub fn elongated_length(len: f64, narrow: f64, new_narrow: f64, usage_pct: f64, comp_pct: f64) -> f64 {
+    let shrink = if narrow > 0.0 { (1.0 - new_narrow / narrow).max(0.0) } else { 0.0 };
+    len * (usage_pct / 100.0 + shrink * comp_pct / 100.0)
 }
 
 /// Erzeugt die Schablonenöffnung(en) für ein Pad nach einer Package-Regel.
@@ -203,10 +217,10 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
     if rule.toe_heel_shift != 0.0 {
         let s = rule.toe_heel_shift;
         match facing_dir {
-            "right" => cx += s,
-            "left" => cx -= s,
-            "up" => cy += s,
-            "down" => cy -= s,
+            "right" => cx -= s,
+            "left" => cx += s,
+            "up" => cy -= s,
+            "down" => cy += s,
             _ => {}
         }
     }
@@ -335,7 +349,7 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
                 "down" => vec![(cx - hw, cy + hh), (cx + hw, cy + hh), (cx + hw, cy - hh + cut_h), (cx, cy - hh), (cx - hw, cy - hh + cut_h)],
                 _ => vec![(cx - hw, cy - hh), (cx - hw, cy + hh - cut_h), (cx, cy + hh), (cx + hw, cy + hh - cut_h), (cx + hw, cy - hh)],
             };
-            Some(vec![poly_slice(cx, cy, w_eff, h_eff, &pts, "house_builder")])
+            Some(vec![house_slice(cx, cy, w_eff, h_eff, &pts, rule.corner_radius, "house_builder")])
         }
         "inverted_house_builder" => {
             let cut_w = w_eff * (rule.house_cut_pct / 100.0);
@@ -347,14 +361,25 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
                 "up" => vec![(cx - hw, cy + hh), (cx + hw, cy + hh), (cx + hw, cy - hh + cut_h), (cx, cy - hh), (cx - hw, cy - hh + cut_h)],
                 _ => vec![(cx - hw, cy - hh), (cx - hw, cy + hh - cut_h), (cx, cy + hh), (cx + hw, cy + hh - cut_h), (cx + hw, cy - hh)],
             };
-            Some(vec![poly_slice(cx, cy, w_eff, h_eff, &pts, "inverted_house_builder")])
+            Some(vec![house_slice(cx, cy, w_eff, h_eff, &pts, rule.corner_radius, "inverted_house_builder")])
         }
         "elongated_pitch" => {
             let (new_w, new_h) = if pad_w <= pad_h {
-                (elongated_narrow_width(pad_w, rule.pitch_reduction_pct, pad.pitch, pad.min_bridge), pad_h * (rule.length_usage_pct / 100.0))
+                let n = elongated_narrow_width(pad_w, rule.pitch_reduction_pct, pad.pitch, pad.min_bridge, rule.gap_ratio);
+                (n, elongated_length(pad_h, pad_w, n, rule.length_usage_pct, rule.length_comp_pct))
             } else {
-                (pad_w * (rule.length_usage_pct / 100.0), elongated_narrow_width(pad_h, rule.pitch_reduction_pct, pad.pitch, pad.min_bridge))
+                let n = elongated_narrow_width(pad_h, rule.pitch_reduction_pct, pad.pitch, pad.min_bridge, rule.gap_ratio);
+                (elongated_length(pad_w, pad_h, n, rule.length_usage_pct, rule.length_comp_pct), n)
             };
+            // Versatz nach außen (weg vom Bauteilzentrum)
+            let (mut cx, mut cy) = (cx, cy);
+            match facing_dir {
+                "right" => cx -= rule.outward_shift,
+                "left" => cx += rule.outward_shift,
+                "up" => cy -= rule.outward_shift,
+                "down" => cy += rule.outward_shift,
+                _ => {}
+            }
             let r = rule.corner_radius.min(new_w / 2.5).min(new_h / 2.5).max(0.0);
             let mut s = poly_slice(cx, cy, new_w, new_h, &rounded_rect_pts(cx, cy, new_w, new_h, r), "elongated_pitch");
             s.radius = Some(r4(r));
@@ -590,17 +615,35 @@ mod tests {
 
     #[test]
     fn elongated_respects_pitch() {
-        // Stecker: 1.0 mm breite Pads im 1.5 mm Raster → Kupferabstand 0.5 mm < Padbreite.
-        // Paste wird auf 0.5 mm verschmälert, damit der Pastenabstand (1.0 mm) ≥ Padbreite ist.
-        let rule = PackageRule { rule_type: "elongated_pitch".into(), pitch_reduction_pct: 20.0, ..Default::default() };
-        let ctx = PadCtx { pitch: Some(1.5), min_bridge: 0.1, ..PadCtx::new(3.0, 1.0, 0.0, 0.0, "left") };
+        // 0804-Array: Pads 0.35 × 0.65 mm im 0.5 mm Pitch, Pad links vom Bauteilzentrum (facing right).
+        // Pastenabstand = Öffnungsbreite → 0.25 mm; Länge 0.65 × (95 % + 70 % × 28.6 %) ≈ 0.747 mm;
+        // 0.025 mm nach außen (links) versetzt.
+        let rule = PackageRule { rule_type: "elongated_pitch".into(), ..Default::default() };
+        let ctx = PadCtx { pitch: Some(0.5), min_bridge: 0.1, ..PadCtx::new(0.35, 0.65, 0.0, 0.0, "right") };
         let s = generate_rule_aperture_geometry(&ctx, &rule).unwrap();
-        assert!((s[0].h - 0.5).abs() < 1e-9, "Breite {}", s[0].h);
-        assert!((s[0].w - 2.85).abs() < 1e-9);
+        assert!((s[0].w - 0.25).abs() < 1e-6, "Breite {}", s[0].w);
+        assert!((s[0].h - 0.7475).abs() < 1e-3, "Länge {}", s[0].h);
+        assert!((s[0].cx + 0.025).abs() < 1e-6, "Versatz {}", s[0].cx);
+        // Abstand doppelt so groß wie die Öffnung → Breite = Pitch / 3
+        let wide_gap = PackageRule { gap_ratio: 2.0, outward_shift: 0.0, length_comp_pct: 0.0, ..rule.clone() };
+        let s = generate_rule_aperture_geometry(&ctx, &wide_gap).unwrap();
+        assert!((s[0].w - 0.5 / 3.0).abs() < 1e-3);
+        assert!((s[0].h - 0.6175).abs() < 1e-6 && s[0].cx.abs() < 1e-9);
         // Großzügiger Pitch: nur die prozentuale Reduktion
-        let ctx = PadCtx { pitch: Some(3.0), ..ctx };
+        let ctx = PadCtx { pitch: Some(3.0), ..PadCtx::new(3.0, 1.0, 0.0, 0.0, "left") };
         let s = generate_rule_aperture_geometry(&ctx, &rule).unwrap();
         assert!((s[0].h - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn house_is_rounded() {
+        let rule = PackageRule { rule_type: "house_builder".into(), corner_radius: 0.075, undersize_w: 0.0, undersize_h: 0.0, ..Default::default() };
+        let s = generate_rule_aperture_geometry(&PadCtx::new(0.6, 0.8, 0.0, 0.0, "right"), &rule).unwrap();
+        let pts = s[0].pts.as_ref().unwrap();
+        assert!(pts.len() > 20, "Ecken abgerundet: {} Punkte", pts.len());
+        // Spitze abgerundet: kein Punkt erreicht mehr x = +0.3
+        assert!(pts.iter().all(|p| p.0 < 0.299));
+        assert!(pts.iter().all(|p| p.0 >= -0.3 - 1e-9 && p.1.abs() <= 0.4 + 1e-9));
     }
 
     #[test]

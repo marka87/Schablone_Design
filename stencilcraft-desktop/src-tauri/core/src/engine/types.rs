@@ -336,6 +336,16 @@ pub struct PackageRule {
     pub pip_shape: String,
     /// Größte Öffnung (0 = Pitch − Mindeststeg)
     pub pip_max_size: f64,
+    // Länglich & Schmal
+    /// Pastenabstand zu Öffnungsbreite quer zum Pitch (1.0 = Abstand gleich Öffnungsbreite)
+    #[serde(default = "default_gap_ratio")]
+    pub gap_ratio: f64,
+    /// Längenausgleich: so viel % der Verschmälerung wird als Mehrlänge zugegeben
+    #[serde(default = "default_length_comp")]
+    pub length_comp_pct: f64,
+    /// Versatz der Öffnung vom Bauteilzentrum nach außen (mm)
+    #[serde(default = "default_outward_shift")]
+    pub outward_shift: f64,
     /// Parameter aus PCB Investigator ohne eigene Entsprechung (für verlustfreien Rückexport)
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, String>,
@@ -380,9 +390,22 @@ impl Default for PackageRule {
             pip_pin_clearance: 0.25,
             pip_shape: "circle".into(),
             pip_max_size: 0.0,
+            gap_ratio: default_gap_ratio(),
+            length_comp_pct: default_length_comp(),
+            outward_shift: default_outward_shift(),
             extra: BTreeMap::new(),
         }
     }
+}
+
+fn default_gap_ratio() -> f64 {
+    1.0
+}
+fn default_length_comp() -> f64 {
+    70.0
+}
+fn default_outward_shift() -> f64 {
+    0.025
 }
 
 pub fn val_f64(v: &Value) -> Option<f64> {
@@ -452,6 +475,9 @@ impl PackageRule {
                 "pip_pin_clearance" => { if let Some(f) = val_f64(v) { self.pip_pin_clearance = f.max(0.0) } }
                 "pip_shape" => { if let Some(s) = val_str(v) { self.pip_shape = s } }
                 "pip_max_size" => { if let Some(f) = val_f64(v) { self.pip_max_size = f.max(0.0) } }
+                "gap_ratio" => { if let Some(f) = val_f64(v) { self.gap_ratio = f.clamp(0.2, 5.0) } }
+                "length_comp_pct" => { if let Some(f) = val_f64(v) { self.length_comp_pct = f.clamp(0.0, 200.0) } }
+                "outward_shift" => { if let Some(f) = val_f64(v) { self.outward_shift = f.clamp(-0.5, 0.5) } }
                 "rotate_bridges_45" => { if let Some(b) = val_bool(v) { self.rotate_bridges_45 = b } }
                 "try_find_direction" => { if let Some(b) = val_bool(v) { self.try_find_direction = b } }
                 "pin_minus_mask" => { if let Some(b) = val_bool(v) { self.pin_minus_mask = b } }

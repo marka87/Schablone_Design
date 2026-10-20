@@ -475,7 +475,8 @@ impl StencilEngine {
                 cands.sort();
                 cands.into_iter().next()
             });
-            if s == other && pl.is_none() {
+            // Seite ohne Kundenpaste, aber mit Bauteilen: trotzdem anlegen (Öffnungen aus dem Kupfer möglich)
+            if s == other && pl.is_none() && side_toeprints.get(s).map_or(true, |t| t.is_empty()) {
                 continue;
             }
             self.apertures.clear();

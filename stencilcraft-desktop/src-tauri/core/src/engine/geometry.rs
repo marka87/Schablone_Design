@@ -71,6 +71,55 @@ pub fn rect_pts(cx: f64, cy: f64, w: f64, h: f64) -> Vec<Pt> {
 
 /// Achteck mit 45°-gebrochenen Ecken (Approximation der Eckverrundung wie im Web-Original).
 /// Rechteck mit echten Kreisbogen-Ecken (Radius `r`, je Ecke 6 Segmente).
+/// Rundet alle Ecken eines Polygons mit Radius `r` ab (Tangentenlänge höchstens halbe Kantenlänge).
+pub fn fillet_polygon(pts: &[Pt], r: f64, seg: usize) -> Vec<Pt> {
+    let n = pts.len();
+    if r < 1e-6 || n < 3 {
+        return pts.to_vec();
+    }
+    let pi = std::f64::consts::PI;
+    let mut out = Vec::with_capacity(n * (seg + 1));
+    for i in 0..n {
+        let v = pts[i];
+        let a = pts[(i + n - 1) % n];
+        let b = pts[(i + 1) % n];
+        let (la, lb) = ((a.0 - v.0).hypot(a.1 - v.1), (b.0 - v.0).hypot(b.1 - v.1));
+        if la < 1e-9 || lb < 1e-9 {
+            out.push(v);
+            continue;
+        }
+        let u1 = ((a.0 - v.0) / la, (a.1 - v.1) / la);
+        let u2 = ((b.0 - v.0) / lb, (b.1 - v.1) / lb);
+        let theta = (u1.0 * u2.0 + u1.1 * u2.1).clamp(-1.0, 1.0).acos();
+        if theta > pi - 1e-3 {
+            out.push(v);
+            continue;
+        }
+        let half = theta / 2.0;
+        let t = (r / half.tan()).min(0.5 * la.min(lb));
+        let re = t * half.tan();
+        let (bx, by) = (u1.0 + u2.0, u1.1 + u2.1);
+        let bl = bx.hypot(by);
+        let dist = re / half.sin();
+        let c = (v.0 + bx / bl * dist, v.1 + by / bl * dist);
+        let p1 = (v.0 + u1.0 * t, v.1 + u1.1 * t);
+        let p2 = (v.0 + u2.0 * t, v.1 + u2.1 * t);
+        let a1 = (p1.1 - c.1).atan2(p1.0 - c.0);
+        let mut d = (p2.1 - c.1).atan2(p2.0 - c.0) - a1;
+        while d > pi {
+            d -= 2.0 * pi;
+        }
+        while d < -pi {
+            d += 2.0 * pi;
+        }
+        for k in 0..=seg {
+            let ang = a1 + d * k as f64 / seg as f64;
+            out.push((c.0 + re * ang.cos(), c.1 + re * ang.sin()));
+        }
+    }
+    out
+}
+
 pub fn rounded_rect_pts(cx: f64, cy: f64, w: f64, h: f64, r: f64) -> Vec<Pt> {
     let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
     if r < 1e-6 {
