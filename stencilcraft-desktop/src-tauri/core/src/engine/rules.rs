@@ -135,6 +135,8 @@ pub struct PadCtx<'a> {
     pub drill: Option<f64>,
     /// Effektive Blechdicke am Pad (mm, für Pin-in-Paste)
     pub thickness: f64,
+    /// Kupferpad (B, H, rund) – die Regel "Package-Gruppe" rechnet wie PCB Investigator vom Kupfer aus
+    pub copper: Option<(f64, f64, bool)>,
 }
 
 impl<'a> PadCtx<'a> {
@@ -213,6 +215,12 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
     // Rechteck-spezifische Formen (House, Chamfer, Länglich) sind für Kreise nicht sinnvoll.
     // Regel "Package-Gruppe": wählt je Pad die passende Form (PCB Investigator "Inherit")
     if rtype == "package_group" {
+        // Basis ist das Kupferpad (wie PCB Investigator), nicht die Pastenvorgabe des Kunden
+        if let Some((cw, ch, cround)) = pad.copper.filter(|c| c.0 > 0.0 && c.1 > 0.0) {
+            let sub = PadCtx { w: cw, h: ch, round: cround, ..*pad };
+            let (w, h) = ((cw - 2.0 * rule.undersize_w).max(0.04), (ch - 2.0 * rule.undersize_h).max(0.04));
+            return Some(package_group_geometry(&sub, rule, cx, cy, w, h));
+        }
         return Some(package_group_geometry(pad, rule, cx, cy, w_eff, h_eff));
     }
     if rtype == "pin_in_paste" {
@@ -300,6 +308,22 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
                 }
             }
             Some(vec![rounded_slice(cx, cy, w, h, rule.corner_radius, "simple_rect")])
+        }
+        "house_builder" | "inverted_house_builder" if rule.size_w > 0.0 || rule.size_h > 0.0 => {
+            // Feste Größe (PCB-I "FixedWidth/Height"): Haus mit vorgegebenen Maßen
+            let mut r = rule.clone();
+            r.size_w = 0.0;
+            r.size_h = 0.0;
+            r.undersize_w = 0.0;
+            r.undersize_h = 0.0;
+            r.offset_x = 0.0;
+            r.offset_y = 0.0;
+            r.offset_move_away = 0.0;
+            r.toe_heel_shift = 0.0;
+            let w = if rule.size_w > 0.0 { rule.size_w } else { w_eff };
+            let h = if rule.size_h > 0.0 { rule.size_h } else { h_eff };
+            let sub = PadCtx { w, h, cx, cy, mask: None, ..*pad };
+            generate_rule_aperture_geometry(&sub, &r)
         }
         "house_builder" => {
             let cut_w = w_eff * (rule.house_cut_pct / 100.0);
@@ -407,7 +431,7 @@ fn pin_in_paste_geometry(pad: &PadCtx, rule: &PackageRule, cx: f64, cy: f64, w_e
 /// Regel "Package-Gruppe" (angelehnt an PCB Investigator "Handle Stencil Creation by Package Group"):
 /// - BGA: runde/quadratische Pads ≤ BGA-Schwelle → 1:1-Form minus Undersize
 /// - Große Flächen (beide Seiten ≥ 2 × Mindestfeldgröße) → Array-Felder mit Feldabstand und Flächennutzung
-/// - 2-Pin-Chips mit Pad ≤ Chip-Schwelle → HouseBuilder; Pads kleiner als "Invert House" → Inverted House
+/// - 2-Pin-Chips mit Pad > Chip-Schwelle → HouseBuilder; Pads kleiner als "Invert House" → Inverted House
 ///   mit zusätzlicher Mini-Chip-Reduktion
 /// - sonst Rechteck mit Undersize und Eckradius
 fn package_group_geometry(pad: &PadCtx, rule: &PackageRule, cx: f64, cy: f64, w_eff: f64, h_eff: f64) -> Vec<Slice> {
@@ -416,19 +440,16 @@ fn package_group_geometry(pad: &PadCtx, rule: &PackageRule, cx: f64, cy: f64, w_
     let large = pw.max(ph);
     let squareish = (pw - ph).abs() <= 0.1 * large;
 
-    if pad.round || (squareish && large <= rule.bga_threshold_square) {
-        if large <= rule.bga_threshold_square || pad.round {
-            return if pad.round {
-                vec![circle_slice(cx, cy, w_eff.min(h_eff), "package_group_bga")]
-            } else {
-                vec![rounded_slice(cx, cy, w_eff, h_eff, rule.corner_radius, "package_group_bga")]
-            };
-        }
+    // BGA-/CSP-Kugeln: kleine (fast) quadratische Pads werden wie im PCB Investigator rund geöffnet
+    if pad.round || (squareish && large <= rule.bga_threshold_square && pad.pin_count != 2) {
+        return vec![circle_slice(cx, cy, w_eff.min(h_eff), "package_group_bga")];
     }
     if rule.min_array_field > 0.0 && small >= 2.0 * rule.min_array_field && pad.pin_count != 2 {
         return array_fields(cx, cy, w_eff, h_eff, rule.min_array_field, rule.distance_array_fields, rule.utilization_array_pct / 100.0, rule.corner_radius);
     }
-    if pad.pin_count == 2 && large <= rule.chip_threshold_houses {
+    // 2-Pin-Chips: bis zur Chip-Schwelle abgerundetes Rechteck (Abgleich mit PCB-I-Referenzjob:
+    // 0201…0603, SOD923 werden nicht als Haus geöffnet); darüber Haus bzw. Inverted House
+    if pad.pin_count == 2 && large > rule.chip_threshold_houses {
         let mut r = rule.clone();
         let (mut w, mut h) = (w_eff, h_eff);
         if small < rule.invert_house_below {
@@ -585,10 +606,19 @@ mod tests {
     #[test]
     fn package_group_picks_shape_per_pad() {
         let rule = PackageRule { rule_type: "package_group".into(), ..Default::default() };
-        // 0603-Chip → HouseBuilder
-        let chip = PadCtx { pin_count: 2, ..PadCtx::new(0.9, 0.95, 0.0, 0.0, "right") };
+        // 0603-Chip (≤ Chip-Schwelle) → abgerundetes Rechteck vom Kupfer minus Undersize (wie PCB-I)
+        let chip = PadCtx { pin_count: 2, copper: Some((0.56, 0.89, false)), ..PadCtx::new(0.5, 0.8, 0.0, 0.0, "right") };
         let s = generate_rule_aperture_geometry(&chip, &rule).unwrap();
+        assert_eq!(s[0].kind.as_deref(), Some("package_group_rect"));
+        assert!((s[0].w - 0.51).abs() < 1e-6 && (s[0].h - 0.84).abs() < 1e-6, "{:?}", (s[0].w, s[0].h));
+        // großer 2-Pin-Leistungschip (> Chip-Schwelle) → HouseBuilder
+        let big = PadCtx { pin_count: 2, ..PadCtx::new(1.2, 2.8, 0.0, 0.0, "right") };
+        let s = generate_rule_aperture_geometry(&big, &rule).unwrap();
         assert_eq!(s[0].kind.as_deref(), Some("package_group_house_builder"));
+        // BGA-Pad (fast quadratisch, ≤ BGA-Schwelle) → rund
+        let ball = PadCtx { pin_count: 196, copper: Some((0.3, 0.3, true)), ..PadCtx::new(0.3, 0.3, 0.0, 0.0, "center") };
+        let s = generate_rule_aperture_geometry(&ball, &rule).unwrap();
+        assert!(s[0].is_circle() && (s[0].w - 0.25).abs() < 1e-6);
         // Thermal-Pad 4×4 mm im QFN → Array-Felder mit ≈ 40 % Fläche
         let th = PadCtx { pin_count: 49, ..PadCtx::new(4.0, 4.0, 0.0, 0.0, "center") };
         let s = generate_rule_aperture_geometry(&th, &rule).unwrap();

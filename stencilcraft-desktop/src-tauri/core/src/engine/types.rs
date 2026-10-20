@@ -112,6 +112,10 @@ pub struct ApertureItem {
     pub facing_dir: String,
     pub is_manually_overridden: bool,
     pub pad_ref: Option<PadBox>,
+    /// Kupferpad der Außenlage (ODB++), Basis der Regel "Package-Gruppe"
+    pub copper_ref: Option<PadBox>,
+    /// Aus dem Kupfer ergänzt (keine Pastenöffnung in der Kundenlage)
+    pub from_copper: bool,
 }
 
 impl ApertureItem {
@@ -140,6 +144,8 @@ impl ApertureItem {
             facing_dir: "right".into(),
             is_manually_overridden: false,
             pad_ref: None,
+            copper_ref: None,
+            from_copper: false,
         }
     }
 
@@ -330,6 +336,9 @@ pub struct PackageRule {
     pub pip_shape: String,
     /// Größte Öffnung (0 = Pitch − Mindeststeg)
     pub pip_max_size: f64,
+    /// Parameter aus PCB Investigator ohne eigene Entsprechung (für verlustfreien Rückexport)
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, String>,
 }
 
 impl Default for PackageRule {
@@ -371,6 +380,7 @@ impl Default for PackageRule {
             pip_pin_clearance: 0.25,
             pip_shape: "circle".into(),
             pip_max_size: 0.0,
+            extra: BTreeMap::new(),
         }
     }
 }
@@ -482,6 +492,9 @@ pub struct PadRel {
     /// Bohrdurchmesser (THT), falls bekannt
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drill: Option<f64>,
+    /// Kupferpad (B, H, rund) im Package-Rahmen, falls bekannt
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copper: Option<(f64, f64, bool)>,
 }
 
 fn rect_shape() -> String {
@@ -490,7 +503,7 @@ fn rect_shape() -> String {
 
 impl PadRel {
     pub fn new(pin: i64, cx: f64, cy: f64, w: f64, h: f64, facing: &str) -> Self {
-        PadRel { pin, cx, cy, w, h, facing: facing.into(), is_thermal: false, shape: rect_shape(), mask_w: None, mask_h: None, mask_round: None, drill: None }
+        PadRel { pin, cx, cy, w, h, facing: facing.into(), is_thermal: false, shape: rect_shape(), mask_w: None, mask_h: None, mask_round: None, drill: None, copper: None }
     }
 
     pub fn round(mut self, round: bool) -> Self {

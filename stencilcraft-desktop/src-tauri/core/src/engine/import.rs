@@ -267,6 +267,7 @@ impl StencilEngine {
         let Some(step) = job.board_step() else { return 0 };
         let step_dir = format!("steps/{step}");
         let eda = job.get(&format!("{step_dir}/eda/data")).map(|c| odb::parse_eda(c)).unwrap_or_default();
+        let user_symbols = odb::parse_user_symbols(job);
 
         // Lagenliste: aus Matrix, sonst aus den vorhandenen Layer-Ordnern
         let mut matrix = job.get("matrix/matrix").map(|m| odb::parse_matrix(m)).unwrap_or_default();
@@ -293,7 +294,7 @@ impl StencilEngine {
                     } else {
                         "SIGNAL"
                     };
-                    odb::MatrixLayer { raw_name: n.clone(), name: n, ltype: t.into(), row: i as i64 }
+                    odb::MatrixLayer { raw_name: n.clone(), name: n, ltype: t.into(), row: i as i64, start: String::new(), end: String::new() }
                 })
                 .collect();
         }
@@ -308,6 +309,7 @@ impl StencilEngine {
         // Je Seite: Pastenlage, Lötstopp-Pads und Toeprints (Pinpositionen)
         let mut paste_layers: std::collections::HashMap<&'static str, String> = std::collections::HashMap::new();
         let mut side_masks: std::collections::HashMap<&'static str, Vec<PadBox>> = std::collections::HashMap::new();
+        let mut side_copper: std::collections::HashMap<&'static str, Vec<PadBox>> = std::collections::HashMap::new();
         let mut side_toeprints: std::collections::HashMap<&'static str, Vec<(String, Vec<(i64, f64, f64)>)>> = std::collections::HashMap::new();
 
         for ml in &matrix {
@@ -361,15 +363,20 @@ impl StencilEngine {
                 }
             }
             if let Some(feat) = job.get(&format!("{base}/features")) {
-                let f = odb::parse_features(feat, MAX_LAYER_PRIMS);
-                // Bohrungen (alle Bohrlagen) und Lötstopp der aktiven Seite für Pin-Infos merken
-                if ltype == "drill" {
+                let f = odb::parse_features_ext(feat, MAX_LAYER_PRIMS, &user_symbols);
+                // Durchgangsbohrungen und Lötstopp der aktiven Seite für Pin-Infos merken.
+                // Blind-/Microvias (z. B. Lage 1→2 bei HDI/Rigid-Flex) machen ein Pad nicht zum THT-Pin.
+                let through = (ml.start.is_empty() && ml.end.is_empty())
+                    || (Some(ml.start.as_str()) == outer_top && Some(ml.end.as_str()) == outer_bot)
+                    || (Some(ml.start.as_str()) == outer_bot && Some(ml.end.as_str()) == outer_top);
+                if ltype == "drill" && through {
                     for p in &f.pads {
                         if let PadGeom::Circle { d } = p.geom {
                             self.drills.push((p.x, p.y, d));
                         }
                     }
-                } else if ltype == "mask" && (lside == "top" || lside == "bot") && !name.contains("copy") {
+                } else if (ltype == "mask" || ltype == "copper") && (lside == "top" || lside == "bot") && !name.contains("copy") {
+                    let target = if ltype == "mask" { &mut side_masks } else { &mut side_copper };
                     for p in &f.pads {
                         let (b, round) = match &p.geom {
                             PadGeom::Circle { d } => ((p.x - d / 2.0, p.y - d / 2.0, p.x + d / 2.0, p.y + d / 2.0), true),
@@ -378,7 +385,7 @@ impl StencilEngine {
                         };
                         let mut pb = PadBox::new(b.0, b.1, b.2, b.3);
                         pb.round = round;
-                        side_masks.entry(if lside == "bot" { "bot" } else { "top" }).or_default().push(pb);
+                        target.entry(if lside == "bot" { "bot" } else { "top" }).or_default().push(pb);
                     }
                 }
                 if let Some(b) = f.bbox {
@@ -474,10 +481,16 @@ impl StencilEngine {
             self.odb_toeprints = side_toeprints.remove(s).unwrap_or_default();
             if let Some(pl) = &pl {
                 if let Some(feat) = job.get(&format!("{step_dir}/layers/{pl}/features")) {
-                    self.load_odb_paste(&odb::parse_features(feat, usize::MAX), &eda);
+                    self.load_odb_paste(&odb::parse_features_ext(feat, usize::MAX, &user_symbols), &eda);
                 }
             }
             self.correlate_apertures_with_pads();
+            self.copper_pads = side_copper.get(s).cloned().unwrap_or_default();
+            if !self.copper_pads.is_empty() {
+                let cu = std::mem::take(&mut self.copper_pads);
+                self.correlate_apertures_with_copper(&cu);
+                self.copper_pads = cu;
+            }
 
             let orig_prims: Vec<Prim> = self
                 .original_apertures
@@ -647,7 +660,7 @@ impl StencilEngine {
                     ap.component_id = c.refdes.clone();
                     ap.pin_number = pin;
                     let (dx, dy) = (c.cx - ap.cx, c.cy - ap.cy);
-                    ap.facing_dir = if dx.abs() < 0.3 && dy.abs() < 0.3 {
+                    ap.facing_dir = if dx.abs() < 0.05 && dy.abs() < 0.05 {
                         "center"
                     } else if dx.abs() >= dy.abs() {
                         if dx > 0.0 { "right" } else { "left" }

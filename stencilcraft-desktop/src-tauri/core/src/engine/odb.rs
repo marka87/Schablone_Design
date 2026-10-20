@@ -197,6 +197,9 @@ pub struct MatrixLayer {
     pub raw_name: String,
     pub ltype: String,
     pub row: i64,
+    /// Bohrlagen: Start-/Endlage (klein geschrieben), leer wenn nicht angegeben
+    pub start: String,
+    pub end: String,
 }
 
 pub fn parse_matrix(content: &str) -> Vec<MatrixLayer> {
@@ -216,6 +219,8 @@ pub fn parse_matrix(content: &str) -> Vec<MatrixLayer> {
                         raw_name: name.clone(),
                         ltype: cur.get("TYPE").cloned().unwrap_or_default().to_uppercase(),
                         row: cur.get("ROW").and_then(|r| r.parse().ok()).unwrap_or(out.len() as i64),
+                        start: cur.get("START_NAME").map(|s| s.to_lowercase()).unwrap_or_default(),
+                        end: cur.get("END_NAME").map(|s| s.to_lowercase()).unwrap_or_default(),
                     });
                 }
             }
@@ -377,8 +382,42 @@ fn place_pad(sym: &Symbol, x: f64, y: f64, rot_cw: f64, mirror: bool) -> PadGeom
     PadGeom::Poly { pts: pts.into_iter().map(|(px, py)| (x + px, y + py)).collect() }
 }
 
+/// Benutzerdefinierte Symbole (`symbols/<name>/features`): Name → Konturen am Ursprung (mm)
+pub type UserSymbols = HashMap<String, Vec<Vec<Pt>>>;
+
+/// Liest alle benutzerdefinierten Symbole eines Jobs.
+pub fn parse_user_symbols(job: &OdbFiles) -> UserSymbols {
+    let mut out = UserSymbols::new();
+    for (path, content) in &job.files {
+        let Some(rest) = path.strip_prefix("symbols/") else { continue };
+        let Some(name) = rest.strip_suffix("/features") else { continue };
+        if name.contains('/') {
+            continue;
+        }
+        let f = parse_features(content, 0);
+        let mut contours: Vec<Vec<Pt>> = f.surfaces;
+        for p in f.pads {
+            contours.push(match p.geom {
+                PadGeom::Circle { d } => circle_pts(p.x, p.y, d / 2.0, 32),
+                PadGeom::Rect { w, h } => rect_pts(p.x, p.y, w, h),
+                PadGeom::Poly { pts } => pts,
+            });
+        }
+        if !contours.is_empty() {
+            out.insert(name.to_lowercase(), contours);
+        }
+    }
+    out
+}
+
 pub fn parse_features(content: &str, max_prims: usize) -> Features {
+    parse_features_ext(content, max_prims, &UserSymbols::new())
+}
+
+/// Wie `parse_features`, löst aber benutzerdefinierte Symbole über deren Konturen auf.
+pub fn parse_features_ext(content: &str, max_prims: usize, user: &UserSymbols) -> Features {
     let mut f = Features::default();
+    let mut sym_names: HashMap<String, String> = HashMap::new();
     let mut symbols: HashMap<String, Symbol> = HashMap::new();
     let mut is_inch = true;
     let mut scale = 25.4;
@@ -414,6 +453,7 @@ pub fn parse_features(content: &str, max_prims: usize) -> Features {
                     _ => is_inch,
                 };
                 symbols.insert(parts[0].to_string(), parse_symbol(parts[1], sym_inch));
+                sym_names.insert(parts[0].to_string(), parts[1].to_lowercase());
             }
             continue;
         }
@@ -476,6 +516,23 @@ pub fn parse_features(content: &str, max_prims: usize) -> Features {
                     8 | 9 => (p.get(7).and_then(|v| v.parse().ok()).unwrap_or(0.0), orient == 9),
                     _ => (0.0, false),
                 };
+                // Benutzersymbol: jede Kontur wird ein eigenes Pad (z. B. geteilte Pastenflächen)
+                if let Some(contours) = sym_names.get(p[3]).and_then(|n| user.get(n)) {
+                    for c in contours {
+                        let pts: Vec<Pt> = if mirror { c.iter().map(|&(px, py)| (-px, py)).collect() } else { c.clone() };
+                        let pts: Vec<Pt> = rotate_pts(&pts, 0.0, 0.0, -rot).into_iter().map(|(px, py)| (x + px, y + py)).collect();
+                        let (x0, y0, x1, y1) = bounds(&pts);
+                        grow(x0, y0, x1, y1);
+                        if !positive {
+                            continue;
+                        }
+                        if f.prims.len() < max_prims {
+                            f.prims.push(Prim::poly(&pts));
+                        }
+                        f.pads.push(OdbPad { x: (x0 + x1) / 2.0, y: (y0 + y1) / 2.0, geom: PadGeom::Poly { pts } });
+                    }
+                    continue;
+                }
                 let sym = symbols.get(p[3]).cloned().unwrap_or(Symbol { shape: SymShape::Rect { r: 0.0 }, w: 0.5, h: 0.5 });
                 let geom = place_pad(&sym, x, y, rot, mirror);
                 let (x0, y0, x1, y1) = match &geom {

@@ -60,6 +60,19 @@ impl Dialogs for NativeDialogs {
             .set_file_name(format!("{default_name}.stencilproj"))
             .save_file()
     }
+    fn pick_rule_tree(&self) -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_title("PCB-Investigator-Kundenbibliothek importieren")
+            .add_filter("PCB-I Rule Tree", &["xml"])
+            .pick_file()
+    }
+    fn pick_save_rule_tree(&self, default_name: &str) -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_title("Als PCB-Investigator-Kundenbibliothek exportieren")
+            .add_filter("PCB-I Rule Tree", &["xml"])
+            .set_file_name(format!("{default_name}.xml"))
+            .save_file()
+    }
 }
 
 fn upload_root() -> PathBuf {

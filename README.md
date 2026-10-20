@@ -106,6 +106,10 @@ Eigenständige Windows-Anwendung ohne Python-Laufzeit. Oberfläche und Funktions
 - Regelhierarchie wie PCB Investigator: Reiter „Package Rules“ (Gruppenregel per Klick auf den Gruppennamen, Packages mit „Inherit“ erben sie), „Zone Rules“ (Regel für einen Bereich, wahlweise ohne Dickenänderung) und „Component Rules“ (Regel je Bauteil). Rangfolge: Bauteil → Zone → Package (+ Pin-Anpassung) → Gruppe.
 - Regel „Pin-in-Paste“: Öffnung je THT-Pin automatisch aus Bohrung, Leiterplattendicke, Metallanteil und Blechdicke (Kreis/Quadrat/Donut, begrenzt durch Pitch − Mindeststeg).
 - „Show Info Layer“ im Generator: Area Ratio, Fläche, Volumen je Öffnung und bei Pin-in-Paste die Volumen-Erfüllung in %.
+- PCB-Investigator-Kundenbibliothek: „⇩ PCB-I-Bibliothek“ liest `ruleTreeFile_*.xml` (Package-, Pin- und Gruppenregeln: Simple Rectangle Surface, Handle Stencil Creation by Package Group, HouseBuilder, Take Existing, Ignore) und übernimmt sie auf Wunsch in die StencilCraft-Bibliothek, inklusive der Packages, die im aktuellen Job nicht vorkommen. Der Bericht listet Packages ohne Bibliothekseintrag. „⇧ Export PCB-I“ schreibt die aktuellen Regeln im selben Format zurück; der `<Settings>`-Block der importierten Datei bleibt dabei erhalten.
+- „Package Group“ rechnet wie PCB Investigator vom Kupferpad der Außenlage aus (minus Undersize, abgerundetes Rechteck; BGA-Pads rund; 2-Pin-Chips bis zur Chip-Schwelle ohne Haus).
+- „＋ Fehlende Paste“: Bauteilpins ohne Öffnung in der Kundenpaste (Testpads, Spark-Gaps, …) werden aus dem Kupfer ergänzt; die Regeln entscheiden je Package, ob dort eine Öffnung entsteht.
+- Abgleich mit PCB Investigator: `cargo run --release -p stencil_core --example pcbi_compare -- <job.tgz> <ruleTree.xml> <pcbi_top.ger> <pcbi_bot.ger>` vergleicht Öffnung für Öffnung (Lage, Fläche ±5 %) und listet Abweichungen je Package.
 - UI-Größe oben rechts (Auto / 80–140 %), Bereiche per Ziehleiste in der Größe veränderbar, Doppelklick klappt sie ein.
 
 **Bauen:** `build_desktop.bat` (synchronisiert die Web-UI, führt die Engine-Tests aus, baut `target\release\stencilcraft-desktop.exe`).

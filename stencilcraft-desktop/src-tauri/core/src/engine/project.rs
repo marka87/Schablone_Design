@@ -63,6 +63,9 @@ struct ApertureSave {
     custom_slices: Option<Vec<Slice>>,
     #[serde(default)]
     manual: bool,
+    /// Aus dem Kupfer ergänzte Öffnung: Kupferpad zum Wiederherstellen
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    copper: Option<PadBox>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -134,6 +137,7 @@ fn aperture_saves(aps: &[ApertureItem]) -> Vec<ApertureSave> {
             component_id: a.component_id.clone(),
             custom_slices: a.custom_slices.clone(),
             manual: a.is_manually_overridden,
+            copper: a.copper_ref.clone().filter(|_| a.from_copper),
         })
         .collect()
 }
@@ -208,6 +212,7 @@ impl StencilEngine {
             if let Some(d) = stash {
                 self.original_apertures = d.original_apertures;
                 self.pads = d.pads;
+                self.copper_pads = d.copper_pads;
                 self.odb_toeprints = d.odb_toeprints;
             }
             self.apply_side_visibility();
@@ -306,6 +311,23 @@ impl StencilEngine {
     /// Gespeicherte Öffnungen auf die aktive Seite anwenden; liefert Anzahl nicht zuordenbarer.
     fn apply_aperture_saves(&mut self, saves: Vec<ApertureSave>) -> usize {
         let mut unmatched = 0;
+        // Ergänzte Kupfer-Öffnungen gibt es im neu geladenen Datensatz nicht: wieder anlegen
+        let (copper, saves): (Vec<ApertureSave>, Vec<ApertureSave>) = saves.into_iter().partition(|s| s.copper.is_some());
+        let had_copper = self.apertures.iter().any(|a| a.from_copper);
+        for sv in copper {
+            if had_copper {
+                continue;
+            }
+            let id = self.apertures.len();
+            let Some(cu) = sv.copper.clone() else { continue };
+            let mut ap = Self::copper_aperture(id, &cu, &sv.package_name, &sv.component_id, sv.pin_number, &sv.facing_dir);
+            ap.custom_slices = sv.custom_slices;
+            ap.is_manually_overridden = sv.manual;
+            if self.original_apertures.len() == id {
+                self.original_apertures.push(ap.clone());
+            }
+            self.apertures.push(ap);
+        }
         for sv in saves {
             let idx = match self.apertures.get(sv.id) {
                 Some(a) if (a.cx - sv.cx).abs() < 0.01 && (a.cy - sv.cy).abs() < 0.01 => Some(sv.id),
@@ -509,6 +531,9 @@ pub fn edit_label(method: &str, seg: &[&str], body: &Map<String, Value>) -> Opti
         ("POST", ["api", "zone"]) => "Zone anlegen".into(),
         ("PUT" | "POST", ["api", "zone", z]) => format!("Zone {z} ändern"),
         ("DELETE", ["api", "zone", z]) => format!("Zone {z} löschen"),
+        ("POST", ["api", "pcbi", "import"]) => "PCB-I-Kundenbibliothek importiert".into(),
+        ("POST", ["api", "paste", "add_missing"]) => "Fehlende Pastenöffnungen ergänzt".into(),
+        ("POST", ["api", "paste", "remove_added"]) => "Ergänzte Pastenöffnungen entfernt".into(),
         ("POST", ["api", "package", n, "rule"]) => format!("Regel {n}"),
         ("POST", ["api", "package", n, "generate"]) => format!("Regel anwenden {n}"),
         ("POST", ["api", "package", n, "rename"]) => format!("Umbenennen {n}"),

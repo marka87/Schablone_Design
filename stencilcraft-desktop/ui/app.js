@@ -3599,6 +3599,26 @@ function setupPkgEventListeners() {
         alert(`Kunden-Bibliothek "${cust}" erfolgreich gespeichert!`);
     });
 
+    // PCB-Investigator-Kundenbibliothek (nur Desktop: Dateidialoge)
+    if (!window.__TAURI__) document.querySelectorAll(".desktop-only").forEach(el => el.classList.add("hidden"));
+    document.getElementById("btnPcbiImport")?.addEventListener("click", importPcbiLibrary);
+    document.getElementById("btnPcbiExport")?.addEventListener("click", async () => {
+        const res = await fetch("/api/pcbi/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        const d = await res.json();
+        if (d.status === "cancelled") return;
+        if (!res.ok || d.status !== "ok") { showToast(`❌ ${d.message || d.error || "Export fehlgeschlagen"}`); return; }
+        let msg = `Gespeichert: ${d.path}
+
+${d.packages} Package-Regeln, ${d.pin_rules} Pin-Regeln, ${d.groups} Gruppen, ${d.components} Bauteilregeln.`;
+        if (d.skipped?.length) msg += `
+
+Ohne PCB-I-Entsprechung (nicht exportiert):
+• ${d.skipped.slice(0, 12).join("\n• ")}${d.skipped.length > 12 ? `
+… und ${d.skipped.length - 12} weitere` : ""}`;
+        await askChoice("PCB-I-Bibliothek exportiert", msg, [{ label: "OK", value: "ok", cls: "btn-primary" }]);
+    });
+    document.getElementById("btnAddMissingPaste")?.addEventListener("click", () => offerMissingPaste(true));
+
     const newLibModal = document.getElementById("newLibModal");
     document.getElementById("btnOpenNewLibModal").addEventListener("click", () => {
         newLibModal.classList.remove("hidden");
@@ -4052,6 +4072,70 @@ async function refreshHistory() {
 }
 
 // Auswahl-Dialog: liefert den "value" des geklickten Buttons (ESC/Hintergrund = "cancel")
+// Bauteilpins ohne Kundenpaste: PCB Investigator erzeugt dort Öffnungen aus dem Kupfer
+async function offerMissingPaste(explicit) {
+    const m = await (await fetch("/api/paste/missing")).json();
+    if (!m.count) {
+        if (explicit) showToast("Alle Bauteilpins haben eine Pastenöffnung.");
+        return 0;
+    }
+    const top = Object.entries(m.packages || {}).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([p, n]) => `${p}: ${n}`).join(", ");
+    const r = await askChoice("Pins ohne Kundenpaste",
+        `${m.count} Bauteilpins haben in der Pastenlage des Kunden keine Öffnung (${top}).
+
+` +
+        "PCB Investigator erzeugt dort bei \"Package Group\" Öffnungen aus dem Kupfer. Ergänzen? Die Regeln entscheiden danach je Package (\"Take Existing\"/\"Ignore\" → keine Öffnung). Rückgängig mit Strg+Z.",
+        [{ label: "Nicht ergänzen", value: "no", cls: "btn-ghost" }, { label: `${m.count} ergänzen`, value: "yes", cls: "btn-primary" }]);
+    if (r !== "yes") return 0;
+    const d = await (await fetch("/api/paste/add_missing", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json();
+    await refreshApertureData();
+    showToast(`✓ ${d.added} Öffnungen aus dem Kupfer ergänzt`);
+    return d.added;
+}
+
+async function importPcbiLibrary() {
+    const cust = pkgState.currentCustomer || "";
+    const how = await askChoice("PCB-Investigator-Kundenbibliothek",
+        "Regeln (Packages, Pins, Gruppen) aus einer PCB-I-Datei ruleTreeFile_*.xml auf den Datensatz anwenden.\n\n" +
+        `Zusätzlich in die StencilCraft-Bibliothek "${cust || "Standard"}" übernehmen (inkl. Packages, die in diesem Job nicht vorkommen)?`,
+        [{ label: "Abbrechen", value: "cancel", cls: "btn-ghost" },
+         { label: "Nur anwenden", value: "apply" },
+         { label: "Anwenden + speichern", value: "save", cls: "btn-primary" }]);
+    if (how === "cancel") return;
+    const res = await fetch("/api/pcbi/import", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer: how === "save" ? (cust || "Standard") : "", generate: true })
+    });
+    const d = await res.json();
+    if (d.status === "cancelled") return;
+    if (!res.ok || d.status !== "ok") { showToast(`❌ ${d.message || d.error || "Import fehlgeschlagen"}`); return; }
+    await loadPackagesList();
+    await refreshApertureData();
+    const missing = d.missing_in_library || [];
+    let msg = `${d.matched.length} von ${d.library_packages} Bibliotheks-Packages im Datensatz gefunden, ${d.pin_rules} Pin-Regeln, Gruppen: ${(d.group_rules || []).join(", ")}.`;
+    msg += `
+${d.modified_count ?? 0} Öffnungen neu berechnet.`;
+    if (missing.length) msg += `
+
+Ohne Bibliothekseintrag (${missing.length}) – erben von ihrer Gruppe:
+${missing.slice(0, 15).map(p => p.name).join(", ")}${missing.length > 15 ? " …" : ""}`;
+    if (d.not_in_dataset?.length) msg += `
+
+In der Bibliothek, aber nicht im Job: ${d.not_in_dataset.length}`;
+    const unknown = Object.keys(d.unknown_rules || {});
+    if (unknown.length) msg += `
+
+⚠ Unbekannte PCB-I-Skripte (als „Original übernehmen“ geführt): ${unknown.join(", ")}`;
+    if (d.warnings?.length) msg += `
+
+⚠ ${d.warnings.join("\n⚠ ")}`;
+    if (d.library_file) msg += `
+
+Gespeichert in: ${d.library_file}`;
+    await askChoice("PCB-I-Bibliothek übernommen", msg, [{ label: "OK", value: "ok", cls: "btn-primary" }]);
+    if (d.missing_paste > 0) await offerMissingPaste(false);
+}
+
 function askChoice(title, text, choices) {
     return new Promise(resolve => {
         const modal = document.getElementById("choiceModal");

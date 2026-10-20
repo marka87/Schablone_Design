@@ -92,6 +92,8 @@ impl StencilEngine {
                     generate_rule_aperture_geometry(&ctx, &rule)
                 }
             };
+            // Ergänzte Kupfer-Öffnung ohne erzeugende Regel ("Take Existing"): keine Paste
+            let slices = if ap.from_copper && slices.is_none() { Some(Vec::new()) } else { slices };
             updates.push((id, slices));
         }
         let n = updates.len();

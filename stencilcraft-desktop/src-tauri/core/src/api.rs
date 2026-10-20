@@ -77,6 +77,13 @@ pub trait Dialogs {
     fn pick_save_project(&self, _default_name: &str) -> Option<PathBuf> {
         None
     }
+    /// PCB-Investigator-Kundenbibliothek (ruleTreeFile_*.xml) wählen
+    fn pick_rule_tree(&self) -> Option<PathBuf> {
+        None
+    }
+    fn pick_save_rule_tree(&self, _default_name: &str) -> Option<PathBuf> {
+        None
+    }
 }
 
 /// Ohne GUI (Tests/Headless): Dialoge gelten als abgebrochen.
@@ -183,6 +190,20 @@ pub fn dispatch(engine: &Mutex<StencilEngine>, method: &str, url: &str, body: &V
                 Ok(p) => ok(json!({"status": "ok", "path": p, "history": e.history_json()})),
                 Err(m) => err(500, m),
             }
+        }
+        // PCB-I-Kundenbibliothek: Datei per Dialog wählen, dann regulär (mit Undo) verarbeiten
+        ("POST", "/api/pcbi/import") | ("POST", "/api/pcbi/export") if Body(body_map).s("path").filter(|p| !p.is_empty()).is_none() => {
+            let picked = if path.ends_with("import") {
+                dialogs.pick_rule_tree()
+            } else {
+                let c = lock(engine).current_customer.clone();
+                let c = if c.is_empty() { "Kunde".to_string() } else { c };
+                dialogs.pick_save_rule_tree(&format!("ruleTreeFile_{}", c.replace(|ch: char| !ch.is_alphanumeric() && ch != '-' && ch != '_', "_")))
+            };
+            let Some(p) = picked else { return ok(json!({"status": "cancelled"})) };
+            let mut m = body_map.clone();
+            m.insert("path".into(), json!(p.to_string_lossy()));
+            dispatch(engine, method, path, &Value::Object(m), dialogs)
         }
         _ => {
             let mut e = lock(engine);
@@ -545,6 +566,50 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             }
             let s = e.rename_package(name, &new);
             ok(json!({"status": if s { "ok" } else { "error" }, "old_name": name, "new_name": new, "packages": e.packages.values().map(|p| p.to_json()).collect::<Vec<_>>()}))
+        }
+        // Bauteilpins ohne Kundenpaste (PCB-I erzeugt dort Öffnungen aus dem Kupfer)
+        ("GET", ["api", "paste", "missing"]) => ok(e.missing_paste_json()),
+        ("POST", ["api", "paste", "add_missing"]) => {
+            let n = e.add_missing_paste();
+            ok(json!({"status": "ok", "added": n, "stats": stats(e)}))
+        }
+        ("POST", ["api", "paste", "remove_added"]) => {
+            let n = e.remove_copper_paste();
+            ok(json!({"status": "ok", "removed": n, "stats": stats(e)}))
+        }
+        // PCB-Investigator-Kundenbibliothek (RuleTreeManager-XML)
+        ("POST", ["api", "pcbi", "import"]) => {
+            let p = b.s("path").unwrap_or_default();
+            match e.import_rule_tree_file(Path::new(&p), b.b("apply_settings", false)) {
+                Ok((mut r, tree)) => {
+                    // Optional zusätzlich als StencilCraft-Kundenbibliothek speichern
+                    if let Some(c) = b.s("customer").filter(|c| !c.trim().is_empty()) {
+                        match e.save_rule_tree_to_library(c.trim(), &tree) {
+                            Ok(f) => r["library_file"] = json!(f),
+                            Err(m) => r["warnings"].as_array_mut().map(|w| w.push(json!(m))).unwrap_or(()),
+                        }
+                    }
+                    if b.b("add_missing", false) {
+                        r["added_from_copper"] = json!(e.add_missing_paste());
+                    }
+                    if b.b("generate", true) {
+                        r["modified_count"] = json!(e.generate_all());
+                    }
+                    r["missing_paste"] = json!(e.missing_paste_pins().len());
+                    r["status"] = json!("ok");
+                    r["stats"] = stats(e);
+                    r["packages"] = json!(e.packages.values().map(|p| p.to_json()).collect::<Vec<_>>());
+                    ok(r)
+                }
+                Err(m) => err(400, m),
+            }
+        }
+        ("POST", ["api", "pcbi", "export"]) => {
+            let p = b.s("path").unwrap_or_default();
+            match e.export_rule_tree_file(Path::new(&p)) {
+                Ok(r) => ok(r),
+                Err(m) => err(500, m),
+            }
         }
         ("GET", ["api", "libraries"]) => ok(json!({"libraries": e.list_customer_libraries(), "current_customer": e.current_customer})),
         ("POST", ["api", "library", "load"]) => {

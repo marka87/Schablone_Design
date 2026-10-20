@@ -3,6 +3,7 @@
 //! Arbeitsweise strikt non-destruktiv: `original_apertures` bleibt unverändert (Kundenlage),
 //! alle Modifikationen landen als `custom_slices` auf den Arbeits-Aperturen (Zwischenspeicher).
 
+pub mod copper_paste;
 pub mod dfm;
 pub mod export;
 pub mod geometry;
@@ -10,6 +11,7 @@ pub mod gerber;
 pub mod import;
 pub mod odb;
 pub mod packages;
+pub mod pcbi;
 pub mod project;
 pub mod report;
 pub mod rules;
@@ -37,9 +39,13 @@ pub struct StencilEngine {
     pub original_apertures: Vec<ApertureItem>,
     pub apertures: Vec<ApertureItem>,
     pub pads: Vec<PadBox>,
+    /// Kupferpads der Außenlage der aktiven Seite (ODB++)
+    pub copper_pads: Vec<PadBox>,
     pub components: Vec<ComponentItem>,
     pub packages: BTreeMap<String, PackageTemplate>,
     pub package_aliases: BTreeMap<String, String>,
+    /// `<Settings>`-Block der zuletzt importierten PCB-I-Kundenbibliothek
+    pub pcbi_settings_xml: Option<String>,
     pub current_customer: String,
     pub zones: Vec<StencilZone>,
     pub profile_paths: Vec<[Pt; 2]>,
@@ -82,6 +88,7 @@ pub struct SideData {
     pub original_apertures: Vec<ApertureItem>,
     pub zones: Vec<StencilZone>,
     pub pads: Vec<PadBox>,
+    pub copper_pads: Vec<PadBox>,
     pub odb_toeprints: Vec<(String, Vec<(i64, f64, f64)>)>,
     pub bridge_violations: Vec<BridgeViolation>,
     pub base_thickness: f64,
@@ -109,6 +116,9 @@ pub fn resolve_data_root() -> PathBuf {
     exe_dir
 }
 
+/// Kleinste Bohrung, die als THT-Anschluss gilt (kleiner: Via im Pad)
+pub const THT_MIN_DRILL: f64 = 0.35;
+
 fn sanitize_file_name(name: &str) -> String {
     name.trim()
         .chars()
@@ -131,9 +141,11 @@ impl StencilEngine {
             original_apertures: Vec::new(),
             apertures: Vec::new(),
             pads: Vec::new(),
+            copper_pads: Vec::new(),
             components: Vec::new(),
             packages: BTreeMap::new(),
             package_aliases: BTreeMap::new(),
+            pcbi_settings_xml: None,
             current_customer: "Standard".into(),
             zones: Vec::new(),
             profile_paths: Vec::new(),
@@ -177,6 +189,7 @@ impl StencilEngine {
             original_apertures: std::mem::take(&mut self.original_apertures),
             zones: std::mem::take(&mut self.zones),
             pads: std::mem::take(&mut self.pads),
+            copper_pads: std::mem::take(&mut self.copper_pads),
             odb_toeprints: std::mem::take(&mut self.odb_toeprints),
             bridge_violations: std::mem::take(&mut self.bridge_violations),
             base_thickness: self.base_thickness,
@@ -188,6 +201,7 @@ impl StencilEngine {
         self.original_apertures = d.original_apertures;
         self.zones = d.zones;
         self.pads = d.pads;
+        self.copper_pads = d.copper_pads;
         self.odb_toeprints = d.odb_toeprints;
         self.bridge_violations = d.bridge_violations;
         if d.base_thickness > 0.0 {
@@ -334,6 +348,7 @@ impl StencilEngine {
         self.bridge_violations.clear();
         self.odb_toeprints.clear();
         self.drills.clear();
+        self.copper_pads.clear();
         self.source_paths.clear();
         self.project_path = None;
         self.dirty = false;
@@ -364,6 +379,24 @@ impl StencilEngine {
             if let Some(p) = best {
                 ap.pad_ref = Some(p.clone());
             }
+        }
+    }
+
+    /// Ordnet jeder Pasten-Apertur das Kupferpad der Außenlage zu (Zentrum innerhalb des Kupferpads).
+    pub fn correlate_apertures_with_copper(&mut self, copper: &[PadBox]) {
+        use rstar::{primitives::GeomWithData, RTree};
+        let tree = RTree::bulk_load(copper.iter().enumerate().map(|(i, p)| GeomWithData::new([(p.x0 + p.x1) / 2.0, (p.y0 + p.y1) / 2.0], i)).collect());
+        for ap in self.apertures.iter_mut() {
+            // Größtes Kupferpad, das den Pastenmittelpunkt enthält (nicht die Via-Fläche im Pad)
+            let hit = tree
+                .nearest_neighbor_iter(&[ap.cx, ap.cy])
+                .take(8)
+                .map(|n| &copper[n.data])
+                .filter(|p| ap.cx >= p.x0 - 1e-6 && ap.cx <= p.x1 + 1e-6 && ap.cy >= p.y0 - 1e-6 && ap.cy <= p.y1 + 1e-6)
+                // Kupfer gehört zu genau diesem Pad (nicht eine große Massefläche unter mehreren Pastenpads)
+                .filter(|p| p.w >= 0.8 * ap.width && p.h >= 0.8 * ap.height && p.w <= 1.6 * ap.width + 0.3 && p.h <= 1.6 * ap.height + 0.3)
+                .max_by(|a, b| (a.w * a.h).total_cmp(&(b.w * b.h)));
+            ap.copper_ref = hit.cloned();
         }
     }
 
@@ -458,7 +491,8 @@ impl StencilEngine {
         for id in self.target_ids(target_id, all_identical) {
             let orig = self.original_apertures.get(id).cloned();
             let ap = &mut self.apertures[id];
-            ap.custom_slices = None;
+            // Ergänzte Kupfer-Öffnung: "Original" heißt hier keine Paste
+            ap.custom_slices = if ap.from_copper { Some(Vec::new()) } else { None };
             ap.is_manually_overridden = false;
             if let Some(o) = orig {
                 ap.width = o.width;
@@ -561,7 +595,10 @@ impl StencilEngine {
             }
             None => (base_rule, ap.width, ap.height),
         };
+        // Kupfer nur, wenn die Pin-Anpassung keine eigene Größe vorgibt
+        let sized = pkg.pad_overrides.get(&ap.pin_number).is_some_and(|o| o.contains_key("w") || o.contains_key("h"));
         let ctx = PadCtx {
+            copper: ap.copper_ref.as_ref().filter(|_| !sized).map(|p| (p.w, p.h, p.round)),
             mask: ap.pad_ref.as_ref().map(|p| (p.w, p.h)),
             round: ap.shape_type == "circle",
             pitch,
@@ -876,7 +913,9 @@ impl StencilEngine {
                 Some(ov) => (resolve_pin_rule(&eff, ov), ov.get("w").and_then(val_f64).unwrap_or(p.w), ov.get("h").and_then(val_f64).unwrap_or(p.h)),
                 None => (eff.clone(), p.w, p.h),
             };
+            let sized = pkg.pad_overrides.get(&p.pin).is_some_and(|o| o.contains_key("w") || o.contains_key("h"));
             let ctx = PadCtx {
+                copper: p.copper.filter(|_| !sized),
                 round: p.is_round(),
                 pitch: neighbor_pitch(&rel, i),
                 min_bridge: self.min_bridge_width,
@@ -947,10 +986,25 @@ impl StencilEngine {
         self.current_customer = data.get("customer").and_then(|v| v.as_str()).unwrap_or(customer).to_string();
         if let Some(pkgs) = data.get("packages").and_then(|v| v.as_object()) {
             for (name, rule) in pkgs {
-                if let (Some(pkg), Some(r)) = (self.packages.get_mut(name), rule.as_object()) {
+                if let (Some(pkg), Some(r)) = (self.packages.get_mut(&self.package_aliases.get(name).cloned().unwrap_or_else(|| name.clone())), rule.as_object()) {
                     pkg.rule.apply_map(r);
                 }
             }
+        }
+        if let Some(pins) = data.get("pin_overrides").and_then(|v| v.as_object()) {
+            for (name, ov) in pins {
+                let real = self.resolve_alias(name);
+                let (Some(pkg), Some(ov)) = (self.packages.get_mut(&real), ov.as_object()) else { continue };
+                pkg.pad_overrides.clear();
+                for (pin, m) in ov {
+                    if let (Ok(pin), Some(m)) = (pin.parse::<i64>(), m.as_object()) {
+                        pkg.pad_overrides.insert(pin, m.clone());
+                    }
+                }
+            }
+        }
+        if let Some(s) = data.get("pcbi_settings").and_then(|v| v.as_str()) {
+            self.pcbi_settings_xml = Some(s.to_string());
         }
         if let Some(groups) = data.get("groups").and_then(|v| v.as_object()) {
             for (g, rule) in groups {
@@ -979,19 +1033,36 @@ impl StencilEngine {
             return Err("Kundenname darf nicht leer sein".into());
         }
         let file = dir.join(format!("{name}.json"));
-        let packages: Map<String, Value> = self
-            .packages
-            .iter()
-            .filter(|(_, p)| p.category != "Other")
-            .map(|(n, p)| (n.clone(), p.rule.to_json()))
-            .collect();
-        let payload = json!({
+        // Vorhandene Einträge behalten: die Bibliothek enthält auch Packages anderer Jobs dieses Kunden
+        let old: Value = std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
+        let obj = |k: &str| old.get(k).and_then(|v| v.as_object()).cloned().unwrap_or_default();
+        let mut packages = obj("packages");
+        let mut pins = obj("pin_overrides");
+        let mut aliases = obj("aliases");
+        for (n, p) in self.packages.iter().filter(|(_, p)| p.category != "Other") {
+            packages.insert(n.clone(), p.rule.to_json());
+            if p.pad_overrides.is_empty() {
+                pins.remove(n);
+            } else {
+                pins.insert(n.clone(), p.overrides_json());
+            }
+        }
+        for (k, v) in &self.package_aliases {
+            aliases.insert(k.clone(), json!(v));
+        }
+        let mut payload = json!({
             "customer": customer,
-            "version": "1.1",
+            "version": "1.2",
             "packages": packages,
+            "pin_overrides": pins,
             "groups": self.group_rules,
-            "aliases": self.package_aliases,
+            "aliases": aliases,
         });
+        if let Some(s) = &self.pcbi_settings_xml {
+            payload["pcbi_settings"] = json!(s);
+        } else if let Some(s) = old.get("pcbi_settings") {
+            payload["pcbi_settings"] = s.clone();
+        }
         let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
         std::fs::write(&file, text).map_err(|e| format!("Fehler beim Schreiben von {}: {e}", file.display()))?;
         self.current_customer = customer.to_string();
@@ -1034,6 +1105,7 @@ impl StencilEngine {
         // Erste Board-Instanz je (Package, Pin): Pasten-Apertur (Position, Lage)
         let mut first: std::collections::HashMap<(String, i64), (f64, f64, bool)> = std::collections::HashMap::new();
         let mut instances: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut copper_first: std::collections::HashMap<(String, i64), (f64, f64, bool)> = std::collections::HashMap::new();
         let comp_rot: std::collections::HashMap<&str, f64> = self.components.iter().map(|c| (c.refdes.as_str(), c.rotation)).collect();
         let quarter = |rot: f64| ((rot.rem_euclid(180.0)) - 90.0).abs() < 1.0;
         for ap in &self.apertures {
@@ -1043,6 +1115,9 @@ impl StencilEngine {
                 Some(r) => quarter(*r),
                 None => self.packages.get(&pkg).and_then(|t| t.pads_relative.iter().find(|p| p.pin == ap.pin_number)).map_or(false, |tp| is_rotated_instance(tp.w, tp.h, ap.width, ap.height)),
             };
+            if let Some(c) = &ap.copper_ref {
+                copper_first.entry((pkg.clone(), ap.pin_number)).or_insert(if rotated { (c.h, c.w, c.round) } else { (c.w, c.h, c.round) });
+            }
             first.entry((pkg, ap.pin_number)).or_insert((ap.cx, ap.cy, rotated));
         }
         // Bauteile ohne Paste (THT-Stecker): Pinpositionen aus den ODB++ Toeprints
@@ -1083,7 +1158,13 @@ impl StencilEngine {
         for (name, per_pin) in updates {
             let has_instances = instances.get(&name).copied().unwrap_or(0) > 0;
             let Some(pkg) = self.packages.get_mut(&name) else { continue };
-            let mut any_drill = false;
+            for p in pkg.pads_relative.iter_mut() {
+                if let Some(&(w, h, round)) = copper_first.get(&(name.clone(), p.pin)) {
+                    p.copper = Some((r3(w), r3(h), round));
+                }
+            }
+            let mut drilled = 0usize;
+            let pin_total = per_pin.len().max(1);
             for (pin, mask, drill) in per_pin {
                 if let Some(p) = pkg.pads_relative.iter_mut().find(|p| p.pin == pin) {
                     if let Some((w, h, round)) = mask {
@@ -1093,14 +1174,17 @@ impl StencilEngine {
                     }
                     if let Some(d) = drill {
                         p.drill = Some(r3(d));
-                        any_drill = true;
+                        // Via-in-Pad (kleine Bohrung) ist kein Bauteilanschluss
+                        if d >= THT_MIN_DRILL {
+                            drilled += 1;
+                        }
                     }
                 }
             }
             let lname = name.to_lowercase();
             pkg.group = if lname.contains("fiducial") || lname.starts_with("fid") {
                 "Fiducial"
-            } else if any_drill {
+            } else if drilled * 2 >= pin_total && drilled > 0 {
                 "THT"
             } else if !has_instances && pkg.component_count == 0 {
                 "Library"
