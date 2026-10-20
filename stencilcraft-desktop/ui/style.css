@@ -1809,6 +1809,31 @@ body:not(.is-desktop) .desktop-only { display: none !important; }
 .rule-config-card.panel-collapsed { width: auto !important; }
 
 /* Regel-Einstellungen wahlweise als Seitenleiste neben der Vorschau */
+/* Fensterrolle: Übersicht (Board) zeigt Analyse, Bearbeitung (Generator) die Werkzeuge */
+body.ws-package .ov-only { display: none !important; }
+body:not(.ws-package) .ed-only { display: none !important; }
+.thickness-control input { width: 64px; min-width: 64px; padding: 3px 6px; text-align: right; font-family: var(--font-mono); }
+.thickness-control .unit { font-size: 0.75rem; color: var(--text-secondary); }
+
+/* Pad Inspector: Einzelpad-Werkzeuge einklappbar */
+.insp-edit { margin-top: 10px; border: 1px solid var(--border-color); border-radius: 8px; background: rgba(255, 255, 255, 0.02); }
+.insp-edit > summary { cursor: pointer; padding: 8px 12px; font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); list-style: none; }
+.insp-edit > summary::-webkit-details-marker { display: none; }
+.insp-edit > summary::before { content: "▸ "; }
+.insp-edit[open] > summary::before { content: "▾ "; }
+.insp-edit[open] > summary { border-bottom: 1px solid var(--border-color); color: var(--text-primary); }
+.insp-edit > .action-card { margin: 10px; }
+
+/* Bibliothek: Werkzeug-Menü */
+.lib-tools-row { margin-top: 6px; display: flex; }
+.lib-tools-row .dropdown { flex: 1; }
+.lib-tools-row #btnLibTools { width: 100%; justify-content: center; }
+.lib-tools-row .dropdown-menu { left: 0; right: 0; min-width: 0; }
+
+/* Package-Baum: Pins ein-/ausklappen */
+.pkg-pin-toggle { margin-left: 6px; width: 18px; height: 18px; line-height: 14px; padding: 0; border-radius: 4px; border: 1px solid var(--border-color); background: transparent; color: var(--text-secondary); font-weight: 700; cursor: pointer; flex-shrink: 0; }
+.pkg-pin-toggle:hover { color: var(--text-primary); border-color: var(--accent); }
+
 .rule-layout-select { font-size: 0.75rem; padding: 2px 6px; }
 .pkg-main-content.rules-right { flex-direction: row-reverse; }
 .pkg-main-content.rules-left { flex-direction: row; }

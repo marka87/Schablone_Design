@@ -63,7 +63,7 @@
 
             <div class="header-spacer"></div>
 
-            <div class="stats-pills">
+            <div class="stats-pills ov-only">
                 <div class="pill total" title="Gesamtzahl Pastenöffnungen">
                     <span class="pill-label">Pads</span>
                     <span id="statTotal" class="pill-val">0</span>
@@ -86,7 +86,7 @@
         </div>
 
         <div class="header-row header-tools">
-            <div class="ipc-control">
+            <div class="ipc-control ov-only">
                 <label for="ipcModeSelect">IPC</label>
                 <select id="ipcModeSelect">
                     <option value="standard">IPC-7525 Standard (AR ≥ 0.66, Asp ≥ 1.5)</option>
@@ -95,7 +95,7 @@
                 </select>
             </div>
 
-            <div class="ipc-control">
+            <div class="ipc-control ov-only">
                 <label for="selectPasteType">Paste</label>
                 <select id="selectPasteType" title="Solder Paste Type für 5-Ball-Regel">
                     <option value="type3">Typ 3 (45 µm)</option>
@@ -104,12 +104,22 @@
                 </select>
             </div>
 
-            <div class="squeegee-control">
+            <div class="squeegee-control ov-only">
                 <label for="squeegeeDir">Rakel</label>
                 <select id="squeegeeDir">
                     <option value="Y">Y (Vertikal)</option>
                     <option value="X">X (Horizontal)</option>
                 </select>
+            </div>
+
+            <div class="ipc-control thickness-control ov-only" title="Grund-Blechdicke der Schablone (Stufenzonen behalten ihre eigene Dicke)">
+                <label for="inputBaseThickness">Blech</label>
+                <input type="number" id="inputBaseThickness" list="thicknessPresets" min="50" max="300" step="5" value="120">
+                <span class="unit">µm</span>
+                <datalist id="thicknessPresets">
+                    <option value="80"></option><option value="100"></option><option value="110"></option><option value="120"></option>
+                    <option value="125"></option><option value="130"></option><option value="150"></option>
+                </datalist>
             </div>
 
             <div class="side-switch" id="sideSwitch" title="Bestückungsseite (TOP / BOT)">
@@ -119,24 +129,20 @@
 
             <div class="header-sep"></div>
 
-            <button id="btnCheckBridges" class="btn btn-sm btn-secondary" title="Schablonenstegbreite prüfen (Web Check)">
+            <button id="btnCheckBridges" class="btn btn-sm btn-secondary ov-only" title="Schablonenstegbreite prüfen (Web Check)">
                 <span id="bridgeWarnIcon" class="ico">🔬</span><span class="lbl">Stegprüfung</span> <span class="mono-small">(<span id="lblMinBridge">0.10</span> mm)</span>
                 <span id="badgeBridgeViolations" class="badge-count badge-danger hidden">0</span>
             </button>
 
-            <button id="btnHeaderAutoClassify" class="btn btn-sm btn-secondary" title="Automatische Bauteil-Erkennung & Vorbelegung aller Schablonenregeln">
-                <span class="ico">⚡</span><span class="lbl">Auto-Klassifizierung</span>
-            </button>
-
-            <button id="btnOpenPipModal" class="btn btn-sm btn-secondary highlight-btn" title="Pin-in-Paste / Through-Hole Reflow Berechnungsmodul">
+            <button id="btnOpenPipModal" class="btn btn-sm btn-secondary highlight-btn ed-only" title="Pin-in-Paste / Through-Hole Reflow Berechnungsmodul">
                 <span class="ico">🔌</span><span class="lbl">Pin-in-Paste</span>
             </button>
 
-            <button id="btnOpenCalculator" class="btn btn-sm btn-secondary highlight-btn" title="Auslösekalkulator für Schablonendicken">
+            <button id="btnOpenCalculator" class="btn btn-sm btn-secondary highlight-btn ed-only" title="Auslösekalkulator für Schablonendicken">
                 <span class="ico">📊</span><span class="lbl">Auslösekalkulator</span>
             </button>
 
-            <button id="btnNewZone" class="btn btn-sm btn-secondary" title="Stufenzone im Board aufziehen">
+            <button id="btnNewZone" class="btn btn-sm btn-secondary ov-only" title="Stufenzone im Board aufziehen">
                 <span class="ico">➕</span><span class="lbl">Zone</span>
             </button>
 
@@ -330,8 +336,8 @@
                                 <span>1.0+</span>
                             </div>
                             <div style="margin-top: 8px; display: flex; justify-content: space-between; align-items: center;">
-                                <button id="btnOpenInStencilGen" class="btn btn-xs btn-secondary" style="color: var(--accent);">
-                                    📦 Im Stencil Generator öffnen &rarr;
+                                <button id="btnOpenInStencilGen" class="btn btn-xs btn-primary" title="Package-Regel im Stencil Generator bearbeiten">
+                                    ✏️ Im Stencil Generator bearbeiten &rarr;
                                 </button>
                                 <button id="btnSendToCalc" class="btn btn-xs btn-ghost" style="color: var(--text-secondary);">
                                     📊 In Kalkulator
@@ -349,6 +355,9 @@
                             ⚠️ <strong id="grainAlertTitle">Pastenkorn-Warnung:</strong> <span id="grainAlertMsg">5-Ball-Regel verletzt!</span>
                         </div>
 
+                        <!-- Einzelpad-Werkzeuge: bewusst eingeklappt (Übersicht ≠ Bearbeitung) -->
+                        <details id="inspEditTools" class="insp-edit">
+                        <summary>✏️ Nur dieses Pad bearbeiten (Einzelwerkzeuge)</summary>
                         <!-- AKTION 1: LÄNGLICH & SCHMAL (PITCH-SCHUTZ) -->
                         <div class="action-card highlight-card">
                             <div class="card-badge">Praxis-Vorschlag</div>
@@ -438,6 +447,7 @@
                                 🔄 Auf Original zurücksetzen
                             </button>
                         </div>
+                        </details>
                     </div>
                 </div>
 
@@ -483,15 +493,17 @@
                         <button id="btnOpenNewLibModal" class="btn btn-xs btn-secondary" title="Neue Bibliothek anlegen">+ Neu</button>
                         <button id="btnSaveCurrentLib" class="btn btn-xs btn-primary" title="Bibliothek speichern">💾 Speichern</button>
                     </div>
-                    <div class="lib-pcbi-row desktop-only">
-                        <button id="btnPcbiImport" class="btn btn-xs btn-secondary" title="Kundenbibliothek aus PCB Investigator (ruleTreeFile_*.xml) übernehmen">⇩ PCB-I-Bibliothek</button>
-                        <button id="btnPcbiExport" class="btn btn-xs btn-secondary" title="Aktuelle Regeln als PCB-Investigator-Kundenbibliothek (XML) speichern">⇧ Export PCB-I</button>
-                        <button id="btnAddMissingPaste" class="btn btn-xs btn-secondary" title="Öffnungen für Bauteilpins ohne Kundenpaste aus dem Kupfer ergänzen (wie PCB Investigator)">＋ Fehlende Paste</button>
-                    </div>
-                    <div style="margin-top: 6px; display: flex; gap: 6px;">
-                        <button id="btnAutoClassify" class="btn btn-xs btn-primary" style="flex: 1; justify-content: center; background: linear-gradient(135deg, #2563eb, #3b82f6);" title="Automatische Bauteil-Erkennung & IPC-Regelzuweisung">
-                            <span>⚡</span> Auto-Klassifizierung
-                        </button>
+                    <div class="lib-tools-row">
+                        <div class="dropdown" id="libToolsMenu">
+                            <button id="btnLibTools" class="btn btn-xs btn-secondary" title="Werkzeuge für Bibliothek und Datensatz">🧰 Werkzeuge ▾</button>
+                            <div class="dropdown-menu hidden" id="libToolsList">
+                                <button id="btnAutoClassify" title="Automatische Bauteil-Erkennung & IPC-Regelzuweisung">⚡ Auto-Klassifizierung</button>
+                                <button id="btnAddMissingPaste" title="Öffnungen für Bauteilpins ohne Kundenpaste aus dem Kupfer ergänzen (wie PCB Investigator)">＋ Fehlende Paste aus Kupfer…</button>
+                                <div class="dropdown-sep desktop-only"></div>
+                                <button id="btnPcbiImport" class="desktop-only" title="Kundenbibliothek aus PCB Investigator (ruleTreeFile_*.xml) übernehmen">⇩ PCB-I-Bibliothek importieren…</button>
+                                <button id="btnPcbiExport" class="desktop-only" title="Aktuelle Regeln als PCB-Investigator-Kundenbibliothek (XML) speichern">⇧ Als PCB-I-Bibliothek exportieren…</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

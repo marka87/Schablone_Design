@@ -84,6 +84,23 @@ window.addEventListener("DOMContentLoaded", async () => {
         switchWorkspace("package");
     }
     setupProjectUI();
+    pkgState.pinsExpanded = localStorage.getItem("sc.pinsOpen") === "1";
+    // Einzelpad-Werkzeuge im Inspector: Auf-/Zu-Zustand merken
+    const editTools = document.getElementById("inspEditTools");
+    if (editTools) {
+        editTools.open = localStorage.getItem("sc.inspEdit") === "1";
+        editTools.addEventListener("toggle", () => localStorage.setItem("sc.inspEdit", editTools.open ? "1" : "0"));
+    }
+    // Grund-Blechdicke
+    document.getElementById("inputBaseThickness")?.addEventListener("change", async (e) => {
+        const um = parseFloat(e.target.value);
+        if (!(um >= 30 && um <= 500)) { updateThicknessInput(true); return; }
+        await fetch("/api/set_thickness", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ thickness: um / 1000 }) });
+        await refreshApertureData();
+        await refreshHistory();
+        if (typeof pkgInitialized !== "undefined" && pkgInitialized && pkgState.activePkgName) await refreshActivePackage();
+        showToast(`Grund-Blechdicke ${um} µm`, 1800);
+    });
     document.getElementById("selectRuleLayout")?.addEventListener("change", (e) => applyRuleLayout(e.target.value));
     applyRuleLayout(localStorage.getItem("sc.ruleLayout") || "top");
     await loadLayers();
@@ -343,10 +360,17 @@ async function refreshApertureData() {
     }
 }
 
+function updateThicknessInput(force = false) {
+    const el = document.getElementById("inputBaseThickness");
+    const t = state.stats?.base_thickness;
+    if (el && t && (force || document.activeElement !== el)) el.value = Math.round(t * 1000);
+}
+
 async function updateStats() {
     const res = await fetch("/api/stats");
     const data = await res.json();
     state.stats = data.stats;
+    updateThicknessInput();
 
     document.getElementById("statTotal").innerText = state.stats.total_apertures.toLocaleString();
     document.getElementById("statOk").innerText = state.stats.ok_count.toLocaleString();
@@ -2533,6 +2557,7 @@ if (btnOpenInStencilGen) {
 
 function switchWorkspace(mode, targetPkg = null, targetRot = 0) {
     currentWorkspaceMode = mode;
+    document.body.classList.toggle("ws-package", mode === "package");
     // Eine angefangene Messung gehört zum alten Koordinatensystem
     measureState.startPoint = null;
     measureState.currentPoint = null;
@@ -2844,6 +2869,7 @@ function renderPkgTreeItem(list, p) {
             <div class="pkg-item-main">
                 <span class="pkg-item-icon">${icon}</span>
                 <span class="pkg-item-name" title="${p.name}">${p.name}</span>${inherits ? "" : '<span class="own-rule-dot">●</span>'}
+                ${p.name === pkgState.activePkgName && pkgState.activePackageData?.pads?.length ? `<button class="pkg-pin-toggle" title="Pins ein-/ausklappen">${pkgState.pinsExpanded ? "−" : "+"}</button>` : ""}
             </div>
             <div class="pkg-item-badges">
                 ${p.pitch > 0 ? `<span class="pkg-badge-pitch">${p.pitch}mm</span>` : ''}
@@ -2854,12 +2880,18 @@ function renderPkgTreeItem(list, p) {
         item.addEventListener("click", () => {
             selectPackage(p.name);
         });
+        item.querySelector(".pkg-pin-toggle")?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            pkgState.pinsExpanded = !pkgState.pinsExpanded;
+            localStorage.setItem("sc.pinsOpen", pkgState.pinsExpanded ? "1" : "0");
+            renderPkgTree();
+        });
 
         list.appendChild(item);
 
         // Aktives Package: Pins als Unterknoten (wie PCB Investigator "1(0)", "2(1)")
         const data = pkgState.activePackageData;
-        if (p.name === pkgState.activePkgName && data && data.name === p.name && data.pads?.length) {
+        if (pkgState.pinsExpanded && p.name === pkgState.activePkgName && data && data.name === p.name && data.pads?.length) {
             const pins = document.createElement("div");
             pins.className = "pkg-pin-list";
             const ovs = data.pad_overrides || {};
@@ -3760,6 +3792,17 @@ function setupPkgEventListeners() {
         });
         const data = await res.json();
         alert(`Kunden-Bibliothek "${cust}" erfolgreich gespeichert!`);
+    });
+
+    // Werkzeug-Menü der Bibliothek
+    const libMenu = document.getElementById("libToolsList");
+    document.getElementById("btnLibTools")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        libMenu?.classList.toggle("hidden");
+    });
+    libMenu?.addEventListener("click", () => libMenu.classList.add("hidden"));
+    document.addEventListener("click", (e) => {
+        if (!e.target.closest?.("#libToolsMenu")) libMenu?.classList.add("hidden");
     });
 
     // PCB-Investigator-Kundenbibliothek (nur Desktop: Dateidialoge)
