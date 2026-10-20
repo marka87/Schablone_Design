@@ -192,6 +192,18 @@ impl StencilEngine {
         }
         self.load_customer_library(&self.current_customer.clone());
         self.annotate_packages();
+        if self.tombstone.auto_apply {
+            // je Seite anwenden (aktive Seite zuletzt wiederherstellen)
+            let active = self.current_side.clone();
+            for s in ["top", "bot"] {
+                if s != active && self.sides.contains_key(s) {
+                    self.switch_side(s);
+                    self.auto_apply_tombstone();
+                    self.switch_side(&active);
+                }
+            }
+            self.auto_apply_tombstone();
+        }
         // Quelle merken (Projektdatei), Verlauf beginnt neu
         if clear_previous {
             self.source_paths = paths.to_vec();
@@ -310,6 +322,8 @@ impl StencilEngine {
         let mut paste_layers: std::collections::HashMap<&'static str, String> = std::collections::HashMap::new();
         let mut side_masks: std::collections::HashMap<&'static str, Vec<PadBox>> = std::collections::HashMap::new();
         let mut side_copper: std::collections::HashMap<&'static str, Vec<PadBox>> = std::collections::HashMap::new();
+        let mut side_pours: std::collections::HashMap<&'static str, Vec<Vec<Pt>>> = std::collections::HashMap::new();
+        let mut side_traces: std::collections::HashMap<&'static str, Vec<[f64; 5]>> = std::collections::HashMap::new();
         let mut side_toeprints: std::collections::HashMap<&'static str, Vec<(String, Vec<(i64, f64, f64)>)>> = std::collections::HashMap::new();
 
         for ml in &matrix {
@@ -381,6 +395,16 @@ impl StencilEngine {
                         }
                     }
                 } else if (ltype == "mask" || ltype == "copper") && !coverlay && (lside == "top" || lside == "bot") && !name.contains("copy") {
+                    if ltype == "copper" {
+                        let key = if lside == "bot" { "bot" } else { "top" };
+                        side_pours.entry(key).or_default().extend(f.surfaces.iter().cloned());
+                        let tr = side_traces.entry(key).or_default();
+                        for p in &f.prims {
+                            if let Prim::Line { x1, y1, x2, y2, w } = p {
+                                tr.push([*x1, *y1, *x2, *y2, *w]);
+                            }
+                        }
+                    }
                     let target = if ltype == "mask" { &mut side_masks } else { &mut side_copper };
                     for p in &f.pads {
                         let (b, round) = match &p.geom {
@@ -493,6 +517,7 @@ impl StencilEngine {
             }
             self.correlate_apertures_with_pads();
             self.copper_pads = side_copper.get(s).cloned().unwrap_or_default();
+            self.set_copper_geometry(side_pours.remove(s).unwrap_or_default(), side_traces.remove(s).unwrap_or_default());
             if !self.copper_pads.is_empty() {
                 let cu = std::mem::take(&mut self.copper_pads);
                 self.correlate_apertures_with_copper(&cu);

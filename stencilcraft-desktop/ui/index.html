@@ -335,7 +335,7 @@
                 <div class="sidebar-tabs">
                     <button class="tab-btn active" data-tab="tabPad">Pad Inspector</button>
                     <button class="tab-btn" data-tab="tabZones">Stufenzonen (<span id="zonesCount">0</span>)</button>
-                    <button class="tab-btn" data-tab="tabCritical">Kritische Bauteile</button>
+                    <button class="tab-btn" data-tab="tabCritical">Kritische Bauteile <span id="tombTabBadge" class="tab-badge hidden">0</span></button>
                 </div>
 
                 <!-- TAB 1: PAD INSPECTOR -->
@@ -528,7 +528,40 @@
 
                 <!-- TAB 3: KRITISCHE BAUTEILE -->
                 <div id="tabCritical" class="tab-content">
+                    <!-- Grabstein-Risiko: Erkennung automatisch, Übernahme als Empfehlung (oder automatisch je Kunde) -->
                     <div class="section-title">
+                        <span>⚠️ Grabstein-Risiko (2-Pin-Chips)</span>
+                        <span id="tombCount" class="badge warn">0</span>
+                    </div>
+                    <p class="section-desc">Ein Pad hängt deutlich stärker am Kupfer (Fläche, breite Bahn, Vias) als das andere.
+                        Vorschlag als Bauteilregel: <strong id="tombRuleLabel">Haus, Spitze nach außen</strong>.</p>
+                    <div class="tomb-actions">
+                        <button id="btnTombApplyAll" class="btn btn-xs btn-primary">Alle übernehmen</button>
+                        <label title="Beim Laden eines Datensatzes offene Kandidaten automatisch als Bauteilregel übernehmen (wird in der Kundenbibliothek gespeichert)">
+                            <input type="checkbox" id="chkTombAuto"> automatisch beim Laden</label>
+                    </div>
+                    <div id="tombList" class="critical-list tomb-list"></div>
+                    <details class="tomb-settings">
+                        <summary>Einstellungen Grabstein-Schutz</summary>
+                        <div class="tomb-form">
+                            <label>Form<select id="tombShape">
+                                <option value="inverted_house_builder">Haus – Spitze nach außen</option>
+                                <option value="house_builder">Haus – Spitze zum Bauteil</option>
+                                <option value="simple_rect">Rechteck (nur verkleinern)</option>
+                            </select></label>
+                            <label>Haus-Schnitt (%)<input type="number" id="tombCut" step="5" min="5" max="60"></label>
+                            <label>Undersize (mm)<input type="number" id="tombUndersize" step="0.005" min="0" max="0.3"></label>
+                            <label>Eckradius (mm)<input type="number" id="tombRadius" step="0.005" min="0" max="0.3"></label>
+                            <label title="Kupferfläche ab dieser Größe gilt als Wärmesenke">Fläche ab (mm²)<input type="number" id="tombPour" step="0.5" min="0.1"></label>
+                            <label title="Verhältnis der Bahnbreiten (stark/schwach), ab dem ohne Fläche gewarnt wird">Bahn-Verhältnis ≥<input type="number" id="tombRatio" step="0.5" min="1.2"></label>
+                        </div>
+                        <div class="tomb-actions">
+                            <button id="btnTombSaveCfg" class="btn btn-xs btn-secondary">Übernehmen</button>
+                            <label><input type="checkbox" id="chkTombSaveLib" checked> in Kundenbibliothek speichern</label>
+                        </div>
+                    </details>
+
+                    <div class="section-title" style="margin-top:16px;">
                         <span>Top Problem-Packages (IPC Violations)</span>
                     </div>
                     <p class="section-desc">Klicken Sie auf ein Package, um direkt zu den betroffenen Stellen zu springen:</p>
@@ -631,8 +664,8 @@
                                 <option value="inherit">Inherit – Regel der Gruppe übernehmen</option>
                                 <option value="package_group">Handle Stencil Creation by Package Group</option>
                                 <option value="simple_rect">Simple Rectangle Surface</option>
-                                <option value="house_builder">HouseBuilder</option>
-                                <option value="inverted_house_builder">InvertedHouseBuilder</option>
+                                <option value="house_builder">Haus – Spitze zum Bauteil (HouseBuilder)</option>
+                                <option value="inverted_house_builder">Haus – Spitze nach außen (Inverted)</option>
                                 <option value="elongated_pitch">Länglich & Schmal (Pitch-Schutz)</option>
                                 <option value="array_slicing">Array Pads (Thermal Slicing)</option>
                                 <option value="donut">Donut Creation</option>
@@ -849,8 +882,8 @@
                                     <option value="manual">Manuell (feste Öffnung)</option>
                                     <option value="package_group">Package-Gruppe</option>
                                     <option value="simple_rect">Simple Rect</option>
-                                    <option value="house_builder">HouseBuilder</option>
-                                    <option value="inverted_house_builder">InvertedHouse</option>
+                                    <option value="house_builder">Haus – Spitze zum Bauteil (HouseBuilder)</option>
+                                    <option value="inverted_house_builder">Haus – Spitze nach außen</option>
                                     <option value="elongated_pitch">Länglich & Schmal</option>
                                     <option value="array_slicing">Array Slicing</option>
                                     <option value="donut">Donut</option>

@@ -389,6 +389,17 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             e.reset_aperture_modification(b.i("id", -1), b.b("apply_all", false));
             ok(json!({"status": "ok", "stats": stats(e)}))
         }
+        // Grabstein-Risiko (2-Pin-Chips mit ungleicher Kupferanbindung)
+        ("GET", ["api", "tombstone"]) => ok(e.tombstone_json()),
+        ("POST", ["api", "tombstone", "apply"]) => {
+            let comps: Vec<String> = body.get("components").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+            let n = e.apply_tombstone(&comps);
+            ok(json!({"status": "ok", "applied": n, "tombstone": e.tombstone_json(), "stats": stats(e)}))
+        }
+        ("POST", ["api", "tombstone", "config"]) => {
+            e.tombstone.apply_map(body);
+            ok(json!({"status": "ok", "tombstone": e.tombstone_json()}))
+        }
         // IPC-Klassenprofile
         ("GET", ["api", "ipc", "profiles"]) => ok(e.ipc_profiles_json()),
         ("POST", ["api", "ipc", "class"]) => {

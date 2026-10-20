@@ -17,6 +17,7 @@ pub mod project;
 pub mod report;
 pub mod rules;
 pub mod rulesets;
+pub mod tombstone;
 pub mod types;
 
 use geometry::circle_pts;
@@ -51,6 +52,10 @@ pub struct StencilEngine {
     pub pads: Vec<PadBox>,
     /// Kupferpads der Außenlage der aktiven Seite (ODB++)
     pub copper_pads: Vec<PadBox>,
+    /// Große Kupferflächen und Leiterbahnen [x1, y1, x2, y2, Breite] der Außenlage (Grabstein-Prüfung)
+    pub copper_pours: Vec<Vec<Pt>>,
+    pub copper_traces: Vec<[f64; 5]>,
+    pub tombstone: tombstone::TombstoneConfig,
     pub components: Vec<ComponentItem>,
     pub packages: BTreeMap<String, PackageTemplate>,
     pub package_aliases: BTreeMap<String, String>,
@@ -99,6 +104,8 @@ pub struct SideData {
     pub zones: Vec<StencilZone>,
     pub pads: Vec<PadBox>,
     pub copper_pads: Vec<PadBox>,
+    pub copper_pours: Vec<Vec<Pt>>,
+    pub copper_traces: Vec<[f64; 5]>,
     pub odb_toeprints: Vec<(String, Vec<(i64, f64, f64)>)>,
     pub bridge_violations: Vec<BridgeViolation>,
     pub base_thickness: f64,
@@ -157,6 +164,9 @@ impl StencilEngine {
             apertures: Vec::new(),
             pads: Vec::new(),
             copper_pads: Vec::new(),
+            copper_pours: Vec::new(),
+            copper_traces: Vec::new(),
+            tombstone: tombstone::TombstoneConfig::default(),
             components: Vec::new(),
             packages: BTreeMap::new(),
             package_aliases: BTreeMap::new(),
@@ -205,6 +215,8 @@ impl StencilEngine {
             zones: std::mem::take(&mut self.zones),
             pads: std::mem::take(&mut self.pads),
             copper_pads: std::mem::take(&mut self.copper_pads),
+            copper_pours: std::mem::take(&mut self.copper_pours),
+            copper_traces: std::mem::take(&mut self.copper_traces),
             odb_toeprints: std::mem::take(&mut self.odb_toeprints),
             bridge_violations: std::mem::take(&mut self.bridge_violations),
             base_thickness: self.base_thickness,
@@ -217,6 +229,8 @@ impl StencilEngine {
         self.zones = d.zones;
         self.pads = d.pads;
         self.copper_pads = d.copper_pads;
+        self.copper_pours = d.copper_pours;
+        self.copper_traces = d.copper_traces;
         self.odb_toeprints = d.odb_toeprints;
         self.bridge_violations = d.bridge_violations;
         if d.base_thickness > 0.0 {
@@ -377,6 +391,8 @@ impl StencilEngine {
         self.odb_toeprints.clear();
         self.drills.clear();
         self.copper_pads.clear();
+        self.copper_pours.clear();
+        self.copper_traces.clear();
         self.source_paths.clear();
         self.project_path = None;
         self.dirty = false;
@@ -1039,6 +1055,9 @@ impl StencilEngine {
         if let Some(ipc) = data.get("ipc") {
             self.load_ipc_from_library(ipc);
         }
+        if let Some(t) = data.get("tombstone").and_then(|v| v.as_object()) {
+            self.tombstone.apply_map(t);
+        }
         if let Some(s) = data.get("pcbi_settings").and_then(|v| v.as_str()) {
             self.pcbi_settings_xml = Some(s.to_string());
         }
@@ -1095,6 +1114,7 @@ impl StencilEngine {
             "aliases": aliases,
         });
         payload["ipc"] = self.ipc_library_json();
+        payload["tombstone"] = json!(self.tombstone);
         if let Some(s) = &self.pcbi_settings_xml {
             payload["pcbi_settings"] = json!(s);
         } else if let Some(s) = old.get("pcbi_settings") {

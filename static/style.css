@@ -1854,6 +1854,23 @@ body:not(.is-desktop) .desktop-only { display: none !important; }
 .ipc-profile-table .hint { display: block; font-size: 0.68rem; color: var(--text-muted); font-weight: 400; }
 .ipc-save-lib { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm, 0.8rem); color: var(--text-secondary); }
 
+/* Grabstein-Risiko */
+.tab-badge { display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 4px; border-radius: 8px; background: var(--color-warn, #f59e0b); color: #111; font-size: 0.68rem; font-weight: 700; line-height: 16px; }
+.tomb-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0; font-size: var(--fs-sm, 0.8rem); color: var(--text-secondary); }
+.tomb-list .tomb-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--surface-2, #1c212d); margin-bottom: 6px; }
+.tomb-row .t-head { font-weight: 700; }
+.tomb-row .t-head .pkg { color: var(--text-secondary); font-weight: 500; margin-left: 6px; font-family: var(--font-mono); font-size: 0.75rem; }
+.tomb-row .t-reason { grid-column: 1 / -1; font-size: 0.75rem; color: var(--text-secondary); }
+.tomb-row .t-btns { display: flex; gap: 4px; align-items: start; }
+.tomb-row.done { opacity: 0.7; border-style: dashed; }
+.tomb-row .ok-tag { color: #34d399; font-size: 0.75rem; font-weight: 700; }
+.tomb-settings { margin-top: 6px; border: 1px solid var(--border-color); border-radius: 8px; }
+.tomb-settings > summary { cursor: pointer; padding: 6px 10px; font-size: var(--fs-sm, 0.8rem); color: var(--text-secondary); }
+.tomb-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; padding: 6px 10px; }
+.tomb-form label { display: flex; flex-direction: column; gap: 2px; font-size: 0.72rem; color: var(--text-secondary); }
+.tomb-form input, .tomb-form select { width: 100%; padding: 3px 6px; }
+.tomb-settings .tomb-actions { padding: 0 10px 8px; }
+
 /* Fensterrolle: Übersicht (Board) zeigt Analyse, Bearbeitung (Generator) die Werkzeuge */
 body.ws-package .ov-only { display: none !important; }
 body:not(.ws-package) .ed-only { display: none !important; }

@@ -232,6 +232,8 @@ impl StencilEngine {
                 self.original_apertures = d.original_apertures;
                 self.pads = d.pads;
                 self.copper_pads = d.copper_pads;
+                self.copper_pours = d.copper_pours;
+                self.copper_traces = d.copper_traces;
                 self.odb_toeprints = d.odb_toeprints;
             }
             self.apply_side_visibility();
@@ -569,6 +571,8 @@ pub fn edit_label(method: &str, seg: &[&str], body: &Map<String, Value>) -> Opti
         ("POST", ["api", "zone"]) => "Zone anlegen".into(),
         ("POST", ["api", "zone", "around_component"]) => "Stufenzone um Bauteil".into(),
         ("POST", ["api", "ipc", "class"]) => "IPC-Klasse".into(),
+        ("POST", ["api", "tombstone", "apply"]) => "Grabstein-Schutz übernommen".into(),
+        ("POST", ["api", "tombstone", "config"]) => "Grabstein-Einstellungen".into(),
         ("POST", ["api", "ipc", "profile", c]) => format!("IPC-Profil Klasse {c}"),
         ("POST", ["api", "ipc", "profiles", "reset"]) => "IPC-Profile zurücksetzen".into(),
         ("PUT" | "POST", ["api", "zone", z]) => format!("Zone {z} ändern"),

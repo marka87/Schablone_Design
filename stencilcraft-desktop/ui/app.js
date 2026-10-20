@@ -2169,6 +2169,9 @@ function setupEventListeners() {
         await refreshHistory();
     });
     document.getElementById("btnIpcProfiles")?.addEventListener("click", openIpcProfiles);
+    document.getElementById("btnTombApplyAll")?.addEventListener("click", () => applyTombstone([]));
+    document.getElementById("btnTombSaveCfg")?.addEventListener("click", () => saveTombstoneConfig());
+    document.getElementById("chkTombAuto")?.addEventListener("change", () => saveTombstoneConfig());
     document.getElementById("btnIpcCancel")?.addEventListener("click", () => document.getElementById("ipcProfileModal").classList.add("hidden"));
     document.getElementById("btnIpcReset")?.addEventListener("click", async () => {
         const d = await (await fetch("/api/ipc/profiles/reset", { method: "POST" })).json();
@@ -2719,7 +2722,92 @@ function renderZonesList() {
     }
 }
 
+// Grabstein-Risiko: Liste, Übernehmen, Einstellungen
+const TOMB_SHAPES = { inverted_house_builder: "Haus, Spitze nach außen", house_builder: "Haus, Spitze zum Bauteil", simple_rect: "Rechteck (verkleinert)" };
+let tombState = null;
+
+async function refreshTombstones() {
+    try {
+        tombState = await (await fetch("/api/tombstone")).json();
+    } catch (e) { return; }
+    renderTombstones();
+}
+
+function renderTombstones() {
+    const d = tombState;
+    if (!d) return;
+    const badge = document.getElementById("tombTabBadge");
+    if (badge) { badge.textContent = d.open; badge.classList.toggle("hidden", !d.open); }
+    document.getElementById("tombCount").textContent = `${d.open} offen / ${d.candidates.length}`;
+    document.getElementById("tombRuleLabel").textContent = TOMB_SHAPES[d.config.rule.rule_type] || d.config.rule.rule_type;
+    document.getElementById("chkTombAuto").checked = d.config.auto_apply;
+    const c = d.config;
+    const setv = (id, v) => { const el = document.getElementById(id); if (el && document.activeElement !== el) el.value = v; };
+    setv("tombShape", c.rule.rule_type); setv("tombCut", c.rule.house_cut_pct); setv("tombUndersize", c.rule.undersize_w);
+    setv("tombRadius", c.rule.corner_radius); setv("tombPour", c.min_pour_area); setv("tombRatio", c.trace_ratio);
+    const list = document.getElementById("tombList");
+    list.innerHTML = "";
+    if (!d.candidates.length) {
+        list.innerHTML = `<p class="empty-state" style="padding:8px">${d.copper_data ? "Keine 2-Pin-Chips mit ungleicher Kupferanbindung gefunden." : "Keine Kupferdaten (nur bei ODB++ mit Außenlagen verfügbar)."}</p>`;
+        return;
+    }
+    for (const t of d.candidates) {
+        const row = document.createElement("div");
+        row.className = `tomb-row ${t.has_rule ? "done" : ""}`;
+        const pinInfo = t.pins.map(p => `Pin ${p.pin}: ${p.pour_area > 0 ? `Fläche ${p.pour_area.toFixed(1)} mm²` : `${p.traces} Bahn(en) ${p.trace_w.toFixed(2)} mm${p.vias ? `, ${p.vias} Via` : ""}`}${p.pin === t.weak_pin ? " ← schwach" : ""}`).join(" · ");
+        row.innerHTML = `<div class="t-head">${escapeHtml(t.component)}<span class="pkg">${escapeHtml(t.package)}</span></div>
+            <div class="t-btns"><button class="btn btn-xs btn-ghost" data-act="show" title="Auf dem Board zeigen">🔍</button>
+            ${t.has_rule ? '<span class="ok-tag">✓ Regel</span>' : '<button class="btn btn-xs btn-secondary" data-act="apply">Übernehmen</button>'}</div>
+            <div class="t-reason">${escapeHtml(t.reason)}<br>${escapeHtml(pinInfo)}</div>`;
+        row.querySelector('[data-act="show"]').addEventListener("click", async () => {
+            const rect = container.getBoundingClientRect();
+            state.zoom = Math.max(state.zoom, 40);
+            state.panX = rect.width / 2 - t.x * state.zoom;
+            state.panY = rect.height / 2 - t.y * state.zoom;
+            await selectAperture(t.pins[0].id);
+            render();
+        });
+        row.querySelector('[data-act="apply"]')?.addEventListener("click", () => applyTombstone([t.component]));
+        list.appendChild(row);
+    }
+}
+
+async function applyTombstone(components) {
+    const res = await fetch("/api/tombstone/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ components }) });
+    const d = await res.json();
+    tombState = d.tombstone;
+    renderTombstones();
+    await refreshApertureData();
+    await refreshHistory();
+    showToast(`Grabstein-Schutz für ${d.applied} Bauteil(e) als Bauteilregel übernommen (Strg+Z rückgängig)`);
+}
+
+async function saveTombstoneConfig(extra = {}) {
+    const num = (id) => parseFloat(document.getElementById(id).value);
+    const cfg = {
+        auto_apply: document.getElementById("chkTombAuto").checked,
+        min_pour_area: num("tombPour"), trace_ratio: num("tombRatio"),
+        rule: {
+            rule_type: document.getElementById("tombShape").value,
+            name: `Grabstein-Schutz (${TOMB_SHAPES[document.getElementById("tombShape").value]})`,
+            house_cut_pct: num("tombCut"), undersize_w: num("tombUndersize"), undersize_h: num("tombUndersize"), corner_radius: num("tombRadius"),
+        },
+        ...extra,
+    };
+    const d = await (await fetch("/api/tombstone/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cfg) })).json();
+    tombState = d.tombstone;
+    renderTombstones();
+    if (document.getElementById("chkTombSaveLib").checked) {
+        const cust = (await (await fetch("/api/libraries")).json()).current_customer || "Standard";
+        await fetch("/api/library/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customer: cust }) });
+        showToast(`Grabstein-Einstellungen in „${cust}“ gespeichert`);
+    } else {
+        showToast("Grabstein-Einstellungen übernommen");
+    }
+}
+
 function renderCriticalList() {
+    refreshTombstones();
     const list = document.getElementById("criticalList");
     list.innerHTML = "";
 
@@ -3271,7 +3359,7 @@ const RULE_DESCRIPTIONS = {
     package_group: "Wählt die Öffnung je Pad automatisch: BGA-Pads 1:1, große Flächen als Array-Felder (Mindestfeldgröße, Feldabstand, Flächennutzung), 2-Pin-Chips als HouseBuilder (kleine als Inverted House), sonst Rechteck mit Undersize und Eckradius.",
     simple_rect: "Create one surface with fix size and offset away from the center. Optional mit Stegen (Bridge Count) und fester Größe.",
     house_builder: "Hausform: Spitze zum Bauteilkörper, verhindert Tombstoning und Lotperlen bei Chip-Bauteilen.",
-    inverted_house_builder: "Umgekehrte Hausform: Kerbe zur Bauteilaußenseite.",
+    inverted_house_builder: "Hausform mit Spitze nach außen (weg vom Bauteilkörper) – z. B. Grabstein-Schutz bei ungleicher Kupferanbindung.",
     elongated_pitch: "Länglich & Schmal: verschmälert quer zum Pitch (Pastenabstand = Faktor × Öffnungsbreite), verlängert im Verhältnis zur Verschmälerung und versetzt die Öffnung nach außen.",
     array_slicing: "Teilt die Fläche in Felder mit Stegen (Bridge Count / Width), optional 45° gedreht.",
     donut: "Ringöffnung um die Bohrung (THT / Pin-in-Paste), segmentiert mit Haltestegen (Bridge Width).",
