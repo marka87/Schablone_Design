@@ -421,7 +421,7 @@
 
                         <!-- Einzelpad-Werkzeuge: bewusst eingeklappt (Übersicht ≠ Bearbeitung) -->
                         <details id="inspEditTools" class="insp-edit">
-                        <summary><i class="ic ic-edit"></i> Nur dieses Pad bearbeiten (Einzelwerkzeuge)</summary>
+                        <summary><i class="ic ic-edit"></i> Dieses Pad bearbeiten: Länglich &amp; Schmal · Thermal-Pad Slicing · Flächenreduktion</summary>
                         <!-- AKTION 1: LÄNGLICH & SCHMAL (PITCH-SCHUTZ) -->
                         <div class="action-card highlight-card">
                             <div class="card-badge">Praxis-Vorschlag</div>
@@ -667,7 +667,7 @@
                                 <option value="house_builder">Haus – Spitze zum Bauteil (HouseBuilder)</option>
                                 <option value="inverted_house_builder">Haus – Spitze nach außen (Inverted)</option>
                                 <option value="elongated_pitch">Länglich & Schmal (Pitch-Schutz)</option>
-                                <option value="array_slicing">Array Pads (Thermal Slicing)</option>
+                                <option value="array_slicing">Thermal-Pad Slicing (Fensterung, Stege)</option>
                                 <option value="donut">Donut Creation</option>
                                 <option value="pin_in_paste">Pin-in-Paste (THT, automatisch)</option>
                                 <option value="take_existing">Take Existing Paste Elements</option>
@@ -885,7 +885,7 @@
                                     <option value="house_builder">Haus – Spitze zum Bauteil (HouseBuilder)</option>
                                     <option value="inverted_house_builder">Haus – Spitze nach außen</option>
                                     <option value="elongated_pitch">Länglich & Schmal</option>
-                                    <option value="array_slicing">Array Slicing</option>
+                                    <option value="array_slicing">Thermal-Pad Slicing (Fensterung)</option>
                                     <option value="donut">Donut</option>
                                     <option value="take_existing">Original übernehmen</option>
                                     <option value="ignore">Ignore</option>
@@ -893,6 +893,16 @@
                                 <input type="number" id="inputPadCustomW" placeholder="B (mm)" step="0.05" style="width: 70px;">
                                 <input type="number" id="inputPadCustomH" placeholder="H (mm)" step="0.05" style="width: 70px;">
                                 <input type="number" id="inputPadCustomUndersize" class="pin-rule-only" placeholder="Red. (mm)" step="0.005" style="width: 75px;" title="Undersize (mm)">
+                                <select id="pinSliceGrid" class="pin-slice-only hidden" title="Fensterung (Spalten × Zeilen, wie angezeigt)">
+                                    <option value="1x2">1 × 2</option>
+                                    <option value="2x1">2 × 1</option>
+                                    <option value="2x2" selected>2 × 2</option>
+                                    <option value="3x2">3 × 2</option>
+                                    <option value="2x3">2 × 3</option>
+                                    <option value="3x3">3 × 3</option>
+                                    <option value="4x4">4 × 4</option>
+                                </select>
+                                <input type="number" id="pinSliceWeb" class="pin-slice-only hidden" placeholder="Steg" step="0.05" min="0.08" value="0.25" style="width: 64px;" title="Stegbreite zwischen den Fenstern (mm)">
                                 <input type="number" id="inputPadOffX" class="pin-manual-only hidden" placeholder="dX" step="0.01" style="width: 64px;" title="Versatz nach rechts (mm, wie angezeigt) – Pfeiltasten ←/→">
                                 <input type="number" id="inputPadOffY" class="pin-manual-only hidden" placeholder="dY" step="0.01" style="width: 64px;" title="Versatz nach oben (mm, wie angezeigt) – Pfeiltasten ↑/↓"> 
                                 <button id="btnSavePadOverride" class="btn btn-xs btn-primary">Anpassen</button>

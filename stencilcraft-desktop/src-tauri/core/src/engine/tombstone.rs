@@ -154,6 +154,7 @@ impl StencilEngine {
                 "weak_pin": aps[weak].pin_number,
                 "pins": aps.iter().zip(l.iter()).map(|(a, k)| json!({
                     "pin": a.pin_number, "id": a.id, "pour_area": r3(k.pour_area), "trace_w": r3(k.trace_w), "traces": k.traces, "vias": k.vias,
+                    "shape": a.custom_slices.as_ref().and_then(|s| s.first()).and_then(|s| s.kind.clone()).unwrap_or_else(|| "original".into()),
                 })).collect::<Vec<_>>(),
                 "has_rule": self.component_rules.contains_key(comp),
             }));
@@ -186,6 +187,20 @@ impl StencilEngine {
         }
         self.regenerate_ids(&ids);
         targets.len()
+    }
+
+    /// Nimmt die Bauteilregel wieder zurück; die Öffnungen folgen wieder der Package-Regel.
+    pub fn revert_tombstone(&mut self, components: &[String]) -> usize {
+        let mut ids = Vec::new();
+        let mut n = 0;
+        for c in components {
+            if self.component_rules.remove(c).is_some() {
+                n += 1;
+            }
+            ids.extend(self.apertures.iter().filter(|a| &a.component_id == c).map(|a| a.id));
+        }
+        self.regenerate_ids(&ids);
+        n
     }
 
     /// Beim Laden: bei eingeschalteter Automatik offene Kandidaten übernehmen.

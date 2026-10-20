@@ -572,6 +572,7 @@ pub fn edit_label(method: &str, seg: &[&str], body: &Map<String, Value>) -> Opti
         ("POST", ["api", "zone", "around_component"]) => "Stufenzone um Bauteil".into(),
         ("POST", ["api", "ipc", "class"]) => "IPC-Klasse".into(),
         ("POST", ["api", "tombstone", "apply"]) => "Grabstein-Schutz übernommen".into(),
+        ("POST", ["api", "tombstone", "revert"]) => "Grabstein-Schutz entfernt".into(),
         ("POST", ["api", "tombstone", "config"]) => "Grabstein-Einstellungen".into(),
         ("POST", ["api", "ipc", "profile", c]) => format!("IPC-Profil Klasse {c}"),
         ("POST", ["api", "ipc", "profiles", "reset"]) => "IPC-Profile zurücksetzen".into(),

@@ -2244,3 +2244,11 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: none; outli
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(121, 121, 121, 0.4); }
 ::-webkit-scrollbar-thumb:hover { background: rgba(100, 100, 100, 0.7); }
+
+/* Grabstein-Liste: Zeilen anklickbar */
+.tomb-list .tomb-row { cursor: pointer; }
+.tomb-list .tomb-row:hover { background: var(--bg-hover); }
+.tomb-list .tomb-row.focused { outline: 1px solid var(--accent); outline-offset: -1px; background: var(--list-active); }
+.tomb-row .t-shape { grid-column: 1 / -1; font-size: 0.75rem; color: var(--text-secondary); }
+.tomb-row .t-shape strong { color: var(--text-primary); }
+.tomb-row .ok-tag { display: inline-flex; align-items: center; gap: 3px; }

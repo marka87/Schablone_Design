@@ -930,6 +930,7 @@ function renderFrame(rect) {
     if (state.selectedAperture) {
         renderSelectionHighlight();
     }
+    renderFocusComponent();
 
     // 9b. DFM Bridge Violations Overlay (Kollisionswarnung für Laserschnitt)
     renderBridgeViolations();
@@ -2753,33 +2754,100 @@ function renderTombstones() {
     }
     for (const t of d.candidates) {
         const row = document.createElement("div");
-        row.className = `tomb-row ${t.has_rule ? "done" : ""}`;
-        const pinInfo = t.pins.map(p => `Pin ${p.pin}: ${p.pour_area > 0 ? `Fläche ${p.pour_area.toFixed(1)} mm²` : `${p.traces} Bahn(en) ${p.trace_w.toFixed(2)} mm${p.vias ? `, ${p.vias} Via` : ""}`}${p.pin === t.weak_pin ? " ← schwach" : ""}`).join(" · ");
+        row.className = `tomb-row ${t.has_rule ? "done" : ""} ${state.focusComp === t.component ? "focused" : ""}`;
+        row.title = "Anklicken: auf dem Board zeigen";
+        const pinInfo = t.pins.map(p => `Pin ${p.pin}${p.pin === t.weak_pin ? " (schwach)" : ""}: ${p.pour_area > 0 ? `Fläche ${p.pour_area.toFixed(1)} mm²` : `${p.traces} Bahn(en) ${p.trace_w.toFixed(2)} mm${p.vias ? `, ${p.vias} Via` : ""}`}`).join(" · ");
+        const shapes = [...new Set(t.pins.map(p => shapeLabel(p.shape)))].join(" / ");
         row.innerHTML = `<div class="t-head">${escapeHtml(t.component)}<span class="pkg">${escapeHtml(t.package)}</span></div>
-            <div class="t-btns"><button class="btn btn-xs btn-ghost" data-act="show" title="Auf dem Board zeigen"></button>
-            ${t.has_rule ? '<span class="ok-tag">✓ Regel</span>' : '<button class="btn btn-xs btn-secondary" data-act="apply">Übernehmen</button>'}</div>
-            <div class="t-reason">${escapeHtml(t.reason)}<br>${escapeHtml(pinInfo)}</div>`;
-        row.querySelector('[data-act="show"]').addEventListener("click", async () => {
-            const rect = container.getBoundingClientRect();
-            state.zoom = Math.max(state.zoom, 40);
-            state.panX = rect.width / 2 - t.x * state.zoom;
-            state.panY = rect.height / 2 - t.y * state.zoom;
-            await selectAperture(t.pins[0].id);
-            render();
-        });
-        row.querySelector('[data-act="apply"]')?.addEventListener("click", () => applyTombstone([t.component]));
+            <div class="t-btns">
+                ${t.has_rule
+                    ? `<span class="ok-tag">${icon("check")} Regel aktiv</span><button class="btn btn-xs btn-ghost" data-act="revert" title="Bauteilregel entfernen – Öffnungen wieder wie das Package">Rückgängig</button>`
+                    : '<button class="btn btn-xs btn-secondary" data-act="apply">Übernehmen</button>'}
+            </div>
+            <div class="t-reason">${escapeHtml(t.reason)}<br>${escapeHtml(pinInfo)}</div>
+            <div class="t-shape">Öffnung: <strong>${escapeHtml(shapes)}</strong></div>`;
+        row.addEventListener("click", () => focusComponent(t));
+        row.querySelector('[data-act="apply"]')?.addEventListener("click", (e) => { e.stopPropagation(); applyTombstone([t.component], t); });
+        row.querySelector('[data-act="revert"]')?.addEventListener("click", (e) => { e.stopPropagation(); revertTombstone([t.component], t); });
         list.appendChild(row);
     }
 }
 
-async function applyTombstone(components) {
+// Lesbare Bezeichnung der erzeugten Öffnungsform
+function shapeLabel(kind) {
+    const k = String(kind || "original");
+    if (k.includes("inverted_house")) return "Haus, Spitze nach außen";
+    if (k.includes("house")) return "Haus, Spitze zum Bauteil";
+    if (k.includes("simple_rect") || k.includes("package_group_rect")) return "Rechteck";
+    if (k.includes("bga")) return "Rund";
+    if (k === "original") return "Original (Kunde)";
+    return k.replace(/_/g, " ");
+}
+
+// Bauteil auf dem Board zeigen und mit Rahmen hervorheben
+async function focusComponent(t) {
+    state.focusComp = t.component;
+    const rect = container.getBoundingClientRect();
+    state.zoom = Math.max(state.zoom, 60);
+    state.panX = rect.width / 2 - t.x * state.zoom;
+    state.panY = rect.height / 2 - t.y * state.zoom;
+    await selectAperture(t.pins[0].id);
+    renderTombstones();
+    render();
+}
+
+async function applyTombstone(components, focus = null) {
     const res = await fetch("/api/tombstone/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ components }) });
     const d = await res.json();
     tombState = d.tombstone;
-    renderTombstones();
     await refreshApertureData();
     await refreshHistory();
-    showToast(`Grabstein-Schutz für ${d.applied} Bauteil(e) als Bauteilregel übernommen (Strg+Z rückgängig)`);
+    if (focus) {
+        const t = tombState.candidates.find(c => c.component === focus.component) || focus;
+        await focusComponent(t);
+        showToast(`${t.component}: Öffnungen jetzt „${shapeLabel(t.pins[0].shape)}“ (Rückgängig in der Liste oder Strg+Z)`);
+    } else {
+        renderTombstones();
+        showToast(`Grabstein-Schutz für ${d.applied} Bauteil(e) übernommen (Strg+Z rückgängig)`);
+    }
+}
+
+async function revertTombstone(components, focus = null) {
+    const d = await (await fetch("/api/tombstone/revert", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ components }) })).json();
+    tombState = d.tombstone;
+    await refreshApertureData();
+    await refreshHistory();
+    if (focus) {
+        const t = tombState.candidates.find(c => c.component === focus.component) || focus;
+        await focusComponent(t);
+        showToast(`${t.component}: Bauteilregel entfernt, Öffnungen wieder „${shapeLabel(t.pins[0].shape)}“`);
+    } else {
+        renderTombstones();
+    }
+}
+
+// Rahmen um das in der Grabstein-Liste gewählte Bauteil
+function renderFocusComponent() {
+    if (!state.focusComp) return;
+    const aps = (state.apertures || []).filter(a => a.comp_id === state.focusComp);
+    if (!aps.length) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const a of aps) {
+        x0 = Math.min(x0, a.cx - a.w / 2); x1 = Math.max(x1, a.cx + a.w / 2);
+        y0 = Math.min(y0, a.cy - a.h / 2); y1 = Math.max(y1, a.cy + a.h / 2);
+    }
+    const m = 0.15;
+    const p0 = worldToScreen(x0 - m, y1 + m), p1 = worldToScreen(x1 + m, y0 - m);
+    ctx.save();
+    ctx.strokeStyle = "#0078d4";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#0078d4";
+    ctx.font = "600 12px Segoe UI, sans-serif";
+    ctx.fillText(state.focusComp, p0.x, p0.y - 5);
+    ctx.restore();
 }
 
 async function saveTombstoneConfig(extra = {}) {
@@ -3833,7 +3901,9 @@ const r4js = (v) => Math.round(v * 10000) / 10000;
 
 function updatePinBarMode() {
     const manual = document.getElementById("selectPinRule")?.value === "manual";
+    const slicing = document.getElementById("selectPinRule")?.value === "array_slicing";
     document.querySelectorAll(".pin-manual-only").forEach(el => el.classList.toggle("hidden", !manual));
+    document.querySelectorAll(".pin-slice-only").forEach(el => el.classList.toggle("hidden", !slicing));
     document.querySelectorAll(".pin-rule-only").forEach(el => el.classList.toggle("hidden", manual));
     const inpW = document.getElementById("inputPadCustomW");
     const inpH = document.getElementById("inputPadCustomH");
@@ -3859,7 +3929,17 @@ function buildPinPayload() {
         };
     }
     const red = isNaN(v.red) ? 0.025 : v.red;
-    return { rule_type: v.ruleType, w: pw, h: ph, undersize_w: red, undersize_h: red };
+    const payload = { rule_type: v.ruleType, w: pw, h: ph, undersize_w: red, undersize_h: red };
+    if (v.ruleType === "array_slicing") {
+        // Raster wie angezeigt → Package-Rahmen (bei gedrehter Ansicht Spalten/Zeilen tauschen)
+        let [nx, ny] = (document.getElementById("pinSliceGrid")?.value || "2x2").split("x").map(Number);
+        if (pkgViewSwapped()) [nx, ny] = [ny, nx];
+        payload.bridge_count_x = Math.max(0, nx - 1);
+        payload.bridge_count_y = Math.max(0, ny - 1);
+        payload.bridge_width = parseFloat(document.getElementById("pinSliceWeb")?.value) || 0.25;
+        payload.rotate_bridges_45 = false;
+    }
+    return payload;
 }
 
 function fillPinBarFromOverride(ov, padObj) {
@@ -3875,6 +3955,13 @@ function fillPinBarFromOverride(ov, padObj) {
         [w, h] = sizeForScreen(ov?.w ?? padObj.w, ov?.h ?? padObj.h);
         document.getElementById("inputPadOffX").value = 0;
         document.getElementById("inputPadOffY").value = 0;
+    }
+    if (ov?.rule_type === "array_slicing") {
+        let [nx, ny] = [(ov.bridge_count_x ?? 1) + 1, (ov.bridge_count_y ?? 1) + 1];
+        if (pkgViewSwapped()) [nx, ny] = [ny, nx];
+        const grid = document.getElementById("pinSliceGrid");
+        if (grid && [...grid.options].some(o => o.value === `${nx}x${ny}`)) grid.value = `${nx}x${ny}`;
+        document.getElementById("pinSliceWeb").value = ov.bridge_width ?? 0.25;
     }
     document.getElementById("inputPadCustomW").value = r4js(w);
     document.getElementById("inputPadCustomH").value = r4js(h);
@@ -3989,7 +4076,7 @@ function setupPkgEventListeners() {
 
     // Single Pad Live Inputs (0ms Live-Update beim Hoch/Runter-Klicken der Spinner!)
     [
-        "inputPadCustomW", "inputPadCustomH", "inputPadCustomUndersize", "inputPadOffX", "inputPadOffY"
+        "inputPadCustomW", "inputPadCustomH", "inputPadCustomUndersize", "inputPadOffX", "inputPadOffY", "pinSliceGrid", "pinSliceWeb"
     ].forEach(id => {
         const el = document.getElementById(id);
         if (el) {

@@ -396,6 +396,11 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             let n = e.apply_tombstone(&comps);
             ok(json!({"status": "ok", "applied": n, "tombstone": e.tombstone_json(), "stats": stats(e)}))
         }
+        ("POST", ["api", "tombstone", "revert"]) => {
+            let comps: Vec<String> = body.get("components").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+            let n = e.revert_tombstone(&comps);
+            ok(json!({"status": "ok", "reverted": n, "tombstone": e.tombstone_json(), "stats": stats(e)}))
+        }
         ("POST", ["api", "tombstone", "config"]) => {
             e.tombstone.apply_map(body);
             ok(json!({"status": "ok", "tombstone": e.tombstone_json()}))
