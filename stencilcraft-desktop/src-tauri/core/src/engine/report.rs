@@ -148,7 +148,7 @@ svg.board {{ width: 100%; height: auto; border: 1px solid #cbd5e1; border-radius
 <div class="sub">{dataset} · erstellt {date}{project}</div>
 <div class="grid">
 <div class="kv"><b>Pastentyp</b><span>{paste}</span></div>
-<div class="kv"><b>IPC-Kriterien</b><span>AR ≥ {ar:.2} · AspR ≥ {asp:.2}</span></div>
+<div class="kv"><b>IPC-Kriterien</b><span>{profile}: AR ≥ {ar:.2} · AspR ≥ {asp:.2}</span></div>
 <div class="kv"><b>Mindeststeg</b><span>{bridge:.2} mm</span></div>
 <div class="kv"><b>Kundenbibliothek</b><span>{cust}</span></div>
 </div>"#,
@@ -157,6 +157,7 @@ svg.board {{ width: 100%; height: auto; border: 1px solid #cbd5e1; border-radius
             date = today(),
             project = self.project_path.as_ref().map(|p| format!(" · Projekt {}", esc(&p.to_string_lossy()))).unwrap_or_default(),
             paste = esc(&self.paste_type.to_uppercase()),
+            profile = esc(&self.ipc_profile_label()),
             ar = self.ipc_min_ar,
             asp = self.ipc_min_aspect,
             bridge = self.min_bridge_width,

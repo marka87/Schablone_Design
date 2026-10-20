@@ -389,6 +389,26 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             e.reset_aperture_modification(b.i("id", -1), b.b("apply_all", false));
             ok(json!({"status": "ok", "stats": stats(e)}))
         }
+        // IPC-Klassenprofile
+        ("GET", ["api", "ipc", "profiles"]) => ok(e.ipc_profiles_json()),
+        ("POST", ["api", "ipc", "class"]) => {
+            let c = b.f("class", 2.0) as u8;
+            if !e.set_ipc_class(c) {
+                return err(400, format!("Unbekannte IPC-Klasse {c}"));
+            }
+            ok(json!({"status": "ok", "profiles": e.ipc_profiles_json(), "stats": stats(e)}))
+        }
+        ("POST", ["api", "ipc", "profile", c]) => {
+            let Ok(c) = c.parse::<u8>() else { return err(400, "Klasse fehlt") };
+            if !e.update_ipc_profile(c, body) {
+                return err(404, format!("Kein Profil für Klasse {c}"));
+            }
+            ok(json!({"status": "ok", "profiles": e.ipc_profiles_json(), "stats": stats(e)}))
+        }
+        ("POST", ["api", "ipc", "profiles", "reset"]) => {
+            e.reset_ipc_profiles();
+            ok(json!({"status": "ok", "profiles": e.ipc_profiles_json(), "stats": stats(e)}))
+        }
         ("POST", ["api", "set_ipc_mode"]) => {
             let mode = b.s("mode").unwrap_or_else(|| "standard".into());
             e.set_ipc_mode(&mode, b.f("min_ar", 0.66), b.f("min_aspect", 1.50));

@@ -101,11 +101,13 @@
                 <div class="rb-body">
                     <div class="ipc-control">
                         <label for="ipcModeSelect">IPC</label>
-                        <select id="ipcModeSelect">
-                            <option value="standard">IPC-7525 Standard (AR ≥ 0.66, Asp ≥ 1.5)</option>
+                        <select id="ipcModeSelect" title="Prüfprofil: IPC-Klasse bzw. Schablonentechnik">
+                            <option value="class1">IPC Klasse 1 – Allgemein</option>
+                            <option value="class2" selected>IPC Klasse 2 – Erweitert</option>
+                            <option value="class3">IPC Klasse 3 – Hochzuverlässig</option>
                             <option value="nano">Nano-Coated / E-Polish (AR ≥ 0.55, Asp ≥ 1.3)</option>
-                            <option value="custom">Benutzerdefiniert...</option>
                         </select>
+                        <button id="btnIpcProfiles" class="btn btn-xs btn-ghost" title="Grenzwerte der IPC-Klassen anzeigen und je Kunde anpassen">⚙</button>
                     </div>
                     <div class="ipc-control">
                         <label for="selectPasteType">Paste</label>
@@ -912,6 +914,22 @@
     <!-- ========================================================= -->
 
     <!-- New Customer Library Modal -->
+    <div id="ipcProfileModal" class="modal hidden">
+        <div class="modal-box ipc-modal">
+            <h3>IPC-Klassenprofile</h3>
+            <p class="modal-desc">Prüfgrenzen je Produktklasse (Klassen nach IPC-A-610 / J-STD-001, Kennzahlen nach IPC-7525).
+                Die Standardwerte sind Vorschläge – passen Sie sie je Kunde an. Sie werden in der Kundenbibliothek gespeichert
+                und beim Laden der Bibliothek übernommen.</p>
+            <table class="ipc-profile-table" id="ipcProfileTable"></table>
+            <label class="ipc-save-lib"><input type="checkbox" id="chkIpcSaveLib" checked> In Kundenbibliothek „<span id="lblIpcCustomer">Standard</span>“ speichern</label>
+            <div class="modal-actions">
+                <button id="btnIpcReset" class="btn btn-ghost" title="Alle drei Profile auf die Vorschlagswerte zurücksetzen">Vorschlagswerte</button>
+                <button id="btnIpcCancel" class="btn btn-ghost">Abbrechen</button>
+                <button id="btnIpcSave" class="btn btn-primary">Übernehmen</button>
+            </div>
+        </div>
+    </div>
+
     <div id="newLibModal" class="modal hidden">
         <div class="modal-box">
             <h3>Neue Kunden-Bibliothek anlegen</h3>

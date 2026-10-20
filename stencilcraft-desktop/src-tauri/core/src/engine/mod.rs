@@ -9,6 +9,7 @@ pub mod export;
 pub mod geometry;
 pub mod gerber;
 pub mod import;
+pub mod ipc_profiles;
 pub mod odb;
 pub mod packages;
 pub mod pcbi;
@@ -30,6 +31,15 @@ pub struct StencilEngine {
     pub ipc_min_ar: f64,
     pub ipc_min_aspect: f64,
     pub ipc_mode: String,
+    /// Aktive IPC-Klasse (1–3), 0 = Nano/benutzerdefiniert
+    pub ipc_class: u8,
+    /// Klassenprofile (je Kunde anpassbar, in der Kundenbibliothek gespeichert)
+    pub ipc_profiles: BTreeMap<u8, ipc_profiles::IpcProfile>,
+    /// Warnband unterhalb der IPC-Grenzwerte (Anteil, z. B. 0.10)
+    pub ipc_warn_margin: f64,
+    /// 5-Ball-Regel: Mindestanzahl Körner über die kleinste Öffnungsbreite
+    pub balls_rect: f64,
+    pub balls_round: f64,
     pub squeegee_dir: String,
     pub squeegee_clearance: f64,
     pub transverse_clearance: f64,
@@ -132,7 +142,12 @@ impl StencilEngine {
             base_thickness,
             ipc_min_ar: 0.66,
             ipc_min_aspect: 1.50,
-            ipc_mode: "standard".into(),
+            ipc_mode: "class2".into(),
+            ipc_class: 2,
+            ipc_profiles: ipc_profiles::default_profiles(),
+            ipc_warn_margin: 0.10,
+            balls_rect: 5.0,
+            balls_round: 5.0,
             squeegee_dir: "Y".into(),
             squeegee_clearance: 1.2,
             transverse_clearance: 0.8,
@@ -276,6 +291,18 @@ impl StencilEngine {
     }
 
     pub fn set_ipc_mode(&mut self, mode: &str, custom_ar: f64, custom_aspect: f64) {
+        // Klassenprofile ("class1".."class3"); "standard" entspricht Klasse 2
+        let class = match mode {
+            "standard" | "class2" => Some(2),
+            "class1" => Some(1),
+            "class3" => Some(3),
+            _ => None,
+        };
+        if let Some(c) = class {
+            self.set_ipc_class(c);
+            return;
+        }
+        self.ipc_class = 0;
         self.ipc_mode = mode.into();
         match mode {
             "standard" => {
@@ -1009,6 +1036,9 @@ impl StencilEngine {
                 }
             }
         }
+        if let Some(ipc) = data.get("ipc") {
+            self.load_ipc_from_library(ipc);
+        }
         if let Some(s) = data.get("pcbi_settings").and_then(|v| v.as_str()) {
             self.pcbi_settings_xml = Some(s.to_string());
         }
@@ -1064,6 +1094,7 @@ impl StencilEngine {
             "groups": self.group_rules,
             "aliases": aliases,
         });
+        payload["ipc"] = self.ipc_library_json();
         if let Some(s) = &self.pcbi_settings_xml {
             payload["pcbi_settings"] = json!(s);
         } else if let Some(s) = old.get("pcbi_settings") {

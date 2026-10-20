@@ -1842,6 +1842,18 @@ body:not(.is-desktop) .desktop-only { display: none !important; }
 .thick-popover .lim { margin-top: 6px; color: var(--text-secondary); }
 .thick-popover .lim div { display: flex; justify-content: space-between; gap: 8px; }
 
+/* IPC-Klassenprofile */
+.ipc-modal { width: min(95vw, 760px); }
+.ipc-profile-table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: var(--fs-sm, 0.8rem); }
+.ipc-profile-table th, .ipc-profile-table td { padding: 5px 8px; border-bottom: 1px solid var(--border-color); text-align: right; }
+.ipc-profile-table th:first-child, .ipc-profile-table td:first-child { text-align: left; color: var(--text-secondary); }
+.ipc-profile-table th { font-weight: 700; }
+.ipc-profile-table th.active, .ipc-profile-table td.active { background: rgba(59, 130, 246, 0.10); }
+.ipc-profile-table input[type="number"] { width: 6em; text-align: right; font-family: var(--font-mono); padding: 3px 6px; }
+.ipc-profile-table input[type="text"] { width: 100%; padding: 3px 6px; }
+.ipc-profile-table .hint { display: block; font-size: 0.68rem; color: var(--text-muted); font-weight: 400; }
+.ipc-save-lib { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm, 0.8rem); color: var(--text-secondary); }
+
 /* Fensterrolle: Übersicht (Board) zeigt Analyse, Bearbeitung (Generator) die Werkzeuge */
 body.ws-package .ov-only { display: none !important; }
 body:not(.ws-package) .ed-only { display: none !important; }

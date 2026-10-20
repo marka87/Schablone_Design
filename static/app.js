@@ -364,6 +364,65 @@ async function refreshApertureData() {
     }
 }
 
+// IPC-Klassenprofile: Grenzwerte je Klasse anzeigen und bearbeiten
+const IPC_FIELDS = [
+    ["name", "Bezeichnung", "text"],
+    ["min_ar", "Area Ratio ≥", "number", 0.01, "Öffnungsfläche / Wandfläche"],
+    ["min_aspect", "Aspect Ratio ≥", "number", 0.05, "kleinste Breite / Blechdicke"],
+    ["warn_margin_pct", "Warnband (%)", "number", 1, "darunter kritisch"],
+    ["balls_rect", "Körner rechteckig", "number", 0.5, "x Korndurchmesser über kleinste Breite"],
+    ["balls_round", "Körner rund", "number", 0.5, ""],
+    ["min_bridge", "Mindeststeg (mm)", "number", 0.01, "Stegbreite im Blech"],
+    ["squeegee_clearance", "Stufenabstand Rakel (mm)", "number", 0.1, "in Rakelrichtung"],
+    ["transverse_clearance", "Stufenabstand quer (mm)", "number", 0.1, "quer zur Rakelrichtung"],
+];
+
+function renderIpcProfileTable(data) {
+    const t = document.getElementById("ipcProfileTable");
+    const profiles = data.profiles || [];
+    const defaults = Object.fromEntries((data.defaults || []).map(p => [p.class, p]));
+    const act = (p) => p.class === data.active_class ? "active" : "";
+    let html = `<tr><th></th>${profiles.map(p => `<th class="${act(p)}">Klasse ${p.class}${p.class === data.active_class ? " ✓" : ""}</th>`).join("")}</tr>`;
+    for (const [key, label, type, step, hint] of IPC_FIELDS) {
+        html += `<tr><td>${label}${hint ? `<span class="hint">${hint}</span>` : ""}</td>` + profiles.map(p => {
+            const def = defaults[p.class]?.[key];
+            const changed = type === "number" && def !== undefined && Math.abs(def - p[key]) > 1e-9;
+            return `<td class="${act(p)}"><input type="${type}" data-class="${p.class}" data-key="${key}" ${type === "number" ? `step="${step}"` : ""}
+                value="${escapeHtml(String(p[key]))}" title="${def !== undefined ? `Vorschlag: ${def}` : ""}" ${changed ? 'style="border-color:#f59e0b"' : ""}></td>`;
+        }).join("") + "</tr>";
+    }
+    t.innerHTML = html;
+}
+
+async function openIpcProfiles() {
+    const d = await (await fetch("/api/ipc/profiles")).json();
+    renderIpcProfileTable(d);
+    document.getElementById("lblIpcCustomer").innerText = d.customer || "Standard";
+    document.getElementById("ipcProfileModal").classList.remove("hidden");
+}
+
+async function saveIpcProfiles() {
+    const byClass = {};
+    document.querySelectorAll("#ipcProfileTable input[data-class]").forEach(inp => {
+        const c = inp.dataset.class;
+        byClass[c] = byClass[c] || {};
+        byClass[c][inp.dataset.key] = inp.type === "number" ? parseFloat(inp.value) : inp.value;
+    });
+    for (const [c, vals] of Object.entries(byClass)) {
+        await fetch(`/api/ipc/profile/${c}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(vals) });
+    }
+    let msg = "IPC-Profile übernommen";
+    if (document.getElementById("chkIpcSaveLib").checked) {
+        const cust = document.getElementById("lblIpcCustomer").innerText || "Standard";
+        const r = await fetch("/api/library/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customer: cust }) });
+        msg += r.ok ? ` und in „${cust}“ gespeichert` : " (Speichern in der Bibliothek fehlgeschlagen)";
+    }
+    document.getElementById("ipcProfileModal").classList.add("hidden");
+    await refreshApertureData();
+    await refreshHistory();
+    showToast(msg);
+}
+
 function updateThicknessInput(force = false) {
     const el = document.getElementById("inputBaseThickness");
     const t = state.stats?.base_thickness;
@@ -382,6 +441,13 @@ async function updateStats() {
     document.getElementById("statCrit").innerText = state.stats.crit_count.toLocaleString();
     document.getElementById("zonesCount").innerText = state.stats.zones_count;
     document.getElementById("lblMinAr").innerText = state.stats.ipc_min_ar.toFixed(2);
+    const ipcSel = document.getElementById("ipcModeSelect");
+    const mode = state.stats.ipc_class ? `class${state.stats.ipc_class}` : state.stats.ipc_mode;
+    if (ipcSel && mode && [...ipcSel.options].some(o => o.value === mode) && document.activeElement !== ipcSel) ipcSel.value = mode;
+    if (state.stats.min_bridge_width !== undefined) {
+        const lblMb = document.getElementById("lblMinBridge");
+        if (lblMb) lblMb.innerText = state.stats.min_bridge_width.toFixed(2);
+    }
 
     if (state.stats.paste_type) {
         const ptEl = document.getElementById("selectPasteType");
@@ -2093,13 +2159,22 @@ function setupEventListeners() {
 
     document.getElementById("ipcModeSelect")?.addEventListener("change", async (e) => {
         const mode = e.target.value;
-        await fetch("/api/set_ipc_mode", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode })
-        });
+        const cls = /^class(\d)$/.exec(mode);
+        if (cls) {
+            await fetch("/api/ipc/class", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ class: +cls[1] }) });
+        } else {
+            await fetch("/api/set_ipc_mode", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) });
+        }
         await refreshApertureData();
+        await refreshHistory();
     });
+    document.getElementById("btnIpcProfiles")?.addEventListener("click", openIpcProfiles);
+    document.getElementById("btnIpcCancel")?.addEventListener("click", () => document.getElementById("ipcProfileModal").classList.add("hidden"));
+    document.getElementById("btnIpcReset")?.addEventListener("click", async () => {
+        const d = await (await fetch("/api/ipc/profiles/reset", { method: "POST" })).json();
+        renderIpcProfileTable(d.profiles);
+    });
+    document.getElementById("btnIpcSave")?.addEventListener("click", saveIpcProfiles);
 
     // Color Mode
     document.getElementById("colorModeSelect")?.addEventListener("change", (e) => {

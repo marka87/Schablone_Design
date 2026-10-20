@@ -26,6 +26,9 @@ pub struct EditState {
     ipc_mode: String,
     ipc_min_ar: f64,
     ipc_min_aspect: f64,
+    ipc_class: u8,
+    ipc_profiles: BTreeMap<u8, super::ipc_profiles::IpcProfile>,
+    ipc_limits: (f64, f64, f64, f64, f64, f64),
     squeegee_dir: String,
     current_customer: String,
     current_side: String,
@@ -93,6 +96,16 @@ struct Settings {
     squeegee_dir: String,
     min_bridge_width: f64,
     current_customer: String,
+    #[serde(default)]
+    ipc_class: u8,
+    #[serde(default)]
+    ipc_profiles: Option<BTreeMap<u8, super::ipc_profiles::IpcProfile>>,
+    #[serde(default)]
+    ipc_warn_margin: Option<f64>,
+    #[serde(default)]
+    balls: Option<(f64, f64)>,
+    #[serde(default)]
+    clearances: Option<(f64, f64)>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -178,6 +191,9 @@ impl StencilEngine {
             ipc_mode: self.ipc_mode.clone(),
             ipc_min_ar: self.ipc_min_ar,
             ipc_min_aspect: self.ipc_min_aspect,
+            ipc_class: self.ipc_class,
+            ipc_profiles: self.ipc_profiles.clone(),
+            ipc_limits: (self.ipc_warn_margin, self.balls_rect, self.balls_round, self.min_bridge_width, self.squeegee_clearance, self.transverse_clearance),
             squeegee_dir: self.squeegee_dir.clone(),
             current_customer: self.current_customer.clone(),
             current_side: self.current_side.clone(),
@@ -204,6 +220,9 @@ impl StencilEngine {
         self.ipc_mode = s.ipc_mode;
         self.ipc_min_ar = s.ipc_min_ar;
         self.ipc_min_aspect = s.ipc_min_aspect;
+        self.ipc_class = s.ipc_class;
+        self.ipc_profiles = s.ipc_profiles;
+        (self.ipc_warn_margin, self.balls_rect, self.balls_round, self.min_bridge_width, self.squeegee_clearance, self.transverse_clearance) = s.ipc_limits;
         self.squeegee_dir = s.squeegee_dir;
         self.current_customer = s.current_customer;
         self.bridge_violations.clear();
@@ -288,6 +307,11 @@ impl StencilEngine {
                 squeegee_dir: self.squeegee_dir.clone(),
                 min_bridge_width: self.min_bridge_width,
                 current_customer: self.current_customer.clone(),
+                ipc_class: self.ipc_class,
+                ipc_profiles: Some(self.ipc_profiles.clone()),
+                ipc_warn_margin: Some(self.ipc_warn_margin),
+                balls: Some((self.balls_rect, self.balls_round)),
+                clearances: Some((self.squeegee_clearance, self.transverse_clearance)),
             },
             packages: self.packages.clone(),
             aliases: self.package_aliases.clone(),
@@ -393,6 +417,20 @@ impl StencilEngine {
         self.squeegee_dir = s.squeegee_dir;
         self.min_bridge_width = s.min_bridge_width;
         self.current_customer = s.current_customer;
+        // IPC-Klasse und -Profile (ältere Projekte: Werte von oben, Profile Standard)
+        if let Some(p) = s.ipc_profiles {
+            self.ipc_profiles = p;
+        }
+        self.ipc_class = s.ipc_class;
+        if let Some(m) = s.ipc_warn_margin {
+            self.ipc_warn_margin = m;
+        }
+        if let Some((r, o)) = s.balls {
+            (self.balls_rect, self.balls_round) = (r, o);
+        }
+        if let Some((a, b)) = s.clearances {
+            (self.squeegee_clearance, self.transverse_clearance) = (a, b);
+        }
         self.packages = pf.packages;
         self.package_aliases = pf.aliases;
         if !pf.group_rules.is_empty() {
@@ -530,6 +568,9 @@ pub fn edit_label(method: &str, seg: &[&str], body: &Map<String, Value>) -> Opti
         ("POST", ["api", "pad", p, "reset"]) => format!("Pad {p} zurücksetzen"),
         ("POST", ["api", "zone"]) => "Zone anlegen".into(),
         ("POST", ["api", "zone", "around_component"]) => "Stufenzone um Bauteil".into(),
+        ("POST", ["api", "ipc", "class"]) => "IPC-Klasse".into(),
+        ("POST", ["api", "ipc", "profile", c]) => format!("IPC-Profil Klasse {c}"),
+        ("POST", ["api", "ipc", "profiles", "reset"]) => "IPC-Profile zurücksetzen".into(),
         ("PUT" | "POST", ["api", "zone", z]) => format!("Zone {z} ändern"),
         ("DELETE", ["api", "zone", z]) => format!("Zone {z} löschen"),
         ("POST", ["api", "pcbi", "import"]) => "PCB-I-Kundenbibliothek importiert".into(),

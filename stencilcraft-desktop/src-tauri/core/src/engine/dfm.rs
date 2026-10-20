@@ -75,9 +75,10 @@ impl StencilEngine {
     fn status_at(&self, item: &ApertureItem, t: f64) -> &'static str {
         let (ar1, asp1, _) = ratios_at_unit_thickness(item);
         let (ar, asp) = (ar1 / t, asp1 / t);
+        let lo = 1.0 - self.ipc_warn_margin;
         if ar >= self.ipc_min_ar && asp >= self.ipc_min_aspect {
             "OK"
-        } else if ar >= self.ipc_min_ar * 0.90 && asp >= self.ipc_min_aspect * 0.90 {
+        } else if ar >= self.ipc_min_ar * lo && asp >= self.ipc_min_aspect * lo {
             "WARN"
         } else {
             "CRIT"
@@ -182,9 +183,10 @@ impl StencilEngine {
             ),
         };
 
+        let lo = 1.0 - self.ipc_warn_margin;
         let mut status = if ar >= self.ipc_min_ar && aspect >= self.ipc_min_aspect {
             "OK"
-        } else if ar >= self.ipc_min_ar * 0.90 && aspect >= self.ipc_min_aspect * 0.90 {
+        } else if ar >= self.ipc_min_ar * lo && aspect >= self.ipc_min_aspect * lo {
             "WARN"
         } else {
             "CRIT"
@@ -199,16 +201,18 @@ impl StencilEngine {
             clearance_warn = along < self.squeegee_clearance || across < self.transverse_clearance;
         }
 
-        // 5-Ball-Regel nach IPC-7525
-        let min_required_w = 5.0 * grain_diameter(&self.paste_type);
+        // 5-Ball-Regel nach IPC-7525 (Kornanzahl je IPC-Klasse, rund/rechteckig getrennt)
+        let round = item.shape_type == "circle" || item.custom_slices.as_ref().is_some_and(|s| !s.is_empty() && s.iter().all(|x| x.is_circle()));
+        let balls = if round { self.balls_round } else { self.balls_rect };
+        let min_required_w = balls * grain_diameter(&self.paste_type);
         let grain_warn = min_ap_dim < min_required_w;
         let grain_msg = if grain_warn {
             if status == "OK" {
                 status = "WARN";
             }
-            format!("5-Ball-Regel: {:.3}mm < {:.3}mm ({})", min_ap_dim, min_required_w, self.paste_type.to_uppercase())
+            format!("{balls:.0}-Ball-Regel: {:.3}mm < {:.3}mm ({})", min_ap_dim, min_required_w, self.paste_type.to_uppercase())
         } else {
-            format!("5-Ball-Regel OK ({:.3}mm >= {:.3}mm)", min_ap_dim, min_required_w)
+            format!("{balls:.0}-Ball-Regel OK ({:.3}mm >= {:.3}mm)", min_ap_dim, min_required_w)
         };
 
         IpcResult {
@@ -271,6 +275,8 @@ impl StencilEngine {
             "zones_count": self.zones.len(),
             "zones": self.zones.iter().map(StencilZone::to_json).collect::<Vec<_>>(),
             "ipc_mode": self.ipc_mode,
+            "ipc_class": self.ipc_class,
+            "ipc_profile": self.ipc_profile_label(),
             "ipc_min_ar": self.ipc_min_ar,
             "ipc_min_aspect": self.ipc_min_aspect,
             "paste_type": self.paste_type,
