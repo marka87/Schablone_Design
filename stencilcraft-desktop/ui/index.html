@@ -627,8 +627,17 @@
                             <label>Offset move away distance (MM):</label>
                             <input type="number" id="propOffsetMoveAway" value="0.0" step="0.02" min="0" max="1.0">
                         </div>
+                        <div class="prop-item" data-rules="simple_rect house_builder inverted_house_builder elongated_pitch">
+                            <label title="Richtung für Move away, Versatz nach außen und Toe-/Heel-Shift. X/Y beziehen sich auf das Package (drehen mit dem Bauteil).">Richtung nach außen:</label>
+                            <select id="propMoveAxis">
+                                <option value="long">Pad-Längsachse</option>
+                                <option value="auto">Zum Bauteilzentrum (automatisch)</option>
+                                <option value="x">Nur X (Package)</option>
+                                <option value="y">Nur Y (Package)</option>
+                            </select>
+                        </div>
                         <div class="prop-item" data-rules="package_group simple_rect house_builder inverted_house_builder elongated_pitch array_slicing donut">
-                            <label>Offset to Center X / Y (MM):</label>
+                            <label title="Verschiebung im Package-Rahmen; dreht auf der Platine mit dem Bauteil.">Offset to Center X / Y (MM):</label>
                             <div class="dual-row">
                                 <input type="number" id="propOffsetX" value="0.0" step="0.01" placeholder="X">
                                 <input type="number" id="propOffsetY" value="0.0" step="0.01" placeholder="Y">
@@ -756,6 +765,7 @@
                             <div class="pad-bar-inputs">
                                 <select id="selectPinRule" title="Regel für diesen Pin" style="font-size: 0.75rem; padding: 3px 6px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border); border-radius: 4px;">
                                     <option value="inherit">Regel: Vom Package erben</option>
+                                    <option value="manual">Manuell (feste Öffnung)</option>
                                     <option value="package_group">Package-Gruppe</option>
                                     <option value="simple_rect">Simple Rect</option>
                                     <option value="house_builder">HouseBuilder</option>
@@ -768,7 +778,9 @@
                                 </select>
                                 <input type="number" id="inputPadCustomW" placeholder="B (mm)" step="0.05" style="width: 70px;">
                                 <input type="number" id="inputPadCustomH" placeholder="H (mm)" step="0.05" style="width: 70px;">
-                                <input type="number" id="inputPadCustomUndersize" placeholder="Red. (mm)" step="0.005" style="width: 75px;" title="Undersize (mm)">
+                                <input type="number" id="inputPadCustomUndersize" class="pin-rule-only" placeholder="Red. (mm)" step="0.005" style="width: 75px;" title="Undersize (mm)">
+                                <input type="number" id="inputPadOffX" class="pin-manual-only hidden" placeholder="dX" step="0.01" style="width: 64px;" title="Versatz nach rechts (mm, wie angezeigt) – Pfeiltasten ←/→">
+                                <input type="number" id="inputPadOffY" class="pin-manual-only hidden" placeholder="dY" step="0.01" style="width: 64px;" title="Versatz nach oben (mm, wie angezeigt) – Pfeiltasten ↑/↓"> 
                                 <button id="btnSavePadOverride" class="btn btn-xs btn-primary">Anpassen</button>
                                 <button id="btnResetPadOverride" class="btn btn-xs btn-ghost">Reset</button>
                                 <button id="btnApplyPinToAll" class="btn btn-xs btn-ghost" title="Regel und Reduktion auf alle Pins übernehmen; Breite/Höhe nur auf Pins gleicher Kupfergröße">Für alle übernehmen</button>

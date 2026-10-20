@@ -147,6 +147,56 @@ pub struct PadCtx<'a> {
     pub thickness: f64,
     /// Kupferpad (B, H, rund) – die Regel "Package-Gruppe" rechnet wie PCB Investigator vom Kupfer aus
     pub copper: Option<(f64, f64, bool)>,
+    /// Padmitte relativ zum Bauteilzentrum (im selben Rahmen wie cx/cy)
+    pub rel: Option<(f64, f64)>,
+    /// Lage des Bauteils: Drehung im Uhrzeigersinn (Grad) und Spiegelung (BOT) vom Package- in den Pad-Rahmen
+    pub rot: f64,
+    pub mirror: bool,
+}
+
+/// Feste Größe (B, H) der Regel im Rahmen des Pads: bei um 90°/270° gedrehten Bauteilen getauscht.
+pub fn fixed_size(rule: &PackageRule, pad: &PadCtx) -> (f64, f64) {
+    if (pad.rot.rem_euclid(180.0) - 90.0).abs() < 1.0 { (rule.size_h, rule.size_w) } else { (rule.size_w, rule.size_h) }
+}
+
+/// Vektor vom Package-Rahmen in den Rahmen des Pads (ODB++: erst im Uhrzeigersinn drehen, dann bei BOT spiegeln).
+pub fn pkg_to_frame(v: (f64, f64), rot: f64, mirror: bool) -> (f64, f64) {
+    let (s, c) = rot.to_radians().sin_cos();
+    let (x, y) = (v.0 * c + v.1 * s, -v.0 * s + v.1 * c);
+    if mirror { (-x, y) } else { (x, y) }
+}
+
+/// Umkehrung von `pkg_to_frame`.
+pub fn frame_to_pkg(v: (f64, f64), rot: f64, mirror: bool) -> (f64, f64) {
+    let (x, y) = if mirror { (-v.0, v.1) } else { v };
+    let (s, c) = rot.to_radians().sin_cos();
+    (x * c - y * s, x * s + y * c)
+}
+
+/// Einheitsvektor "nach außen" für ein Pad gemäß `move_axis` (im Rahmen des Pads).
+pub fn outward_vec(pad: &PadCtx, axis: &str) -> (f64, f64) {
+    let from_facing = || match pad.facing {
+        "right" => (-1.0, 0.0),
+        "left" => (1.0, 0.0),
+        "up" => (0.0, -1.0),
+        "down" => (0.0, 1.0),
+        _ => (0.0, 0.0),
+    };
+    let sign = |v: f64| if v > 1e-6 { 1.0 } else if v < -1e-6 { -1.0 } else { 0.0 };
+    let Some(rel) = pad.rel else { return from_facing() };
+    match axis {
+        "long" => {
+            // Längsachse im Pad-Rahmen; ohne Versatz in dieser Achse (Pad mittig) Richtung zum Zentrum
+            let v = if pad.w >= pad.h { (sign(rel.0), 0.0) } else { (0.0, sign(rel.1)) };
+            if v == (0.0, 0.0) { from_facing() } else { v }
+        }
+        "x" | "y" => {
+            let p = frame_to_pkg(rel, pad.rot, pad.mirror);
+            let v = if axis == "x" { (sign(p.0), 0.0) } else { (0.0, sign(p.1)) };
+            pkg_to_frame(v, pad.rot, pad.mirror)
+        }
+        _ => from_facing(),
+    }
 }
 
 impl<'a> PadCtx<'a> {
@@ -200,29 +250,17 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
     let w_eff = (eff_pw - 2.0 * rule.undersize_w).max(0.04);
     let h_eff = (eff_ph - 2.0 * rule.undersize_h).max(0.04);
 
-    let mut cx = pad_cx + rule.offset_x;
-    let mut cy = pad_cy + rule.offset_y;
+    // Offset X/Y gilt im Package-Rahmen und dreht mit dem Bauteil
+    let off = pkg_to_frame((rule.offset_x, rule.offset_y), pad.rot, pad.mirror);
+    let mut cx = pad_cx + off.0;
+    let mut cy = pad_cy + off.1;
 
-    if rule.offset_move_away != 0.0 {
-        match facing_dir {
-            "right" => cx -= rule.offset_move_away,
-            "left" => cx += rule.offset_move_away,
-            "up" => cy -= rule.offset_move_away,
-            "down" => cy += rule.offset_move_away,
-            _ => {}
-        }
-    }
-
-    // Toe-/Heel-Shift (>0 nach außen / Toe, <0 nach innen / Heel)
-    if rule.toe_heel_shift != 0.0 {
-        let s = rule.toe_heel_shift;
-        match facing_dir {
-            "right" => cx -= s,
-            "left" => cx += s,
-            "up" => cy -= s,
-            "down" => cy += s,
-            _ => {}
-        }
+    // Move away und Toe-/Heel-Shift (>0 nach außen / Toe, <0 nach innen / Heel)
+    let out = outward_vec(pad, &rule.move_axis);
+    let away = rule.offset_move_away + rule.toe_heel_shift;
+    if away != 0.0 {
+        cx += out.0 * away;
+        cy += out.1 * away;
     }
 
     // Runde Pads (Stecker, THT, BGA) bleiben rund: Undersize/Offsets wirken auf den Durchmesser.
@@ -306,8 +344,9 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
 
     match rtype {
         "simple_rect" => {
-            let w = if rule.size_w > 0.0 { rule.size_w } else { w_eff };
-            let h = if rule.size_h > 0.0 { rule.size_h } else { h_eff };
+            let (fw, fh) = fixed_size(rule, pad);
+            let w = if fw > 0.0 { fw } else { w_eff };
+            let h = if fh > 0.0 { fh } else { h_eff };
             if rule.bridge_count_x > 0 || rule.bridge_count_y > 0 {
                 if rule.rotate_bridges_45 {
                     let d = diagonal_slices(cx, cy, w, h, rule);
@@ -334,8 +373,9 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
             r.offset_y = 0.0;
             r.offset_move_away = 0.0;
             r.toe_heel_shift = 0.0;
-            let w = if rule.size_w > 0.0 { rule.size_w } else { w_eff };
-            let h = if rule.size_h > 0.0 { rule.size_h } else { h_eff };
+            let (fw, fh) = fixed_size(rule, pad);
+            let w = if fw > 0.0 { fw } else { w_eff };
+            let h = if fh > 0.0 { fh } else { h_eff };
             let sub = PadCtx { w, h, cx, cy, mask: None, ..*pad };
             generate_rule_aperture_geometry(&sub, &r)
         }
@@ -372,14 +412,7 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
                 (elongated_length(pad_w, pad_h, n, rule.length_usage_pct, rule.length_comp_pct), n)
             };
             // Versatz nach außen (weg vom Bauteilzentrum)
-            let (mut cx, mut cy) = (cx, cy);
-            match facing_dir {
-                "right" => cx -= rule.outward_shift,
-                "left" => cx += rule.outward_shift,
-                "up" => cy -= rule.outward_shift,
-                "down" => cy += rule.outward_shift,
-                _ => {}
-            }
+            let (cx, cy) = (cx + out.0 * rule.outward_shift, cy + out.1 * rule.outward_shift);
             let r = rule.corner_radius.min(new_w / 2.5).min(new_h / 2.5).max(0.0);
             let mut s = poly_slice(cx, cy, new_w, new_h, &rounded_rect_pts(cx, cy, new_w, new_h, r), "elongated_pitch");
             s.radius = Some(r4(r));
@@ -633,6 +666,32 @@ mod tests {
         let ctx = PadCtx { pitch: Some(3.0), ..PadCtx::new(3.0, 1.0, 0.0, 0.0, "left") };
         let s = generate_rule_aperture_geometry(&ctx, &rule).unwrap();
         assert!((s[0].h - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn move_away_axis() {
+        // Zweireihiger Stecker (FTSH): Pads 1.5 × 0.4 mm, Eckpad oben links. Zentrum liegt eher
+        // unterhalb (facing "down"), auseinanderschieben soll aber nur in X.
+        let rule = PackageRule { rule_type: "simple_rect".into(), offset_move_away: 0.3, undersize_w: 0.0, undersize_h: 0.0, ..Default::default() };
+        let pad = PadCtx { rel: Some((-1.0, 2.5)), ..PadCtx::new(1.5, 0.4, -1.0, 2.5, "down") };
+        let s = generate_rule_aperture_geometry(&pad, &rule).unwrap();
+        assert!((s[0].cx + 1.3).abs() < 1e-9 && (s[0].cy - 2.5).abs() < 1e-9, "Längsachse: {:?}", (s[0].cx, s[0].cy));
+        // "auto": wie bisher Richtung Bauteilzentrum (hier nach oben)
+        let auto = PackageRule { move_axis: "auto".into(), ..rule.clone() };
+        let s = generate_rule_aperture_geometry(&pad, &auto).unwrap();
+        assert!((s[0].cy - 2.8).abs() < 1e-9 && (s[0].cx + 1.0).abs() < 1e-9);
+        // "x" im Package-Rahmen bei um 90° gedrehtem Bauteil: Package-X liegt auf dem Board in Y
+        let x = PackageRule { move_axis: "x".into(), ..rule.clone() };
+        let rel = pkg_to_frame((-1.0, 2.5), 90.0, false);
+        let rot = PadCtx { rel: Some(rel), rot: 90.0, ..PadCtx::new(0.4, 1.5, rel.0, rel.1, "right") };
+        let s = generate_rule_aperture_geometry(&rot, &x).unwrap();
+        let moved = (s[0].cx - rel.0, s[0].cy - rel.1);
+        let back = frame_to_pkg(moved, 90.0, false);
+        assert!((back.0 + 0.3).abs() < 1e-9 && back.1.abs() < 1e-9, "{back:?}");
+        // Offset X/Y dreht mit dem Bauteil
+        let off = PackageRule { offset_x: 0.1, offset_move_away: 0.0, ..rule.clone() };
+        let s = generate_rule_aperture_geometry(&PadCtx { rot: 90.0, ..PadCtx::new(0.4, 1.5, 0.0, 0.0, "right") }, &off).unwrap();
+        assert!(s[0].cx.abs() < 1e-9 && (s[0].cy + 0.1).abs() < 1e-9, "{:?}", (s[0].cx, s[0].cy));
     }
 
     #[test]

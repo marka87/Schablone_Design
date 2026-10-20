@@ -596,10 +596,14 @@ impl StencilEngine {
             }
             None => (base_rule, ap.width, ap.height),
         };
+        let comp = self.components.iter().find(|c| c.refdes == ap.component_id && !ap.component_id.is_empty());
         // Kupfer nur, wenn die Pin-Anpassung keine eigene Größe vorgibt
         let sized = pkg.pad_overrides.get(&ap.pin_number).is_some_and(|o| o.contains_key("w") || o.contains_key("h"));
         let ctx = PadCtx {
             copper: ap.copper_ref.as_ref().filter(|_| !sized).map(|p| (p.w, p.h, p.round)),
+            rel: comp.map(|c| (ap.cx - c.cx, ap.cy - c.cy)),
+            rot: comp.map_or(0.0, |c| c.rotation),
+            mirror: comp.is_some_and(|c| c.side.eq_ignore_ascii_case("BOT")),
             mask: ap.pad_ref.as_ref().map(|p| (p.w, p.h)),
             round: ap.shape_type == "circle",
             pitch,
@@ -916,6 +920,7 @@ impl StencilEngine {
             };
             let sized = pkg.pad_overrides.get(&p.pin).is_some_and(|o| o.contains_key("w") || o.contains_key("h"));
             let ctx = PadCtx {
+                rel: Some((p.cx, p.cy)),
                 copper: p.copper.filter(|_| !sized),
                 round: p.is_round(),
                 pitch: neighbor_pitch(&rel, i),

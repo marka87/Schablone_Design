@@ -346,6 +346,10 @@ pub struct PackageRule {
     /// Versatz der Öffnung vom Bauteilzentrum nach außen (mm)
     #[serde(default = "default_outward_shift")]
     pub outward_shift: f64,
+    /// Richtung für "nach außen" (Move away, Versatz, Toe-/Heel-Shift):
+    /// "long" = entlang der Pad-Längsachse, "auto" = zum Bauteilzentrum, "x" / "y" = nur diese Package-Achse
+    #[serde(default = "default_move_axis")]
+    pub move_axis: String,
     /// Parameter aus PCB Investigator ohne eigene Entsprechung (für verlustfreien Rückexport)
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extra: BTreeMap<String, String>,
@@ -393,6 +397,7 @@ impl Default for PackageRule {
             gap_ratio: default_gap_ratio(),
             length_comp_pct: default_length_comp(),
             outward_shift: default_outward_shift(),
+            move_axis: default_move_axis(),
             extra: BTreeMap::new(),
         }
     }
@@ -406,6 +411,9 @@ fn default_length_comp() -> f64 {
 }
 fn default_outward_shift() -> f64 {
     0.025
+}
+fn default_move_axis() -> String {
+    "long".into()
 }
 
 pub fn val_f64(v: &Value) -> Option<f64> {
@@ -445,6 +453,7 @@ impl PackageRule {
                 "name" => { if let Some(s) = val_str(v) { self.name = s } }
                 "rule_type" => { if let Some(s) = val_str(v) { self.rule_type = s } }
                 "chamfer_mode" => { if let Some(s) = val_str(v) { self.chamfer_mode = s } }
+                "move_axis" => { if let Some(s) = val_str(v).filter(|s| matches!(s.as_str(), "long" | "auto" | "x" | "y")) { self.move_axis = s } }
                 "undersize_w" => { if let Some(f) = val_f64(v) { self.undersize_w = f } }
                 "undersize_h" => { if let Some(f) = val_f64(v) { self.undersize_h = f } }
                 "corner_radius" => { if let Some(f) = val_f64(v) { self.corner_radius = f } }

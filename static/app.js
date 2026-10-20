@@ -2952,6 +2952,7 @@ function populateRuleInputs(rule) {
     document.getElementById("propLengthComp").value = rule.length_comp_pct ?? 70;
     document.getElementById("propOutwardShift").value = rule.outward_shift ?? 0.025;
     document.getElementById("propOffsetMoveAway").value = rule.offset_move_away ?? 0.0;
+    document.getElementById("propMoveAxis").value = rule.move_axis || "long";
     document.getElementById("propOffsetX").value = rule.offset_x ?? 0.0;
     document.getElementById("propOffsetY").value = rule.offset_y ?? 0.0;
     document.getElementById("propBridgeX").value = rule.bridge_count_x ?? 0;
@@ -3032,6 +3033,7 @@ function collectRuleFromInputs() {
         length_comp_pct: numInput("propLengthComp", 70),
         outward_shift: numInput("propOutwardShift", 0.025),
         offset_move_away: numInput("propOffsetMoveAway", 0),
+        move_axis: document.getElementById("propMoveAxis")?.value || "long",
         offset_x: numInput("propOffsetX", 0),
         offset_y: numInput("propOffsetY", 0),
         bridge_count_x: Math.max(0, Math.round(numInput("propBridgeX", 0))),
@@ -3125,9 +3127,12 @@ function onSinglePinParamChanged() {
     if (!pkgState.activePackageData || pkgState.selectedPin === null) return;
     const pinNum = pkgState.selectedPin;
     const ruleType = document.getElementById("selectPinRule")?.value || "inherit";
-    const w = parseFloat(document.getElementById("inputPadCustomW")?.value);
-    const h = parseFloat(document.getElementById("inputPadCustomH")?.value);
-    const red = parseFloat(document.getElementById("inputPadCustomUndersize")?.value) || 0;
+    updatePinBarMode();
+    const built = buildPinPayload();
+    const manual = ruleType === "manual";
+    const w = manual ? built.size_w : built.w;
+    const h = manual ? built.size_h : built.h;
+    const red = manual ? 0 : built.undersize_w;
 
     if (isNaN(w) || isNaN(h) || w <= 0 || h <= 0) return;
 
@@ -3136,15 +3141,9 @@ function onSinglePinParamChanged() {
     if (!pkgState.activePackageData.pad_overrides) {
         pkgState.activePackageData.pad_overrides = {};
     }
-    pkgState.activePackageData.pad_overrides[pinNum] = {
-        rule_type: ruleType,
-        w: w,
-        h: h,
-        undersize_w: red,
-        undersize_h: red
-    };
+    pkgState.activePackageData.pad_overrides[pinNum] = built;
 
-    if (pkgState.activePackageData.paste) {
+    if (!manual && pkgState.activePackageData.paste) {
         for (const ap of pkgState.activePackageData.paste) {
             if (ap.pin === pinNum) {
                 ap.w = Math.max(0.02, w - red * 2);
@@ -3176,13 +3175,7 @@ function onSinglePinParamChanged() {
     clearTimeout(singlePinDebounce);
     singlePinDebounce = setTimeout(async () => {
         try {
-            const payload = {
-                rule_type: ruleType,
-                w: w,
-                h: h,
-                undersize_w: red,
-                undersize_h: red
-            };
+            const payload = built;
             const res = await fetch(`/api/package/${encodeURIComponent(pkgName)}/pin/${pinNum}/override`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -3401,10 +3394,14 @@ function openAllPinsBar() {
     const inpH = document.getElementById("inputPadCustomH");
     const cw = common(pads.map(p => +p.w.toFixed(3)));
     const ch = common(pads.map(p => +p.h.toFixed(3)));
-    inpW.value = cw ?? "";
-    inpH.value = ch ?? "";
-    inpW.placeholder = cw === null ? "versch." : "B (mm)";
-    inpH.placeholder = ch === null ? "versch." : "H (mm)";
+    const [sw, sh] = sizeForScreen(cw, ch);
+    inpW.value = sw ?? "";
+    inpH.value = sh ?? "";
+    inpW.placeholder = sw === null ? "versch." : "B (mm)";
+    inpH.placeholder = sh === null ? "versch." : "H (mm)";
+    document.getElementById("inputPadOffX").value = 0;
+    document.getElementById("inputPadOffY").value = 0;
+    updatePinBarMode();
     const undersizeInput = document.getElementById("inputPadCustomUndersize");
     if (undersizeInput) undersizeInput.value = common(ovs.map(o => o.undersize_w)) ?? data.rule?.undersize_w ?? 0.025;
     renderPkgPreview();
@@ -3437,9 +3434,81 @@ function readPinBarValues() {
         ruleType: document.getElementById("selectPinRule")?.value || "inherit",
         w: parseFloat(document.getElementById("inputPadCustomW")?.value),
         h: parseFloat(document.getElementById("inputPadCustomH")?.value),
-        red: parseFloat(document.getElementById("inputPadCustomUndersize")?.value)
+        red: parseFloat(document.getElementById("inputPadCustomUndersize")?.value),
+        dx: parseFloat(document.getElementById("inputPadOffX")?.value) || 0,
+        dy: parseFloat(document.getElementById("inputPadOffY")?.value) || 0
     };
 }
+
+// Die Pin-Felder zeigen Maße so, wie sie in der (ggf. gedrehten) Vorschau erscheinen:
+// B = waagerecht, H = senkrecht, dX nach rechts, dY nach oben.
+function pkgViewSwapped() {
+    const r = (((pkgState.rotation || 0) % 180) + 180) % 180;
+    return Math.abs(r - 90) < 1;
+}
+function sizeForScreen(w, h) {
+    return pkgViewSwapped() ? [h, w] : [w, h];
+}
+function pkgVecToScreen(x, y) {
+    const a = ((pkgState.rotation || 0) * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+    return { x: x * c + y * s, y: -(x * s - y * c) };
+}
+function screenVecToPkg(x, yUp) {
+    const a = ((pkgState.rotation || 0) * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a), vy = -yUp;
+    return { x: x * c + vy * s, y: x * s - vy * c };
+}
+const r4js = (v) => Math.round(v * 10000) / 10000;
+
+function updatePinBarMode() {
+    const manual = document.getElementById("selectPinRule")?.value === "manual";
+    document.querySelectorAll(".pin-manual-only").forEach(el => el.classList.toggle("hidden", !manual));
+    document.querySelectorAll(".pin-rule-only").forEach(el => el.classList.toggle("hidden", manual));
+    const inpW = document.getElementById("inputPadCustomW");
+    const inpH = document.getElementById("inputPadCustomH");
+    if (inpW && !inpW.placeholder.startsWith("versch")) inpW.placeholder = manual ? "Öffnung B" : "Pad B";
+    if (inpH && !inpH.placeholder.startsWith("versch")) inpH.placeholder = manual ? "Öffnung H" : "Pad H";
+    if (inpW) inpW.title = manual ? "Breite der Pastenöffnung (waagerecht wie angezeigt)" : "Padbreite, aus der die Regel die Öffnung berechnet (waagerecht wie angezeigt)";
+    if (inpH) inpH.title = manual ? "Höhe der Pastenöffnung (senkrecht wie angezeigt)" : "Padhöhe, aus der die Regel die Öffnung berechnet (senkrecht wie angezeigt)";
+}
+
+// Übersteuerung aus den Feldern (Package-Rahmen). Manuell = feste Öffnung mit Versatz.
+function buildPinPayload() {
+    const v = readPinBarValues();
+    const [pw, ph] = sizeForScreen(v.w, v.h);
+    if (v.ruleType === "manual") {
+        const off = screenVecToPkg(v.dx, v.dy);
+        const base = pkgState.activePackageData?.effective_rule || pkgState.activePackageData?.rule || {};
+        return {
+            rule_type: "simple_rect", manual: true,
+            size_w: r4js(pw), size_h: r4js(ph), offset_x: r4js(off.x), offset_y: r4js(off.y),
+            undersize_w: 0, undersize_h: 0, offset_move_away: 0, toe_heel_shift: 0,
+            bridge_count_x: 0, bridge_count_y: 0, chamfer_size: 0, pin_minus_mask: false,
+            corner_radius: base.corner_radius ?? 0.075
+        };
+    }
+    const red = isNaN(v.red) ? 0.025 : v.red;
+    return { rule_type: v.ruleType, w: pw, h: ph, undersize_w: red, undersize_h: red };
+}
+
+function fillPinBarFromOverride(ov, padObj) {
+    const ruleSelect = document.getElementById("selectPinRule");
+    if (ruleSelect) ruleSelect.value = ov?.manual ? "manual" : (ov?.rule_type || "inherit");
+    let w, h;
+    if (ov?.manual) {
+        [w, h] = sizeForScreen(ov.size_w, ov.size_h);
+        const off = pkgVecToScreen(ov.offset_x || 0, ov.offset_y || 0);
+        document.getElementById("inputPadOffX").value = r4js(off.x);
+        document.getElementById("inputPadOffY").value = r4js(off.y);
+    } else {
+        [w, h] = sizeForScreen(ov?.w ?? padObj.w, ov?.h ?? padObj.h);
+        document.getElementById("inputPadOffX").value = 0;
+        document.getElementById("inputPadOffY").value = 0;
+    }
+    document.getElementById("inputPadCustomW").value = r4js(w);
+    document.getElementById("inputPadCustomH").value = r4js(h);
+    updatePinBarMode();
+}
+window.fillPinBarFromOverride = fillPinBarFromOverride;
 
 function selectPkgPin(pinNum, padObj) {
     pkgState.selectedPin = pinNum;
@@ -3461,11 +3530,7 @@ function selectPkgPin(pinNum, padObj) {
     const overrides = pkgState.activePackageData ? pkgState.activePackageData.pad_overrides : {};
     const ov = (overrides && (overrides[pinNum] || overrides[String(pinNum)])) ? (overrides[pinNum] || overrides[String(pinNum)]) : null;
 
-    const ruleSelect = document.getElementById("selectPinRule");
-    if (ruleSelect) ruleSelect.value = ov?.rule_type || "inherit";
-
-    document.getElementById("inputPadCustomW").value = ov?.w ?? padObj.w;
-    document.getElementById("inputPadCustomH").value = ov?.h ?? padObj.h;
+    fillPinBarFromOverride(ov, padObj);
     const undersizeInput = document.getElementById("inputPadCustomUndersize");
     if (undersizeInput) undersizeInput.value = ov?.undersize_w ?? pkgState.activePackageData?.rule?.undersize_w ?? 0.025;
 
@@ -3500,7 +3565,7 @@ function setupPkgEventListeners() {
     // Rule Inputs live sync (0ms / 35ms schnelles Live-Update)
     document.getElementById("selectPkgRule").addEventListener("change", () => { updateRuleFieldVisibility(); onRuleParamChanged(); });
     [
-        "propCornerRadius", "propUndersize", "propHouseCut", "propPitchRed", "propLengthUse", "propGapRatio", "propLengthComp", "propOutwardShift",
+        "propCornerRadius", "propUndersize", "propHouseCut", "propPitchRed", "propLengthUse", "propGapRatio", "propLengthComp", "propOutwardShift", "propMoveAxis",
         "propOffsetMoveAway", "propOffsetX", "propOffsetY", "propBridgeX", "propBridgeY", "propBridgeWidth",
         "propToeHeelShift", "propChamferSize", "propSizeW", "propSizeH", "propDonutInner",
         "propBgaThreshold", "propChipThreshold", "propInvertHouse", "propMiniChip",
@@ -3552,7 +3617,7 @@ function setupPkgEventListeners() {
 
     // Single Pad Live Inputs (0ms Live-Update beim Hoch/Runter-Klicken der Spinner!)
     [
-        "inputPadCustomW", "inputPadCustomH", "inputPadCustomUndersize"
+        "inputPadCustomW", "inputPadCustomH", "inputPadCustomUndersize", "inputPadOffX", "inputPadOffY"
     ].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -3561,6 +3626,25 @@ function setupPkgEventListeners() {
         }
     });
     document.getElementById("selectPinRule")?.addEventListener("change", onSinglePinParamChanged);
+
+    // Pfeiltasten verschieben die manuelle Öffnung des gewählten Pins (Umschalt = 0,05 mm)
+    window.addEventListener("keydown", (e) => {
+        if (!e.key.startsWith("Arrow")) return;
+        const bar = document.getElementById("singlePadBar");
+        if (!bar || bar.classList.contains("hidden") || pkgState.pinBarMode !== "single") return;
+        if (document.getElementById("selectPinRule")?.value !== "manual") return;
+        const tag = (document.activeElement?.tagName || "").toLowerCase();
+        if (tag === "input" || tag === "select" || tag === "textarea") return;
+        const step = e.shiftKey ? 0.05 : 0.01;
+        const fx = document.getElementById("inputPadOffX"), fy = document.getElementById("inputPadOffY");
+        const dx = { ArrowLeft: -step, ArrowRight: step }[e.key] || 0;
+        const dy = { ArrowDown: -step, ArrowUp: step }[e.key] || 0;
+        fx.value = r4js((parseFloat(fx.value) || 0) + dx);
+        fy.value = r4js((parseFloat(fy.value) || 0) + dy);
+        e.preventDefault();
+        e.stopPropagation();
+        onSinglePinParamChanged();
+    }, true);
 
     // Measurement Tool in Stencil Generator
     document.getElementById("btnMeasurePkg")?.addEventListener("click", () => toggleMeasureTool());
@@ -3571,6 +3655,11 @@ function setupPkgEventListeners() {
     // Package 90° drehen
     document.getElementById("btnRotatePkg")?.addEventListener("click", () => {
         pkgState.rotation = ((pkgState.rotation || 0) + 90) % 360;
+        if (pkgState.selectedPin !== null && pkgState.pinBarMode === "single") {
+            const pad = pkgState.activePackageData?.pads?.find(p => p.pin === pkgState.selectedPin);
+            const ovs = pkgState.activePackageData?.pad_overrides || {};
+            if (pad) fillPinBarFromOverride(ovs[pad.pin] || ovs[String(pad.pin)] || null, pad);
+        }
         showToast(`⟳ Package gedreht: ${pkgState.rotation}°`);
         renderPkgPreview();
     });
@@ -3741,28 +3830,17 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
     if (btnSavePadOverride) {
         btnSavePadOverride.addEventListener("click", async () => {
             if (pkgState.pinBarMode === "all") {
-                const v = readPinBarValues();
-                const override = { rule_type: v.ruleType };
-                if (!isNaN(v.red)) { override.undersize_w = v.red; override.undersize_h = v.red; }
-                const data = await applyPinsBulk(override, v.w, v.h);
+                const built = buildPinPayload();
+                const manual = document.getElementById("selectPinRule")?.value === "manual";
+                const override = manual ? built : { rule_type: built.rule_type, undersize_w: built.undersize_w, undersize_h: built.undersize_h };
+                const data = await applyPinsBulk(override, manual ? NaN : built.w, manual ? NaN : built.h);
                 if (data?.status === "ok") showToast(`Alle ${data.pins} Pins angepasst`);
                 await refreshApertureData();
                 return;
             }
             if (!pkgState.activePkgName || pkgState.selectedPin === null) return;
             const pinNum = pkgState.selectedPin;
-            const ruleType = document.getElementById("selectPinRule").value;
-            const w = parseFloat(document.getElementById("inputPadCustomW").value);
-            const h = parseFloat(document.getElementById("inputPadCustomH").value);
-            const red = parseFloat(document.getElementById("inputPadCustomUndersize").value) || 0.025;
-
-            const payload = {
-                rule_type: ruleType,
-                w: w,
-                h: h,
-                undersize_w: red,
-                undersize_h: red
-            };
+            const payload = buildPinPayload();
 
             try {
                 const res = await fetch(`/api/package/${encodeURIComponent(pkgState.activePkgName)}/pin/${pinNum}/override`, {
@@ -3791,6 +3869,33 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
     document.getElementById("btnApplyPinToAll")?.addEventListener("click", async () => {
         if (!pkgState.activePkgName || pkgState.selectedPin === null) return;
         const v = readPinBarValues();
+        if (v.ruleType === "manual") {
+            // Feste Öffnung auf gleich große Pads übertragen; Versatz spiegelbildlich je Seite des Bauteils
+            const built = buildPinPayload();
+            const pads = pkgState.activePackageData?.pads || [];
+            const ref = pads.find(p => p.pin === pkgState.selectedPin);
+            if (!ref) return;
+            const same = pads.filter(p => Math.abs(p.w - ref.w) < 0.005 && Math.abs(p.h - ref.h) < 0.005);
+            const sx = (a, b) => (Math.sign(a) || 1) === (Math.sign(b) || 1) ? 1 : -1;
+            const pkgName = pkgState.activePkgName;
+            let data = null;
+            for (const p of same) {
+                const o = { ...built, offset_x: built.offset_x * sx(p.cx, ref.cx), offset_y: built.offset_y * sx(p.cy, ref.cy) };
+                data = await (await fetch(`/api/package/${encodeURIComponent(pkgName)}/pin/${p.pin}/override`, {
+                    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(o)
+                })).json();
+            }
+            if (data?.preview && pkgName === pkgState.activePkgName) {
+                pkgState.activePackageData = data.preview;
+                populatePinDropdown(data.preview.pads, data.preview.pad_overrides);
+                const dd = document.getElementById("selectPinDropdown");
+                if (dd) dd.value = pkgState.selectedPin;
+                renderPkgPreview();
+            }
+            showToast(`Manuelle Öffnung von Pin ${pkgState.selectedPin} auf ${same.length} gleich große Pins übernommen (Versatz gespiegelt)`);
+            await refreshApertureData();
+            return;
+        }
         const override = { rule_type: v.ruleType };
         if (!isNaN(v.red)) { override.undersize_w = v.red; override.undersize_h = v.red; }
         const data = await applyPinsBulk(override, v.w, v.h, pkgState.selectedPin);
