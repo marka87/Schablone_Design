@@ -2245,6 +2245,9 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: none; outli
 ::-webkit-scrollbar-thumb { background: rgba(121, 121, 121, 0.4); }
 ::-webkit-scrollbar-thumb:hover { background: rgba(100, 100, 100, 0.7); }
 
+/* Regelpanel bearbeitet einen einzelnen Pin */
+.rule-source-banner.pin-target { border-left: 3px solid #d29922; background: rgba(210, 153, 34, 0.10); }
+
 /* Grabstein-Liste: Zeilen anklickbar */
 .tomb-list .tomb-row { cursor: pointer; }
 .tomb-list .tomb-row:hover { background: var(--bg-hover); }

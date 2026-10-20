@@ -858,11 +858,12 @@ impl StencilEngine {
 
     /// Übersteuerung für alle Pins eines Packages. Breite/Höhe werden nur auf Pins übertragen, deren
     /// Kupfergröße dem Referenzpin `match_pin` entspricht (gleichartige Pads); ohne Referenz auf alle.
-    pub fn override_package_pins_bulk(&mut self, pkg_name: &str, data: &Map<String, Value>, w: Option<f64>, h: Option<f64>, match_pin: Option<i64>) -> usize {
+    pub fn override_package_pins_bulk(&mut self, pkg_name: &str, data: &Map<String, Value>, w: Option<f64>, h: Option<f64>, match_pin: Option<i64>, only: Option<&[i64]>) -> usize {
         let target = self.resolve_alias(pkg_name);
         let Some(pkg) = self.packages.get_mut(&target) else { return 0 };
         let reference = match_pin.and_then(|mp| pkg.pads_relative.iter().find(|p| p.pin == mp)).map(|p| (p.w, p.h));
-        let pins: Vec<(i64, f64, f64)> = pkg.pads_relative.iter().map(|p| (p.pin, p.w, p.h)).collect();
+        // Nur die übergebenen Pins (Mausauswahl / gleiche Pads), sonst alle
+        let pins: Vec<(i64, f64, f64)> = pkg.pads_relative.iter().filter(|p| only.map_or(true, |o| o.contains(&p.pin))).map(|p| (p.pin, p.w, p.h)).collect();
         let mut clean = data.clone();
         clean.remove("w");
         clean.remove("h");
@@ -883,6 +884,15 @@ impl StencilEngine {
         }
         self.regenerate_package_apertures(&target, None);
         pins.len()
+    }
+
+    /// Pin-Anpassungen für die angegebenen Pins entfernen.
+    pub fn reset_package_pins(&mut self, pkg_name: &str, pins: &[i64]) -> usize {
+        let target = self.resolve_alias(pkg_name);
+        let Some(pkg) = self.packages.get_mut(&target) else { return 0 };
+        let n = pins.iter().filter(|p| pkg.pad_overrides.remove(p).is_some()).count();
+        self.regenerate_package_apertures(&target, None);
+        n
     }
 
     pub fn reset_package_pins_all(&mut self, pkg_name: &str) -> bool {

@@ -896,6 +896,10 @@
                                 <select id="pinSliceGrid" class="pin-slice-only hidden" title="Fensterung (Spalten × Zeilen, wie angezeigt)">
                                     <option value="1x2">1 × 2</option>
                                     <option value="2x1">2 × 1</option>
+                                    <option value="1x3">1 × 3</option>
+                                    <option value="3x1">3 × 1</option>
+                                    <option value="1x4">1 × 4</option>
+                                    <option value="4x1">4 × 1</option>
                                     <option value="2x2" selected>2 × 2</option>
                                     <option value="3x2">3 × 2</option>
                                     <option value="2x3">2 × 3</option>
@@ -907,7 +911,7 @@
                                 <input type="number" id="inputPadOffY" class="pin-manual-only hidden" placeholder="dY" step="0.01" style="width: 64px;" title="Versatz nach oben (mm, wie angezeigt) – Pfeiltasten ↑/↓"> 
                                 <button id="btnSavePadOverride" class="btn btn-xs btn-primary">Anpassen</button>
                                 <button id="btnResetPadOverride" class="btn btn-xs btn-ghost">Reset</button>
-                                <button id="btnApplyPinToAll" class="btn btn-xs btn-ghost" title="Regel und Reduktion auf alle Pins übernehmen; Breite/Höhe nur auf Pins gleicher Kupfergröße">Für alle übernehmen</button>
+                                <button id="btnApplyPinToAll" class="btn btn-xs btn-ghost" title="Alle Einstellungen dieses Pins auf Pads gleicher Größe und Form übernehmen (Pad-Gruppe)">Für gleiche Pads übernehmen</button>
                                 <button id="btnClosePadBar" class="btn-close-sm">&times;</button>
                             </div>
                         </div>

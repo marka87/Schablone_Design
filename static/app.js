@@ -401,6 +401,39 @@ async function openIpcProfiles() {
     document.getElementById("ipcProfileModal").classList.remove("hidden");
 }
 
+// Regel nur für einen Pin speichern ("Wie Package" = Pin-Anpassung entfernen)
+async function savePinRule(target, ruleData) {
+    const cur = pkgState.ruleTarget;
+    if (!cur || cur.kind !== "pin" || cur.id !== target.id || cur.pin !== target.pin) return;
+    const url = `/api/package/${encodeURIComponent(target.id)}/pin/${target.pin}/override`;
+    let res;
+    if (ruleData.rule_type === "inherit") {
+        res = await fetch(url, { method: "DELETE" });
+    } else {
+        // Größenvorgaben (B/H) der bestehenden Pin-Anpassung behalten
+        const old = pinOverrideOf(target.pin) || {};
+        const keep = {};
+        for (const k of ["w", "h", "manual"]) if (old[k] !== undefined) keep[k] = old[k];
+        res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...keep, ...ruleData }) });
+    }
+    const data = await res.json();
+    const now = pkgState.ruleTarget;
+    if (!now || now.kind !== "pin" || now.pin !== target.pin) return;
+    if (data.preview) {
+        pkgState.activePackageData = data.preview;
+        populatePinDropdown(data.preview.pads, data.preview.pad_overrides);
+        const dd = document.getElementById("selectPinDropdown");
+        if (dd) dd.value = target.pin;
+        const pad = data.preview.pads.find(p => p.pin === target.pin);
+        if (pad) fillPinBarFromOverride(pinOverrideOf(target.pin), pad);
+        if (ruleData.rule_type === "inherit") setPinRuleTarget(target.pin); else updateRuleSourceBanner();
+        renderPkgPreview();
+        renderPkgTree();
+    }
+    await refreshApertureData();
+    refreshHistory();
+}
+
 async function saveIpcProfiles() {
     const byClass = {};
     document.querySelectorAll("#ipcProfileTable input[data-class]").forEach(inp => {
@@ -3089,17 +3122,52 @@ function setupPkgCanvas() {
             }
         }
 
-        if (clickedPad) {
-            selectPkgPin(clickedPad.pin, clickedPad);
-        } else {
+        const panButton = e.button === 1 || e.button === 2 || (e.button === 0 && pkgState.spaceDown);
+        if (panButton) {
+            e.preventDefault();
             pkgState.isDragging = true;
+            pkgState.panMoved = false;
             pkgState.dragStartX = e.clientX - pkgState.panX;
             pkgState.dragStartY = e.clientY - pkgState.panY;
+            return;
         }
+        if (e.button !== 0) return;
+        const additive = e.ctrlKey || e.shiftKey;
+        const current = pkgState.pinBarMode === "multi" ? pkgState.selectedPins : (pkgState.selectedPin !== null ? [pkgState.selectedPin] : []);
+        if (clickedPad) {
+            if (additive) {
+                selectPkgPins(current.includes(clickedPad.pin) ? current.filter(x => x !== clickedPad.pin) : [...current, clickedPad.pin]);
+            } else {
+                selectPkgPin(clickedPad.pin, clickedPad);
+                renderPkgTree();
+            }
+        } else {
+            // Auswahlrahmen aufziehen
+            const r = pkgCanvas.getBoundingClientRect();
+            pkgState.box = { x0: e.clientX - r.left, y0: e.clientY - r.top, x1: e.clientX - r.left, y1: e.clientY - r.top, add: additive, base: current };
+        }
+    });
+    pkgContainer.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
+    window.addEventListener("keydown", (e) => {
+        if (e.code !== "Space" || currentWorkspaceMode !== "package") return;
+        const tag = (document.activeElement?.tagName || "").toLowerCase();
+        if (tag === "input" || tag === "select" || tag === "textarea") return;
+        pkgState.spaceDown = true;
+        if (pkgCanvas) pkgCanvas.style.cursor = "grab";
+        e.preventDefault();
+    });
+    window.addEventListener("keyup", (e) => {
+        if (e.code === "Space") { pkgState.spaceDown = false; if (pkgCanvas) pkgCanvas.style.cursor = ""; }
     });
 
     window.addEventListener("mousemove", (e) => {
-        if (pkgState.isDragging) {
+        if (pkgState.box && pkgCanvas) {
+            const r = pkgCanvas.getBoundingClientRect();
+            pkgState.box.x1 = e.clientX - r.left;
+            pkgState.box.y1 = e.clientY - r.top;
+            renderPkgPreview();
+        } else if (pkgState.isDragging) {
+            pkgState.panMoved = true;
             pkgState.panX = e.clientX - pkgState.dragStartX;
             pkgState.panY = e.clientY - pkgState.dragStartY;
             renderPkgPreview();
@@ -3118,10 +3186,28 @@ function setupPkgCanvas() {
 
     window.addEventListener("mouseup", () => {
         pkgState.isDragging = false;
+        const b = pkgState.box;
+        if (!b) return;
+        pkgState.box = null;
+        const r = pkgCanvas.getBoundingClientRect();
+        if (Math.abs(b.x1 - b.x0) < 4 && Math.abs(b.y1 - b.y0) < 4) {
+            // Klick ins Leere: Auswahl aufheben (außer mit Strg/Umschalt)
+            if (!b.add) { openAllPinsBar(); renderPkgTree(); }
+            renderPkgPreview();
+            return;
+        }
+        // Rahmen in Package-Koordinaten (Ecken über die Ansichtsdrehung umrechnen)
+        const corners = [[b.x0, b.y0], [b.x1, b.y0], [b.x0, b.y1], [b.x1, b.y1]].map(([x, y]) => pkgScreenToWorld(x + r.left, y + r.top));
+        const xs = corners.map(c => c.x), ys = corners.map(c => c.y);
+        const [minX, maxX, minY, maxY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+        const hit = (pkgState.activePackageData?.pads || []).filter(p => p.cx >= minX && p.cx <= maxX && p.cy >= minY && p.cy <= maxY).map(p => p.pin);
+        selectPkgPins(b.add ? [...b.base, ...hit] : hit);
+        renderPkgPreview();
     });
 
-    // Rechtsklick im Stencil Generator -> Messungen sofort löschen
+    // Rechtsklick im Stencil Generator -> Messungen sofort löschen (nicht nach Verschieben mit rechter Taste)
     pkgContainer.addEventListener("contextmenu", (e) => {
+        if (pkgState.panMoved) { e.preventDefault(); pkgState.panMoved = false; return; }
         if ((measureState.measurements && measureState.measurements.length > 0) || measureState.active) {
             e.preventDefault();
             clearMeasurements();
@@ -3280,10 +3366,15 @@ function renderPkgTreeItem(list, p) {
             data.pads.forEach((pad, idx) => {
                 const pi = document.createElement("div");
                 const hasOv = ovs[pad.pin] || ovs[String(pad.pin)];
-                pi.className = `pkg-pin-item ${pkgState.selectedPin === pad.pin ? "active" : ""}`;
+                pi.className = `pkg-pin-item ${isPinSelected(pad.pin) ? "active" : ""}`;
                 pi.innerHTML = `<span>${pad.pin}(${idx})</span><span>${pad.w}×${pad.h}${pad.drill ? ` ⌀${pad.drill}` : ""}</span>${hasOv ? `<span class="pin-ov">${icon("edit")}</span>` : ""}`;
                 pi.addEventListener("click", (e) => {
                     e.stopPropagation();
+                    if (e.ctrlKey || e.shiftKey) {
+                        const cur = pkgState.pinBarMode === "multi" ? pkgState.selectedPins : (pkgState.selectedPin !== null ? [pkgState.selectedPin] : []);
+                        selectPkgPins(cur.includes(pad.pin) ? cur.filter(x => x !== pad.pin) : [...cur, pad.pin]);
+                        return;
+                    }
                     selectPkgPin(pad.pin, pad);
                     renderPkgTree();
                 });
@@ -3514,6 +3605,16 @@ function onRuleParamChanged(e) {
     }
     const ruleData = collectRuleFromInputs();
     const target = { ...(pkgState.ruleTarget || { kind: "package", id: pkgState.activePkgName }) };
+    if (target.kind === "pin") {
+        clearTimeout(ruleUpdateTimeout);
+        ruleUpdateTimeout = setTimeout(() => savePinRule(target, ruleData), 60);
+        return;
+    }
+    if (target.kind === "pins") {
+        clearTimeout(ruleUpdateTimeout);
+        ruleUpdateTimeout = setTimeout(() => savePinsRule(target, ruleData), 120);
+        return;
+    }
 
     clearTimeout(ruleUpdateTimeout);
     ruleUpdateTimeout = setTimeout(async () => {
@@ -3559,8 +3660,8 @@ function onRuleParamChanged(e) {
 // Live-Update für Einzelpad-Bearbeitung (0ms direkte Vorschau + 40ms Backend-Sync)
 let singlePinDebounce = null;
 function onSinglePinParamChanged() {
-    if (pkgState.pinBarMode === "all") {
-        // Alle Pins: erst mit "Anpassen" übernehmen
+    if (pkgState.pinBarMode === "all" || pkgState.pinBarMode === "multi") {
+        // Alle Pins / Mausauswahl: erst mit "Anpassen" übernehmen
         document.getElementById("btnSavePadOverride")?.classList.add("btn-pulse");
         return;
     }
@@ -3628,7 +3729,10 @@ function onSinglePinParamChanged() {
                 populatePinDropdown(data.preview.pads, data.preview.pad_overrides);
                 const dropdown = document.getElementById("selectPinDropdown");
                 if (dropdown) dropdown.value = pinNum;
+                // Regelpanel rechts zeigt denselben Stand wie das Popup
+                if (pkgState.ruleTarget?.kind === "pin" && pkgState.ruleTarget.pin === pinNum) setPinRuleTarget(pinNum);
                 renderPkgPreview();
+                renderPkgTree();
             }
         } catch (e) {
             console.error("Fehler beim Live-Sync des Pin-Overrides:", e);
@@ -3703,7 +3807,7 @@ function renderPkgPreview() {
     // 3. Copper Pads (Grün #00A86B / #10B981) - Exakt wie PCB Investigator Screenshot 1
     if (pkgState.showCopper && data.pads) {
         for (const p of data.pads) {
-            const isSelected = pkgState.selectedPin === p.pin;
+            const isSelected = isPinSelected(p.pin);
             pkgCtx.fillStyle = isSelected ? "rgba(250, 204, 21, 0.4)" : "#00a86b";
             pkgCtx.strokeStyle = isSelected ? "#facc15" : "#047857";
             pkgCtx.lineWidth = 1.2 / pkgState.zoom;
@@ -3808,13 +3912,29 @@ function renderPkgPreview() {
 
     // Dynamic CAD Scale Bar (Maßstab)
     drawCanvasScaleBar(pkgCtx, w, h, pkgState.zoom, 14, 38);
+    // Auswahlrahmen (Maus ziehen)
+    if (pkgState.box) {
+        const b = pkgState.box;
+        pkgCtx.save();
+        resetToCssPixels(pkgCtx);
+        pkgCtx.strokeStyle = "#0078d4";
+        pkgCtx.fillStyle = "rgba(0, 120, 212, 0.12)";
+        pkgCtx.lineWidth = 1;
+        pkgCtx.setLineDash([4, 3]);
+        const x = Math.min(b.x0, b.x1), y = Math.min(b.y0, b.y1), w = Math.abs(b.x1 - b.x0), h = Math.abs(b.y1 - b.y0);
+        pkgCtx.fillRect(x, y, w, h);
+        pkgCtx.strokeRect(x, y, w, h);
+        pkgCtx.restore();
+    }
 }
 
 // Pin-Editor im Modus "Alle Pins": Regel/Größe/Reduktion für das ganze Package
 function openAllPinsBar() {
     const data = pkgState.activePackageData;
     if (!data) return;
+    if (pkgState.ruleTarget?.kind === "pin" || pkgState.ruleTarget?.kind === "pins") setPackageRuleTarget();
     pkgState.selectedPin = null;
+    pkgState.selectedPins = [];
     pkgState.pinBarMode = "all";
     const bar = document.getElementById("singlePadBar");
     bar.classList.remove("hidden");
@@ -3848,14 +3968,14 @@ function openAllPinsBar() {
 }
 
 // Sammel-Übersteuerung für alle Pins (matchPin: Breite/Höhe nur auf gleich große Pads übertragen)
-async function applyPinsBulk(override, w, h, matchPin = null) {
+async function applyPinsBulk(override, w, h, matchPin = null, pins = null) {
     const pkgName = pkgState.activePkgName;
     if (!pkgName) return null;
     document.getElementById("btnSavePadOverride")?.classList.remove("btn-pulse");
     const res = await fetch(`/api/package/${encodeURIComponent(pkgName)}/pins/override`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ override, w: isNaN(w) ? null : w, h: isNaN(h) ? null : h, match_pin: matchPin })
+        body: JSON.stringify({ override, w: isNaN(w) ? null : w, h: isNaN(h) ? null : h, match_pin: matchPin, pins })
     });
     const data = await res.json();
     if (pkgName !== pkgState.activePkgName) return data; // inzwischen anderes Package gewählt
@@ -3867,6 +3987,76 @@ async function applyPinsBulk(override, w, h, matchPin = null) {
         renderPkgPreview();
     }
     return data;
+}
+
+// Pins mit gleicher Kupfergröße und Form wie der Referenzpin (eine "Pad-Gruppe")
+function samePadPins(refPin) {
+    const pads = pkgState.activePackageData?.pads || [];
+    const ref = pads.find(p => p.pin === refPin);
+    if (!ref) return [refPin];
+    return pads.filter(p => Math.abs(p.w - ref.w) < 0.005 && Math.abs(p.h - ref.h) < 0.005 && (p.shape || "rect") === (ref.shape || "rect")).map(p => p.pin);
+}
+
+// Mehrere Pins ausgewählt (Strg+Klick / Rahmen): Popup und Regelpanel gelten nur für diese Pins
+function selectPkgPins(pins) {
+    const d = pkgState.activePackageData;
+    if (!d) return;
+    pins = [...new Set(pins)].filter(p => d.pads.some(x => x.pin === p));
+    if (pins.length === 0) { openAllPinsBar(); renderPkgTree(); return; }
+    if (pins.length === 1) { const pad = d.pads.find(p => p.pin === pins[0]); selectPkgPin(pad.pin, pad); renderPkgTree(); return; }
+    pkgState.selectedPin = null;
+    pkgState.selectedPins = pins;
+    pkgState.pinBarMode = "multi";
+    state.highlightPin = null;
+    document.getElementById("singlePadBar").classList.remove("hidden");
+    document.getElementById("lblPinBarPrefix").textContent = "";
+    document.getElementById("lblSelectedPin").textContent = `${pins.length} Pins ausgewählt`;
+    document.getElementById("btnApplyPinToAll")?.classList.add("hidden");
+    const dd = document.getElementById("selectPinDropdown");
+    if (dd) dd.value = "all";
+    const pads = d.pads.filter(p => pins.includes(p.pin));
+    const ovs = pins.map(pinOverrideOf);
+    const common = (vals) => vals.length > 0 && vals.every(v => v === vals[0]) ? vals[0] : null;
+    const rt = common(ovs.map(o => (o?.manual ? "manual" : o?.rule_type) || "inherit"));
+    document.getElementById("selectPinRule").value = rt || "inherit";
+    const [sw, sh] = sizeForScreen(common(pads.map(p => +p.w.toFixed(3))), common(pads.map(p => +p.h.toFixed(3))));
+    const inpW = document.getElementById("inputPadCustomW"), inpH = document.getElementById("inputPadCustomH");
+    inpW.value = sw ?? ""; inpH.value = sh ?? "";
+    inpW.placeholder = sw === null ? "versch." : "B (mm)"; inpH.placeholder = sh === null ? "versch." : "H (mm)";
+    updatePinBarMode();
+    // Regelpanel rechts auf die Auswahl richten
+    const base = d.rule?.rule_type === "inherit" ? d.effective_rule : d.rule;
+    pkgState.ruleTarget = { kind: "pins", id: d.name, pins };
+    const first = ovs.find(o => o && o.rule_type && o.rule_type !== "inherit");
+    populateRuleInputs(rt && rt !== "inherit" && first ? { ...base, ...first } : { ...base, rule_type: "inherit" });
+    updateRuleSourceBanner();
+    renderPkgPreview();
+    renderPkgTree();
+}
+
+function isPinSelected(pin) {
+    return pkgState.selectedPin === pin || (pkgState.pinBarMode === "multi" && (pkgState.selectedPins || []).includes(pin));
+}
+
+// Regel für die Mausauswahl speichern ("Wie Package" = Anpassungen der Auswahl entfernen)
+async function savePinsRule(target, ruleData) {
+    const cur = pkgState.ruleTarget;
+    if (!cur || cur.kind !== "pins" || cur.id !== target.id) return;
+    let data;
+    if (ruleData.rule_type === "inherit") {
+        data = await (await fetch(`/api/package/${encodeURIComponent(target.id)}/pins/reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pins: target.pins }) })).json();
+    } else {
+        data = await applyPinsBulk(ruleData, NaN, NaN, null, target.pins);
+    }
+    if (data?.preview) {
+        pkgState.activePackageData = data.preview;
+        populatePinDropdown(data.preview.pads, data.preview.pad_overrides);
+        updateRuleSourceBanner();
+        renderPkgPreview();
+        renderPkgTree();
+    }
+    await refreshApertureData();
+    refreshHistory();
 }
 
 function readPinBarValues() {
@@ -3971,6 +4161,7 @@ window.fillPinBarFromOverride = fillPinBarFromOverride;
 
 function selectPkgPin(pinNum, padObj) {
     pkgState.selectedPin = pinNum;
+    pkgState.selectedPins = [pinNum];
     pkgState.pinBarMode = "single";
     state.highlightPin = pinNum;
     window.scBroadcast?.("pkg-focus", { pkg: pkgState.activePkgName, pin: pinNum });
@@ -3992,9 +4183,36 @@ function selectPkgPin(pinNum, padObj) {
     fillPinBarFromOverride(ov, padObj);
     const undersizeInput = document.getElementById("inputPadCustomUndersize");
     if (undersizeInput) undersizeInput.value = ov?.undersize_w ?? pkgState.activePackageData?.rule?.undersize_w ?? 0.025;
+    setPinRuleTarget(pinNum);
 
     renderPkgPreview();
 }
+
+// Regelpanel auf einen einzelnen Pin richten: Auswahl und Parameter gelten nur für ihn
+function pinOverrideOf(pin) {
+    const ovs = pkgState.activePackageData?.pad_overrides || {};
+    return ovs[pin] || ovs[String(pin)] || null;
+}
+
+function setPinRuleTarget(pin) {
+    const d = pkgState.activePackageData;
+    if (!d) return;
+    pkgState.ruleTarget = { kind: "pin", id: d.name, pin };
+    const base = d.rule?.rule_type === "inherit" ? d.effective_rule : d.rule;
+    const ov = pinOverrideOf(pin);
+    const own = ov && ov.rule_type && ov.rule_type !== "inherit";
+    populateRuleInputs(own ? { ...base, ...ov } : { ...base, rule_type: "inherit" });
+    updateRuleSourceBanner();
+}
+
+function setPackageRuleTarget() {
+    const d = pkgState.activePackageData;
+    if (!d) return;
+    pkgState.ruleTarget = { kind: "package", id: d.name };
+    populateRuleInputs(d.rule?.rule_type === "inherit" ? { ...d.effective_rule, rule_type: "inherit" } : d.rule);
+    updateRuleSourceBanner();
+}
+window.setPackageRuleTarget = setPackageRuleTarget;
 
 // -------------------------------------------------------------
 // Package Event Listeners
@@ -4299,6 +4517,18 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
     const btnSavePadOverride = document.getElementById("btnSavePadOverride");
     if (btnSavePadOverride) {
         btnSavePadOverride.addEventListener("click", async () => {
+            if (pkgState.pinBarMode === "multi") {
+                const built = buildPinPayload();
+                const manual = document.getElementById("selectPinRule")?.value === "manual";
+                const override = manual ? built : { ...built };
+                delete override.w; delete override.h;
+                const pins = pkgState.selectedPins;
+                const data = await applyPinsBulk(override, manual ? NaN : built.w, manual ? NaN : built.h, null, pins);
+                if (data?.status === "ok") showToast(`${data.pins} ausgewählte Pins angepasst`);
+                await refreshApertureData();
+                selectPkgPins(pins);
+                return;
+            }
             if (pkgState.pinBarMode === "all") {
                 const built = buildPinPayload();
                 const manual = document.getElementById("selectPinRule")?.value === "manual";
@@ -4366,16 +4596,27 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
             await refreshApertureData();
             return;
         }
-        // Felder zeigen Bildschirmrichtung → in den Package-Rahmen umrechnen (sonst verdrehen alle Pads)
+        // Nur auf gleichartige Pads (gleiche Größe und Form) übertragen – alle Regelparameter des Pins
         const built = buildPinPayload();
-        const override = { rule_type: built.rule_type, undersize_w: built.undersize_w, undersize_h: built.undersize_h };
-        const data = await applyPinsBulk(override, built.w, built.h, pkgState.selectedPin);
-        if (data?.status === "ok") showToast(`Einstellungen von Pin ${pkgState.selectedPin} auf ${data.pins} Pins übernommen`);
+        const same = samePadPins(pkgState.selectedPin);
+        const src = { ...(pinOverrideOf(pkgState.selectedPin) || {}), ...built };
+        delete src.w; delete src.h;
+        const data = await applyPinsBulk(src, built.w, built.h, null, same);
+        if (data?.status === "ok") showToast(`Einstellungen von Pin ${pkgState.selectedPin} auf ${data.pins} gleiche Pads übernommen`);
         await refreshApertureData();
     });
 
     if (btnResetPadOverride) {
         btnResetPadOverride.addEventListener("click", async () => {
+            if (pkgState.pinBarMode === "multi" && pkgState.activePkgName) {
+                const pins = pkgState.selectedPins;
+                const d = await (await fetch(`/api/package/${encodeURIComponent(pkgState.activePkgName)}/pins/reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pins }) })).json();
+                if (d.preview) { pkgState.activePackageData = d.preview; populatePinDropdown(d.preview.pads, d.preview.pad_overrides); }
+                await refreshApertureData();
+                selectPkgPins(pins);
+                showToast(`${d.pins} Pins zurückgesetzt`);
+                return;
+            }
             if (pkgState.pinBarMode === "all" && pkgState.activePkgName) {
                 const res = await fetch(`/api/package/${encodeURIComponent(pkgState.activePkgName)}/pins/override`, { method: "DELETE" });
                 const data = await res.json();
@@ -4412,7 +4653,7 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
 
     // Single Pad Override Close
     document.getElementById("btnClosePadBar").addEventListener("click", () => {
-        if (pkgState.pinBarMode === "single") {
+        if (pkgState.pinBarMode === "single" || pkgState.pinBarMode === "multi") {
             openAllPinsBar(); // zurück zur Bearbeitung aller Pins
             return;
         }
@@ -5084,7 +5325,30 @@ function updateRuleSourceBanner() {
     banner.classList.remove("hidden", "inherited", "own");
     btn.classList.add("hidden");
     const inheritOpt = document.querySelector('#selectPkgRule option[value="inherit"]');
-    if (inheritOpt) inheritOpt.disabled = t.kind === "group";
+    if (inheritOpt) {
+        inheritOpt.disabled = t.kind === "group";
+        inheritOpt.textContent = (t.kind === "pin" || t.kind === "pins") ? "Wie Package (keine eigene Pin-Regel)" : "Inherit – Regel der Gruppe übernehmen";
+    }
+    banner.classList.toggle("pin-target", t.kind === "pin" || t.kind === "pins");
+    if (t.kind === "pins") {
+        const own = (t.pins || []).filter(p => { const o = pinOverrideOf(p); return o && o.rule_type && o.rule_type !== "inherit"; }).length;
+        banner.classList.add(own ? "own" : "inherited");
+        text.textContent = `● Auswahl: ${t.pins.length} Pins – Änderungen hier gelten nur für diese Pins (${own} mit eigener Regel). „Wie Package“ setzt die Auswahl zurück.`;
+        if (own) btn.classList.remove("hidden");
+        return;
+    }
+    if (t.kind === "pin") {
+        const ov = pinOverrideOf(t.pin);
+        if (ov && ov.rule_type && ov.rule_type !== "inherit") {
+            banner.classList.add("own");
+            text.textContent = `● Nur Pin ${t.pin}: eigene Regel (${ov.manual ? "manuell" : ov.rule_type}) – andere Pins bleiben unverändert. „Wie Package“ wählen setzt den Pin zurück.`;
+            btn.classList.remove("hidden");
+        } else {
+            banner.classList.add("inherited");
+            text.textContent = `↳ Pin ${t.pin} folgt der Package-Regel – Änderungen hier gelten nur für diesen Pin. Für alle Pins oben „Alle Pins“ wählen.`;
+        }
+        return;
+    }
     if (t.kind === "package") {
         const d = pkgState.activePackageData;
         if (d?.rule?.rule_type === "inherit") {
@@ -5274,6 +5538,8 @@ function setupRuleTargets() {
     });
     document.getElementById("btnRemoveTargetRule")?.addEventListener("click", async () => {
         const t = pkgState.ruleTarget;
+        if (t?.kind === "pin") { await savePinRule(t, { rule_type: "inherit" }); return; }
+        if (t?.kind === "pins") { await savePinsRule(t, { rule_type: "inherit" }); return; }
         if (!t || (t.kind !== "component" && t.kind !== "zone")) return;
         await fetch(`/api/${t.kind}/${encodeURIComponent(t.id)}/rule`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: false }) });
         await fetch(`/api/${t.kind}/${encodeURIComponent(t.id)}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });

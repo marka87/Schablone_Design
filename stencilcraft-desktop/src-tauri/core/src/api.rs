@@ -599,8 +599,14 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             let w = body.get("w").and_then(val_f64).filter(|v| *v > 0.0);
             let h = body.get("h").and_then(val_f64).filter(|v| *v > 0.0);
             let match_pin = body.get("match_pin").and_then(val_f64).map(|v| v as i64);
-            let n = e.override_package_pins_bulk(name, data, w, h, match_pin);
+            let only: Option<Vec<i64>> = body.get("pins").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(val_f64).map(|v| v as i64).collect());
+            let n = e.override_package_pins_bulk(name, data, w, h, match_pin, only.as_deref());
             ok(json!({"status": if n > 0 { "ok" } else { "error" }, "pins": n, "preview": e.get_package_preview_data(name), "stats": stats(e)}))
+        }
+        ("POST", ["api", "package", name, "pins", "reset"]) => {
+            let pins: Vec<i64> = body.get("pins").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(val_f64).map(|v| v as i64).collect()).unwrap_or_default();
+            let n = e.reset_package_pins(name, &pins);
+            ok(json!({"status": "ok", "pins": n, "preview": e.get_package_preview_data(name), "stats": stats(e)}))
         }
         ("DELETE", ["api", "package", name, "pins", "override"]) => {
             let s = e.reset_package_pins_all(name);
