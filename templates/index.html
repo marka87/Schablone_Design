@@ -194,6 +194,17 @@
                 </div>
 
                 <!-- Layer List Table with Checkboxes (Haken) -->
+                <div class="layer-filter-bar">
+                    <input type="search" id="layerSearch" placeholder="🔍 Lage suchen…" title="Nach Name oder Datei filtern">
+                    <div class="layer-filter-chips" id="layerFilterChips">
+                        <button data-f="all" class="active">Alle</button>
+                        <button data-f="copper">Kupfer</button>
+                        <button data-f="mask">Maske</button>
+                        <button data-f="paste">Paste</button>
+                        <button data-f="visible" title="Nur eingeblendete Lagen">👁️</button>
+                    </div>
+                </div>
+
                 <div class="layer-table-container">
                     <table class="layer-table" id="layerTable">
                         <thead>

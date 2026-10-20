@@ -1451,15 +1451,113 @@ async function loadLayers() {
     }
 }
 
+// Gruppen im Lagen-Manager (Reihenfolge = Anzeige). Dielektrika/Aufbau sind standardmäßig eingeklappt.
+const LAYER_GROUPS = [
+    { key: "assembly", label: "Bestückung & Paste", test: (l) => ["component", "paste", "paste_orig", "zone", "fiducial"].includes(l.type) },
+    { key: "copper", label: "Kupfer", test: (l) => l.type === "copper" },
+    { key: "mask", label: "Lötstopp / Maske", test: (l) => l.type === "mask" },
+    { key: "silk", label: "Bestückungsdruck", test: (l) => l.type === "silk" },
+    { key: "drill", label: "Bohrungen", test: (l) => l.type === "drill" },
+    { key: "profile", label: "Kontur", test: (l) => l.type === "profile" },
+    { key: "stackup", label: "Dielektrika & Aufbau", collapsed: true, test: (l) => /dielectric|polyimide|prepreg|core|coverlay|cover(top|bottom)|stiffener|bend_area|flex_area|rigid_area/i.test(`${l.name} ${l.filename || ""}`) },
+    { key: "other", label: "Sonstige", test: () => true },
+];
+const layerUi = { search: "", filter: "all", collapsed: null };
+
+function layerGroupOf(layer) {
+    // Aufbau-Lagen zuerst prüfen, damit Coverlay/Stiffener nicht unter "Sonstige" landen
+    const stack = LAYER_GROUPS.find(g => g.key === "stackup");
+    if (!["copper", "paste", "paste_orig", "component", "profile", "drill"].includes(layer.type) && stack.test(layer)) return stack;
+    return LAYER_GROUPS.find(g => g.key !== "stackup" && g.test(layer));
+}
+
+function layerMatchesFilter(layer) {
+    const q = layerUi.search.trim().toLowerCase();
+    if (q && !`${layer.name} ${layer.filename || ""}`.toLowerCase().includes(q)) return false;
+    switch (layerUi.filter) {
+        case "copper": return layer.type === "copper";
+        case "mask": return layer.type === "mask";
+        case "paste": return layer.type === "paste" || layer.type === "paste_orig";
+        case "visible": return layer.visible !== false;
+        default: return true;
+    }
+}
+
+function setupLayerFilters() {
+    try { layerUi.collapsed = JSON.parse(localStorage.getItem("sc.layerGroups") || "null"); } catch (e) { layerUi.collapsed = null; }
+    if (!layerUi.collapsed) layerUi.collapsed = Object.fromEntries(LAYER_GROUPS.map(g => [g.key, Boolean(g.collapsed)]));
+    document.getElementById("layerSearch")?.addEventListener("input", (e) => { layerUi.search = e.target.value; renderLayerTable(); });
+    document.querySelectorAll("#layerFilterChips button").forEach(btn => btn.addEventListener("click", () => {
+        layerUi.filter = btn.dataset.f;
+        document.querySelectorAll("#layerFilterChips button").forEach(b => b.classList.toggle("active", b === btn));
+        renderLayerTable();
+    }));
+}
+
+function setLayerVisible(layer, checked) {
+    layer.visible = checked;
+    if (state.layerPrimitives[layer.id]) state.layerPrimitives[layer.id].visible = checked;
+    fetch(`/api/layer/${layer.id}/toggle`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visible: checked })
+    });
+}
+
 function renderLayerTable() {
     const tbody = document.getElementById("layerTableBody");
     if (!tbody) return;
     tbody.innerHTML = "";
+    if (!layerUi.collapsed) setupLayerFilters();
 
     const countBadge = document.getElementById("layerCountBadge");
     if (countBadge) countBadge.innerText = state.layers.length;
 
-    for (const layer of state.layers) {
+    // Bei Suche/Filter alle passenden Gruppen aufgeklappt zeigen
+    const filtering = layerUi.search.trim() !== "" || layerUi.filter !== "all";
+    let shown = 0;
+    for (const g of LAYER_GROUPS) {
+        const all = state.layers.filter(l => layerGroupOf(l) === g);
+        const members = all.filter(layerMatchesFilter);
+        if (members.length === 0) continue;
+        const collapsed = !filtering && layerUi.collapsed[g.key];
+        const visibleCount = all.filter(l => l.visible !== false).length;
+
+        const gr = document.createElement("tr");
+        gr.className = "layer-group-row";
+        gr.innerHTML = `<td colspan="6"><div class="layer-group-head">
+            <span class="grp-caret">${collapsed ? "▸" : "▾"}</span>
+            <span>${g.label}</span>
+            <span class="grp-count">${members.length}${visibleCount ? ` · ${visibleCount} sichtbar` : ""}</span>
+            <button class="grp-eye" title="${visibleCount ? "Alle Lagen der Gruppe ausblenden" : "Alle Lagen der Gruppe einblenden"}">${visibleCount ? "🙈" : "👁️"}</button>
+        </div></td>`;
+        gr.addEventListener("click", () => {
+            layerUi.collapsed[g.key] = !layerUi.collapsed[g.key];
+            localStorage.setItem("sc.layerGroups", JSON.stringify(layerUi.collapsed));
+            renderLayerTable();
+        });
+        gr.querySelector(".grp-eye").addEventListener("click", (e) => {
+            e.stopPropagation();
+            const on = visibleCount === 0;
+            for (const l of members) setLayerVisible(l, on);
+            renderLayerTable();
+            render();
+        });
+        tbody.appendChild(gr);
+        if (!collapsed) {
+            for (const layer of members) tbody.appendChild(layerRow(layer));
+        }
+        shown += members.length;
+    }
+    if (shown === 0 && state.layers.length > 0) {
+        const tr = document.createElement("tr");
+        tr.className = "layer-empty-row";
+        tr.innerHTML = `<td colspan="6">Keine Lage passt zu Suche/Filter</td>`;
+        tbody.appendChild(tr);
+    }
+}
+
+function layerRow(layer) {
         const tr = document.createElement("tr");
         if (!layer.visible) tr.classList.add("row-hidden");
 
@@ -1489,27 +1587,12 @@ function renderLayerTable() {
             </td>
         `;
 
-        // Checkbox "Haken" Toggle Event -> Sofortiges 0ms Canvas update!
+        // Sichtbarkeit: sofort zeichnen, im Hintergrund synchronisieren; Gruppenzähler aktualisieren
         const chk = tr.querySelector(".layer-chk-input");
         chk.addEventListener("change", (e) => {
-            const checked = e.target.checked;
-            layer.visible = checked;
-            if (state.layerPrimitives[layer.id]) {
-                state.layerPrimitives[layer.id].visible = checked;
-            }
-            if (checked) {
-                tr.classList.remove("row-hidden");
-            } else {
-                tr.classList.add("row-hidden");
-            }
+            setLayerVisible(layer, e.target.checked);
+            renderLayerTable();
             render();
-
-            // Im Hintergrund synchronisieren
-            fetch(`/api/layer/${layer.id}/toggle`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ visible: checked })
-            });
         });
 
         // Color Picker Event -> Sofortiges Canvas-Update!
@@ -1542,8 +1625,7 @@ function renderLayerTable() {
             }
         });
 
-        tbody.appendChild(tr);
-    }
+        return tr;
 }
 
 function escapeHtml(text) {

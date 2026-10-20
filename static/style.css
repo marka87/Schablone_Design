@@ -1809,10 +1809,25 @@ body:not(.is-desktop) .desktop-only { display: none !important; }
 .rule-config-card.panel-collapsed { width: auto !important; }
 
 /* Regel-Einstellungen wahlweise als Seitenleiste neben der Vorschau */
+/* Lagen-Manager: Suche, Filter, Gruppen */
+.layer-filter-bar { display: flex; flex-direction: column; gap: 6px; padding: 6px 10px 4px; }
+.layer-filter-bar input[type="search"] { width: 100%; padding: 4px 8px; font-size: 0.8rem; }
+.layer-filter-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.layer-filter-chips button { font-size: 0.72rem; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--border-color); background: transparent; color: var(--text-secondary); cursor: pointer; }
+.layer-filter-chips button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.layer-group-row td { padding: 5px 8px !important; background: rgba(255, 255, 255, 0.03); border-top: 1px solid var(--border-color); cursor: pointer; user-select: none; }
+.layer-group-head { display: flex; align-items: center; gap: 6px; font-size: 0.76rem; font-weight: 700; color: var(--text-secondary); }
+.layer-group-head .grp-caret { width: 12px; display: inline-block; }
+.layer-group-head .grp-count { font-weight: 500; opacity: 0.8; }
+.layer-group-head .grp-eye { margin-left: 2px; border: none; background: transparent; cursor: pointer; font-size: 0.8rem; opacity: 0.75; padding: 0 4px; }
+.layer-group-head .grp-eye:hover { opacity: 1; }
+.layer-empty-row td { padding: 10px !important; text-align: center; color: var(--text-secondary); font-size: 0.78rem; }
+
 /* Fensterrolle: Übersicht (Board) zeigt Analyse, Bearbeitung (Generator) die Werkzeuge */
 body.ws-package .ov-only { display: none !important; }
 body:not(.ws-package) .ed-only { display: none !important; }
-.thickness-control input { width: 64px; min-width: 64px; padding: 3px 6px; text-align: right; font-family: var(--font-mono); }
+.thickness-control input { width: 5.2em; min-width: 5.2em; padding: 3px 6px; text-align: right; font-family: var(--font-mono); -moz-appearance: textfield; }
+.thickness-control input::-webkit-inner-spin-button, .thickness-control input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .thickness-control .unit { font-size: 0.75rem; color: var(--text-secondary); }
 
 /* Pad Inspector: Einzelpad-Werkzeuge einklappbar */
