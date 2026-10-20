@@ -7,7 +7,8 @@ set "PATH=%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.U
 rem 1. Web-Oberflaeche (static/ + templates/) in die Desktop-UI uebernehmen
 copy /Y "%ROOT%static\app.js" "%ROOT%stencilcraft-desktop\ui\app.js" >nul || goto :error
 copy /Y "%ROOT%static\style.css" "%ROOT%stencilcraft-desktop\ui\style.css" >nul || goto :error
-powershell -NoProfile -Command "(Get-Content -Raw -Encoding UTF8 '%ROOT%templates\index.html').Replace('href=\"/static/style.css\"','href=\"./style.css\"').Replace('<script src=\"/static/app.js\"></script>','<script src=\"./bridge.js\"></script>' + [char]10 + '    <script src=\"./app.js\"></script>' + [char]10 + '    <script src=\"./desktop.js\"></script>') | Set-Content -NoNewline -Encoding UTF8 '%ROOT%stencilcraft-desktop\ui\index.html'" || goto :error
+copy /Y "%ROOT%static\icons.js" "%ROOT%stencilcraft-desktop\ui\icons.js" >nul || goto :error
+powershell -NoProfile -Command "(Get-Content -Raw -Encoding UTF8 '%ROOT%templates\index.html').Replace('href=\"/static/style.css\"','href=\"./style.css\"').Replace('src=\"/static/icons.js\"','src=\"./icons.js\"').Replace('<script src=\"/static/app.js\"></script>','<script src=\"./bridge.js\"></script>' + [char]10 + '    <script src=\"./app.js\"></script>' + [char]10 + '    <script src=\"./desktop.js\"></script>') | Set-Content -NoNewline -Encoding UTF8 '%ROOT%stencilcraft-desktop\ui\index.html'" || goto :error
 
 rem 2. Tests der Engine und Release-Build (Assets eingebettet)
 cd /d "%ROOT%stencilcraft-desktop\src-tauri" || goto :error

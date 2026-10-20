@@ -794,7 +794,7 @@ function toggleMeasureTool(forceState = null) {
         bannerPkg?.classList.remove("hidden");
         boardContainer?.classList.add("measuring-mode");
         pkgContainerEl?.classList.add("measuring-mode");
-        showToast("📏 Messwerkzeug aktiv: 1. Punkt klicken, 2. Zielpunkt klicken");
+        showToast("Messwerkzeug aktiv: 1. Punkt klicken, 2. Zielpunkt klicken");
     } else {
         btnBoard?.classList.remove("active");
         btnPkg?.classList.remove("active");
@@ -895,11 +895,11 @@ function renderFrame(rect) {
         ctx.fillStyle = "rgba(148, 163, 184, 0.75)";
         ctx.font = "bold 18px Inter, sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText("⚡ SMT StencilCraft bereit", rect.width / 2, rect.height / 2 - 15);
+        ctx.fillText("SMT StencilCraft bereit", rect.width / 2, rect.height / 2 - 15);
 
         ctx.fillStyle = "rgba(100, 116, 139, 0.9)";
         ctx.font = "14px Inter, sans-serif";
-        ctx.fillText("Klicken Sie oben auf '📂 ODB++ / Gerber öffnen' oder ziehen Sie eine Datei / ZIP hierher.", rect.width / 2, rect.height / 2 + 18);
+        ctx.fillText("Klicken Sie oben auf 'ODB++ / Gerber öffnen' oder ziehen Sie eine Datei / ZIP hierher.", rect.width / 2, rect.height / 2 + 18);
         ctx.restore();
         updateCoordsDisplay();
         return;
@@ -1409,7 +1409,7 @@ function updateThicknessRecommendation(ap) {
         btn.onclick = async () => {
             const res = await fetch("/api/zone/around_component", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ component: ap.comp_id, thickness: step / 1000 }) });
             const d = await res.json();
-            if (!res.ok) { showToast(`❌ ${d.message || d.error}`); return; }
+            if (!res.ok) { showToast(`${d.message || d.error}`); return; }
             await refreshApertureData();
             await refreshHistory();
             if (state.selectedApertureId != null) await selectAperture(state.selectedApertureId);
@@ -1432,7 +1432,7 @@ async function openThicknessOverview() {
     }).join("");
     const lim = (d.limiting || []).slice(0, 6).map(l => `<div><span>${escapeHtml(l.package)}</span><span>≤ ${Math.round(l.t_max * 1000)} µm · ${l.pads_below}/${l.pads} Pads</span></div>`).join("");
     pop.innerHTML = `<div><strong>Grund-Blechdicke</strong> – ${d.pads} Pads außerhalb von Stufenzonen</div>
-        <table><tr><th>Dicke</th><th>🟢</th><th>🟡</th><th>🔴</th></tr>${rows}</table>
+        <table><tr><th>Dicke</th><th><span class="dot ok"></span></th><th><span class="dot warn"></span></th><th><span class="dot crit"></span></th></tr>${rows}</table>
         <div>★ Empfehlung (alle Pads grün): <strong>${rec} µm</strong>${noCrit > rec ? ` · höchstens ${noCrit} µm ohne rote Pads` : ""}</div>
         <div style="opacity:.75">Zeile anklicken, um die Dicke zu übernehmen</div>
         ${lim ? `<div class="lim"><div><strong>Begrenzende Packages bei ${cur} µm</strong></div>${lim}<div>→ Für diese besser Stufenzonen statt dünnerem Grundblech</div></div>` : ""}`;
@@ -1658,7 +1658,7 @@ function renderLayerTable() {
             <span class="grp-caret">${collapsed ? "▸" : "▾"}</span>
             <span>${g.label}</span>
             <span class="grp-count">${members.length}${visibleCount ? ` · ${visibleCount} sichtbar` : ""}</span>
-            <button class="grp-eye" title="${visibleCount ? "Alle Lagen der Gruppe ausblenden" : "Alle Lagen der Gruppe einblenden"}">${visibleCount ? "🙈" : "👁️"}</button>
+            <button class="grp-eye" title="${visibleCount ? "Alle Lagen der Gruppe ausblenden" : "Alle Lagen der Gruppe einblenden"}">${visibleCount ? icon("eye-closed") : icon("eye")}</button>
         </div></td>`;
         gr.addEventListener("click", () => {
             layerUi.collapsed[g.key] = !layerUi.collapsed[g.key];
@@ -1768,7 +1768,7 @@ function showToast(msg, durationMs = 3500) {
 
     const toast = document.createElement("div");
     toast.className = "app-toast";
-    toast.innerHTML = `<span>⚡</span> <span>${msg}</span>`;
+    toast.innerHTML = `${icon("info", "toast-ic")} <span>${msg}</span>`;
     document.body.appendChild(toast);
 
     if (durationMs > 0) {
@@ -1791,7 +1791,7 @@ async function triggerWindowsFileDialog(clearPrevious = true) {
     if (clearPrevious) {
         if (!await promptCloseBeforeLoad()) return;
     }
-    const toast = showToast("📂 Windows-Dateiauswahl geöffnet... Bitte wählen Sie Dateien im Explorer.", 0);
+    const toast = showToast("Windows-Dateiauswahl geöffnet... Bitte wählen Sie Dateien im Explorer.", 0);
     try {
         const res = await fetch("/api/open_windows_file_dialog", {
             method: "POST",
@@ -1801,25 +1801,25 @@ async function triggerWindowsFileDialog(clearPrevious = true) {
         toast.remove();
         const data = await res.json();
         if (data.status === "ok") {
-            showToast(`✅ ${data.count} Lage(n) erfolgreich importiert!`);
+            showToast(`${data.count} Lage(n) erfolgreich importiert!`);
             await loadLayers();
             await refreshApertureData();
             fitToScreen();
             document.getElementById("zipModal")?.classList.add("hidden");
         } else if (data.status === "cancelled") {
-            showToast("ℹ️ Dateiauswahl abgebrochen");
+            showToast("Dateiauswahl abgebrochen");
         } else {
-            showToast(`❌ Fehler: ${data.message || 'Unbekannt'}`);
+            showToast(`Fehler: ${data.message || 'Unbekannt'}`);
         }
     } catch (e) {
         toast.remove();
-        showToast("❌ Fehler beim Aufruf der Windows-Dateiauswahl");
+        showToast("Fehler beim Aufruf der Windows-Dateiauswahl");
     }
 }
 
 async function triggerWindowsFolderDialog() {
     if (!await promptCloseBeforeLoad()) return;
-    const toast = showToast("📂 Windows-Ordnerauswahl geöffnet... Bitte wählen Sie einen Ordner im Explorer.", 0);
+    const toast = showToast("Windows-Ordnerauswahl geöffnet... Bitte wählen Sie einen Ordner im Explorer.", 0);
     try {
         const res = await fetch("/api/open_windows_folder_dialog", {
             method: "POST",
@@ -1829,26 +1829,26 @@ async function triggerWindowsFolderDialog() {
         toast.remove();
         const data = await res.json();
         if (data.status === "ok") {
-            showToast(`✅ Ordner importiert (${data.count} Lagen)!`);
+            showToast(`Ordner importiert (${data.count} Lagen)!`);
             await loadLayers();
             await refreshApertureData();
             fitToScreen();
             document.getElementById("zipModal")?.classList.add("hidden");
         } else if (data.status === "cancelled") {
-            showToast("ℹ️ Ordnerauswahl abgebrochen");
+            showToast("Ordnerauswahl abgebrochen");
         } else {
-            showToast(`❌ Fehler: ${data.message || 'Unbekannt'}`);
+            showToast(`Fehler: ${data.message || 'Unbekannt'}`);
         }
     } catch (e) {
         toast.remove();
-        showToast("❌ Fehler beim Aufruf der Windows-Ordnerauswahl");
+        showToast("Fehler beim Aufruf der Windows-Ordnerauswahl");
     }
 }
 
 async function uploadFilesFromBrowser(files) {
     if (!files || files.length === 0) return;
     if (!await promptCloseBeforeLoad()) return;
-    const toast = showToast(`⬆️ Lade ${files.length} Datei(en) hoch...`, 0);
+    const toast = showToast(`Lade ${files.length} Datei(en) hoch...`, 0);
     try {
         const formData = new FormData();
         for (let i = 0; i < files.length; i++) {
@@ -1863,16 +1863,16 @@ async function uploadFilesFromBrowser(files) {
         toast.remove();
         const data = await res.json();
         if (data.status === "ok") {
-            showToast(`✅ ${data.count} Lage(n) importiert!`);
+            showToast(`${data.count} Lage(n) importiert!`);
             await loadLayers();
             await refreshApertureData();
             fitToScreen();
         } else {
-            showToast(`❌ Fehler: ${data.message}`);
+            showToast(`Fehler: ${data.message}`);
         }
     } catch (e) {
         toast.remove();
-        showToast("❌ Upload fehlgeschlagen");
+        showToast("Upload fehlgeschlagen");
     }
 }
 
@@ -2045,7 +2045,7 @@ function setupEventListeners() {
         }
         if (targetPkg) {
             switchWorkspace("package", targetPkg, targetRot);
-            showToast(`📦 Package "${targetPkg}" im Stencil Generator geöffnet (${targetRot}°)`);
+            showToast(`Package "${targetPkg}" im Stencil Generator geöffnet (${targetRot}°)`);
             if (targetPin !== null && targetPin !== undefined) {
                 setTimeout(() => {
                     if (pkgState.activePackageData && pkgState.activePackageData.pads) {
@@ -2219,7 +2219,7 @@ function setupEventListeners() {
 
     document.getElementById("btnRefreshLayers")?.addEventListener("click", async () => {
         await loadLayers();
-        showToast("🔄 Lagen aktualisiert");
+        showToast("Lagen aktualisiert");
     });
 
     document.getElementById("layerGlobalOpacity")?.addEventListener("input", (e) => {
@@ -2571,7 +2571,7 @@ function setupEventListeners() {
             await loadLayers();
             await refreshApertureData();
             fitToScreen();
-            showToast("✅ ZIP-Datensatz geladen!");
+            showToast("ZIP-Datensatz geladen!");
         } else {
             alert("Fehler beim Laden der ZIP: " + data.message);
         }
@@ -2593,7 +2593,7 @@ async function triggerExport() {
     try {
         const res = await fetch("/api/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
         const data = await res.json();
-        showToast("💾 Gerber-Dateien exportiert!");
+        showToast("Gerber-Dateien exportiert!");
         return data;
     } catch (e) {
         console.error("Fehler beim Export:", e);
@@ -2694,7 +2694,7 @@ function renderZonesList() {
                 <div class="zone-card-meta">${z.width} x ${z.height} mm | Dicke: <strong>${thickUm} µm</strong></div>
             </div>
             <div style="display: flex; gap: 6px;">
-                <button class="btn btn-sm btn-secondary btn-edit-thick" data-id="${z.id}" data-thick="${thickUm}">✏️ Dicke</button>
+                <button class="btn btn-sm btn-secondary btn-edit-thick" data-id="${z.id}" data-thick="${thickUm}">Dicke</button>
                 <button class="btn btn-sm btn-danger btn-del-zone" data-id="${z.id}">Löschen</button>
             </div>
         `;
@@ -2756,7 +2756,7 @@ function renderTombstones() {
         row.className = `tomb-row ${t.has_rule ? "done" : ""}`;
         const pinInfo = t.pins.map(p => `Pin ${p.pin}: ${p.pour_area > 0 ? `Fläche ${p.pour_area.toFixed(1)} mm²` : `${p.traces} Bahn(en) ${p.trace_w.toFixed(2)} mm${p.vias ? `, ${p.vias} Via` : ""}`}${p.pin === t.weak_pin ? " ← schwach" : ""}`).join(" · ");
         row.innerHTML = `<div class="t-head">${escapeHtml(t.component)}<span class="pkg">${escapeHtml(t.package)}</span></div>
-            <div class="t-btns"><button class="btn btn-xs btn-ghost" data-act="show" title="Auf dem Board zeigen">🔍</button>
+            <div class="t-btns"><button class="btn btn-xs btn-ghost" data-act="show" title="Auf dem Board zeigen"></button>
             ${t.has_rule ? '<span class="ok-tag">✓ Regel</span>' : '<button class="btn btn-xs btn-secondary" data-act="apply">Übernehmen</button>'}</div>
             <div class="t-reason">${escapeHtml(t.reason)}<br>${escapeHtml(pinInfo)}</div>`;
         row.querySelector('[data-act="show"]').addEventListener("click", async () => {
@@ -2812,7 +2812,7 @@ function renderCriticalList() {
     list.innerHTML = "";
 
     if (!state.stats || !state.stats.top_critical_packages || state.stats.top_critical_packages.length === 0) {
-        list.innerHTML = `<p class="empty-state">Keine IPC-Verletzungen gefunden! Alle Aperturen lösen sicher aus. 🎉</p>`;
+        list.innerHTML = `<p class="empty-state">Keine IPC-Verletzungen gefunden! Alle Aperturen lösen sicher aus. </p>`;
         return;
     }
 
@@ -2958,8 +2958,14 @@ function setupPkgCanvas() {
     // Mouse Pan & Zoom
     pkgContainer.addEventListener("wheel", (e) => {
         e.preventDefault();
+        // Zoom zur Mausposition: der Punkt unter dem Mauszeiger bleibt stehen
+        const rect = pkgCanvas.getBoundingClientRect();
+        const anchor = pkgScreenToWorld(e.clientX, e.clientY);
         const factor = e.deltaY < 0 ? 1.15 : 0.85;
         pkgState.zoom = Math.max(10, Math.min(400, pkgState.zoom * factor));
+        const s = pkgWorldToScreen(anchor.x, anchor.y);
+        pkgState.panX += (e.clientX - rect.left) - s.x;
+        pkgState.panY += (e.clientY - rect.top) - s.y;
         renderPkgPreview();
     }, { passive: false });
 
@@ -3168,14 +3174,14 @@ function renderPkgTreeItem(list, p) {
         item.className = `pkg-tree-item ${p.name === pkgState.activePkgName && pkgState.ruleTarget?.kind === "package" ? 'active' : ''} ${inherits ? 'inherits' : ''}`;
         item.title = inherits ? "Regel von der Gruppe geerbt" : `Eigene Regel: ${p.rule?.rule_type}`;
         
-        let icon = "📦";
-        if (p.category === "SMD Passives") icon = "▫️";
-        else if (p.category === "ICs & Transistors") icon = "🔲";
-        else if (p.category === "BGA & Arrays") icon = "▦";
+        let pkgIcon = icon("package");
+        if (p.category === "SMD Passives") pkgIcon = icon("shrink");
+        else if (p.category === "ICs & Transistors") pkgIcon = icon("split");
+        else if (p.category === "BGA & Arrays") pkgIcon = icon("target");
 
         item.innerHTML = `
             <div class="pkg-item-main">
-                <span class="pkg-item-icon">${icon}</span>
+                <span class="pkg-item-icon">${pkgIcon}</span>
                 <span class="pkg-item-name" title="${p.name}">${p.name}</span>${inherits ? "" : '<span class="own-rule-dot">●</span>'}
                 ${p.name === pkgState.activePkgName && pkgState.activePackageData?.pads?.length ? `<button class="pkg-pin-toggle" title="Pins ein-/ausklappen">${pkgState.pinsExpanded ? "−" : "+"}</button>` : ""}
             </div>
@@ -3207,7 +3213,7 @@ function renderPkgTreeItem(list, p) {
                 const pi = document.createElement("div");
                 const hasOv = ovs[pad.pin] || ovs[String(pad.pin)];
                 pi.className = `pkg-pin-item ${pkgState.selectedPin === pad.pin ? "active" : ""}`;
-                pi.innerHTML = `<span>${pad.pin}(${idx})</span><span>${pad.w}×${pad.h}${pad.drill ? ` ⌀${pad.drill}` : ""}</span>${hasOv ? '<span class="pin-ov">✏️</span>' : ""}`;
+                pi.innerHTML = `<span>${pad.pin}(${idx})</span><span>${pad.w}×${pad.h}${pad.drill ? ` ⌀${pad.drill}` : ""}</span>${hasOv ? `<span class="pin-ov">${icon("edit")}</span>` : ""}`;
                 pi.addEventListener("click", (e) => {
                     e.stopPropagation();
                     selectPkgPin(pad.pin, pad);
@@ -3279,7 +3285,7 @@ function populatePinDropdown(pads, overrides = {}) {
         const opt = document.createElement("option");
         opt.value = p.pin;
         const hasOv = overrides && (overrides[p.pin] || overrides[String(p.pin)]);
-        opt.textContent = `Pin ${p.pin} (${p.w}x${p.h}mm)${hasOv ? " ✏️ (angepasst)" : ""}`;
+        opt.textContent = `Pin ${p.pin} (${p.w}x${p.h}mm)${hasOv ? " (angepasst)" : ""}`;
         select.appendChild(opt);
     }
 }
@@ -3953,7 +3959,7 @@ function setupPkgEventListeners() {
     async function triggerAutoClassify(btnElement) {
         const orig = btnElement ? btnElement.innerHTML : "";
         if (btnElement) {
-            btnElement.innerHTML = `<span>⏳</span> Klassifiziere...`;
+            btnElement.innerHTML = `<span></span> Klassifiziere...`;
             btnElement.disabled = true;
         }
         try {
@@ -3961,7 +3967,7 @@ function setupPkgEventListeners() {
             const data = await res.json();
             if (data.status === "ok") {
                 const c = data.classification;
-                showToast(`⚡ Auto-Klassifizierung abgeschlossen! ${c.chips} Chips, ${c.soic} SOIC, ${c.qfn} QFN, ${c.bga} BGA, ${c.tht} THT`);
+                showToast(`Auto-Klassifizierung abgeschlossen! ${c.chips} Chips, ${c.soic} SOIC, ${c.qfn} QFN, ${c.bga} BGA, ${c.tht} THT`);
                 await loadPackagesList();
                 await refreshApertureData();
                 if (pkgState.activePkgName) {
@@ -4047,7 +4053,7 @@ function setupPkgEventListeners() {
         if (!target.id) return;
         const btn = document.getElementById("btnGenerateStencilPads");
         const originalText = btn.innerHTML;
-        btn.innerHTML = `<span>⏳</span> Generiere...`;
+        btn.innerHTML = `<span></span> Generiere...`;
         btn.disabled = true;
 
         try {
@@ -4120,7 +4126,7 @@ function setupPkgEventListeners() {
         const res = await fetch("/api/pcbi/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
         const d = await res.json();
         if (d.status === "cancelled") return;
-        if (!res.ok || d.status !== "ok") { showToast(`❌ ${d.message || d.error || "Export fehlgeschlagen"}`); return; }
+        if (!res.ok || d.status !== "ok") { showToast(`${d.message || d.error || "Export fehlgeschlagen"}`); return; }
         let msg = `Gespeichert: ${d.path}
 
 ${d.packages} Package-Regeln, ${d.pin_rules} Pin-Regeln, ${d.groups} Gruppen, ${d.components} Bauteilregeln.`;
@@ -4408,7 +4414,7 @@ async function applyPipToAperture() {
         const data = await res.json();
         if (data.status === "ok") {
             document.getElementById("pipModal")?.classList.add("hidden");
-            showToast(`⚡ PiP Overprint (${shape}) auf Apertur #${state.selectedApertureId} angewendet!`);
+            showToast(`PiP Overprint (${shape}) auf Apertur #${state.selectedApertureId} angewendet!`);
             await refreshApertureData();
         }
     } catch (e) {
@@ -4437,10 +4443,10 @@ async function runBridgeCheck(minBridge = null) {
         const summary = document.getElementById("bridgeResultsSummary");
         if (summary) {
             if (data.count === 0) {
-                summary.innerHTML = `🟢 <strong>Perfekt:</strong> Keine Stegunterschreitungen unter ${data.min_bridge.toFixed(2)} mm gefunden! Schablone ist laser-fertigungsgerecht.`;
+                summary.innerHTML = `<strong>Perfekt:</strong> Keine Stegunterschreitungen unter ${data.min_bridge.toFixed(2)} mm gefunden! Schablone ist laser-fertigungsgerecht.`;
                 summary.style.color = "#4ade80";
             } else {
-                summary.innerHTML = `⚠️ <strong>${data.count} Steg-Konflikte gefunden!</strong> Mindestabstand ${data.min_bridge.toFixed(2)} mm wird unterschritten (Kollisionsgefahr beim Laserschneiden).`;
+                summary.innerHTML = `<strong>${data.count} Steg-Konflikte gefunden!</strong> Mindestabstand ${data.min_bridge.toFixed(2)} mm wird unterschritten (Kollisionsgefahr beim Laserschneiden).`;
                 summary.style.color = "#f87171";
             }
         }
@@ -4454,7 +4460,7 @@ async function runBridgeCheck(minBridge = null) {
                     <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
                         <td style="padding: 6px 10px;">
                             <span class="badge ${v.severity === 'CRIT' ? 'crit' : 'warn'}" style="font-size:0.7rem; padding: 2px 6px;">
-                                ${v.severity === 'CRIT' ? '🔴 Kritisch' : '🟡 Warn'}
+                                ${v.severity === 'CRIT' ? 'Kritisch' : 'Warn'}
                             </span>
                         </td>
                         <td style="padding: 6px 10px; font-weight: 700; color: ${v.severity === 'CRIT' ? '#f87171' : '#fbbf24'};">
@@ -4465,7 +4471,7 @@ async function runBridgeCheck(minBridge = null) {
                         </td>
                         <td style="padding: 6px 10px; text-align: right;">
                             <button class="btn btn-xs btn-secondary" onclick="zoomToBridgeViolation(${v.p1[0]}, ${v.p1[1]})">
-                                🔍 Zu Stelle
+                                Zu Stelle
                             </button>
                         </td>
                     </tr>
@@ -4486,12 +4492,12 @@ function updateBridgeViolationsBadge(count = null) {
     if (num > 0) {
         badge.innerText = num;
         badge.classList.remove("hidden");
-        const icon = document.getElementById("bridgeWarnIcon");
-        if (icon) icon.innerText = "⚠️";
+        const ic = document.getElementById("bridgeWarnIcon");
+        if (ic) ic.innerHTML = icon("warning");
     } else {
         badge.classList.add("hidden");
-        const icon = document.getElementById("bridgeWarnIcon");
-        if (icon) icon.innerText = "🔬";
+        const ic = document.getElementById("bridgeWarnIcon");
+        if (ic) ic.innerHTML = icon("microscope");
     }
 }
 
@@ -4639,7 +4645,7 @@ async function importPcbiLibrary() {
     });
     const d = await res.json();
     if (d.status === "cancelled") return;
-    if (!res.ok || d.status !== "ok") { showToast(`❌ ${d.message || d.error || "Import fehlgeschlagen"}`); return; }
+    if (!res.ok || d.status !== "ok") { showToast(`${d.message || d.error || "Import fehlgeschlagen"}`); return; }
     await loadPackagesList();
     await refreshApertureData();
     const missing = d.missing_in_library || [];
@@ -4656,10 +4662,10 @@ In der Bibliothek, aber nicht im Job: ${d.not_in_dataset.length}`;
     const unknown = Object.keys(d.unknown_rules || {});
     if (unknown.length) msg += `
 
-⚠ Unbekannte PCB-I-Skripte (als „Original übernehmen“ geführt): ${unknown.join(", ")}`;
+Unbekannte PCB-I-Skripte (als „Original übernehmen“ geführt): ${unknown.join(", ")}`;
     if (d.warnings?.length) msg += `
 
-⚠ ${d.warnings.join("\n⚠ ")}`;
+${d.warnings.join("\n")}`;
     if (d.library_file) msg += `
 
 Gespeichert in: ${d.library_file}`;
@@ -4710,8 +4716,8 @@ async function saveProject(saveAs = false) {
         body: JSON.stringify({ save_as: saveAs })
     });
     const d = await res.json();
-    if (d.status === "ok") { showToast(`💾 Projekt gespeichert: ${d.path}`); return true; }
-    if (d.status !== "cancelled") showToast(`❌ Speichern fehlgeschlagen: ${d.message}`);
+    if (d.status === "ok") { showToast(`Projekt gespeichert: ${d.path}`); return true; }
+    if (d.status !== "cancelled") showToast(`Speichern fehlgeschlagen: ${d.message}`);
     return false;
 }
 window.saveProject = saveProject;
@@ -4759,10 +4765,10 @@ async function openProject(path = null, extra = {}) {
     }
     if (d.status === "ok") {
         await reloadAllViews(true);
-        showToast(extra.recovered ? "♻️ Sitzung wiederhergestellt" : `📂 Projekt geöffnet: ${d.path}`);
-        if (d.warnings?.length) setTimeout(() => showToast(`⚠️ ${d.warnings.join(" ")}`, 6000), 1200);
+        showToast(extra.recovered ? "Sitzung wiederhergestellt" : `Projekt geöffnet: ${d.path}`);
+        if (d.warnings?.length) setTimeout(() => showToast(`${d.warnings.join(" ")}`, 6000), 1200);
     } else if (d.status !== "cancelled") {
-        showToast(`❌ Projekt konnte nicht geöffnet werden: ${d.message}`, 6000);
+        showToast(`Projekt konnte nicht geöffnet werden: ${d.message}`, 6000);
     }
 }
 
@@ -4948,7 +4954,7 @@ function setupExportDialog() {
         const d = await (await fetch("/api/export/pick_dir", { method: "POST" })).json();
         if (d.status === "ok") { document.getElementById("expDir").value = d.path; updateExportPreview(); }
     });
-    const openPath = (p) => p && window.__TAURI__?.core.invoke("open_path", { path: p }).catch(e => showToast(`❌ ${e}`));
+    const openPath = (p) => p && window.__TAURI__?.core.invoke("open_path", { path: p }).catch(e => showToast(`${e}`));
     document.getElementById("btnExpOpenDir")?.addEventListener("click", () => openPath(exportState.lastDir));
     document.getElementById("btnExpOpenReport")?.addEventListener("click", () => openPath(exportState.lastReport));
     document.getElementById("btnExpRun")?.addEventListener("click", async () => {
@@ -4957,19 +4963,19 @@ function setupExportDialog() {
         try {
             const res = await fetch("/api/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ options: exportOptionsFromForm() }) });
             const d = await res.json();
-            if (d.status !== "ok") { showToast(`❌ Export fehlgeschlagen: ${d.message}`, 6000); return; }
+            if (d.status !== "ok") { showToast(`Export fehlgeschlagen: ${d.message}`, 6000); return; }
             exportState.lastDir = d.export_dir;
             exportState.lastReport = d.report_file;
-            const icon = { stencil: "🟪", zones: "🟧", outline: "⬜", report: "📄" };
+            const icon = { stencil: "", zones: "", outline: "", report: "" };
             document.getElementById("exportMsg").textContent = d.message;
-            document.getElementById("exportFileList").innerHTML = d.files.map(f => `<div>${icon[f.kind] || "📄"} ${f.path}${f.count !== undefined ? ` (${f.count})` : ""}</div>`).join("");
+            document.getElementById("exportFileList").innerHTML = d.files.map(f => `<div>${icon[f.kind] || ""} ${f.path}${f.count !== undefined ? ` (${f.count})` : ""}</div>`).join("");
             document.getElementById("exportForm").classList.add("hidden");
             document.getElementById("exportResult").classList.remove("hidden");
             btn.classList.add("hidden");
             const desktop = Boolean(window.__TAURI__);
             document.getElementById("btnExpOpenDir").classList.toggle("hidden", !desktop);
             document.getElementById("btnExpOpenReport").classList.toggle("hidden", !desktop || !d.report_file);
-            showToast("💾 Export abgeschlossen");
+            showToast("Export abgeschlossen");
         } finally {
             btn.disabled = false;
         }
