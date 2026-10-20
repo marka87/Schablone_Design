@@ -200,6 +200,8 @@ pub struct MatrixLayer {
     /// Bohrlagen: Start-/Endlage (klein geschrieben), leer wenn nicht angegeben
     pub start: String,
     pub end: String,
+    /// Zusatztyp (z. B. COVERLAY, STIFFENER, FLEX_AREA bei Rigid-Flex)
+    pub add_type: String,
 }
 
 pub fn parse_matrix(content: &str) -> Vec<MatrixLayer> {
@@ -221,6 +223,7 @@ pub fn parse_matrix(content: &str) -> Vec<MatrixLayer> {
                         row: cur.get("ROW").and_then(|r| r.parse().ok()).unwrap_or(out.len() as i64),
                         start: cur.get("START_NAME").map(|s| s.to_lowercase()).unwrap_or_default(),
                         end: cur.get("END_NAME").map(|s| s.to_lowercase()).unwrap_or_default(),
+                        add_type: cur.get("ADD_TYPE").cloned().unwrap_or_default().to_uppercase(),
                     });
                 }
             }

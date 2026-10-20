@@ -8,6 +8,7 @@ import math
 import os
 import re
 import tempfile
+import tarfile
 import zipfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -458,8 +459,13 @@ class StencilEngine:
             if fp.lower().endswith(('.zip', '.tgz', '.tar.gz')):
                 extract_dir = os.path.join(tempfile.gettempdir(), f"stencil_import_{os.path.basename(fp)}")
                 os.makedirs(extract_dir, exist_ok=True)
-                with zipfile.ZipFile(fp, 'r') as z:
-                    z.extractall(extract_dir)
+                if fp.lower().endswith('.zip'):
+                    with zipfile.ZipFile(fp, 'r') as z:
+                        z.extractall(extract_dir)
+                else:
+                    # ODB++ wird meist als .tgz geliefert
+                    with tarfile.open(fp, 'r:*') as t:
+                        t.extractall(extract_dir, filter='data')
 
                 # Prüfe ODB++ matrix
                 matrix_file = None

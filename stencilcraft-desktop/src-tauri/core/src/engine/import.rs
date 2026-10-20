@@ -294,7 +294,7 @@ impl StencilEngine {
                     } else {
                         "SIGNAL"
                     };
-                    odb::MatrixLayer { raw_name: n.clone(), name: n, ltype: t.into(), row: i as i64, start: String::new(), end: String::new() }
+                    odb::MatrixLayer { raw_name: n.clone(), name: n, ltype: t.into(), row: i as i64, start: String::new(), end: String::new(), add_type: String::new() }
                 })
                 .collect();
         }
@@ -316,7 +316,12 @@ impl StencilEngine {
             let name = ml.name.as_str();
             let lt = ml.ltype.as_str();
             let lside = odb_side(name);
-            let (ltype, color, lside) = if lt.contains("PASTE") || matches!(name, "spt" | "spb" | "top_paste" | "bottom_paste") {
+            // Rigid-Flex: Coverlay ist nicht die Lötstoppmaske der Pads → als Zusatzlage führen
+            let coverlay = ml.add_type == "COVERLAY";
+            let (ltype, color, lside) = if coverlay || (lt == "MASK" && !matches!(name, "smt" | "smb" | "top_solder" | "bottom_solder")) {
+                // Generischer Typ MASK: Bereichs-/Versteifungslagen (BEND_AREA, FLEX_AREA, STIFFENER, …)
+                ("other", "#a855f7", lside)
+            } else if lt.contains("PASTE") || matches!(name, "spt" | "spb" | "top_paste" | "bottom_paste") {
                 if !name.contains("copy") {
                     paste_layers.entry(lside).or_insert_with(|| name.to_string());
                 }
@@ -375,7 +380,7 @@ impl StencilEngine {
                             self.drills.push((p.x, p.y, d));
                         }
                     }
-                } else if (ltype == "mask" || ltype == "copper") && (lside == "top" || lside == "bot") && !name.contains("copy") {
+                } else if (ltype == "mask" || ltype == "copper") && !coverlay && (lside == "top" || lside == "bot") && !name.contains("copy") {
                     let target = if ltype == "mask" { &mut side_masks } else { &mut side_copper };
                     for p in &f.pads {
                         let (b, round) = match &p.geom {
@@ -401,6 +406,7 @@ impl StencilEngine {
             }
             let not_copy = !name.contains("copy");
             let visible = not_copy
+                && !coverlay
                 && match ltype {
                     "component" | "mask" => lside == side,
                     "copper" => lside == side,
