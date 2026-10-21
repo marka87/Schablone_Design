@@ -1215,16 +1215,23 @@ function renderPads() {
 }
 
 function renderComponents() {
-    const compLayer = state.layers ? state.layers.find(l => l.type === 'component') : null;
-    if (compLayer && !compLayer.visible) return;
     if (!state.showComponents) return;
+    // Je Seite die eigene Bauteil-Lage: aktive Seite aus state.components, andere Seite aus den Lagen-Primitiven
+    const compLayers = (state.layers || []).filter(l => l.type === 'component');
+    const own = compLayers.find(l => (l.side || "top") === (state.side || "top"));
+    const other = compLayers.filter(l => l !== own && l.visible !== false);
+    drawComponentBoxes(other.flatMap(l => (state.layerPrimitives[l.id]?.prims || []).filter(p => p.t === 'comp')
+        .map(p => ({ cx: p.x, cy: p.y, width: p.w, height: p.h, rot: p.rot, refdes: p.refdes }))), "rgba(250, 204, 21, 0.35)");
+    if (!own || own.visible !== false) drawComponentBoxes(state.components, "rgba(250, 204, 21, 0.75)");
+}
 
-    ctx.strokeStyle = "rgba(250, 204, 21, 0.75)";
+function drawComponentBoxes(list, stroke) {
+    ctx.strokeStyle = stroke;
     ctx.fillStyle = "#facc15";
     ctx.lineWidth = 1;
     ctx.font = "bold 9px Inter, sans-serif";
 
-    for (const c of state.components) {
+    for (const c of list) {
         const center = worldToScreen(c.cx, c.cy);
         const sw = Math.max(2, c.width * state.zoom);
         const sh = Math.max(2, c.height * state.zoom);
