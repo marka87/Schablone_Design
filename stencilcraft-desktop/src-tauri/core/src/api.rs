@@ -583,7 +583,21 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
                 .filter(|p| search.is_empty() || p.name.to_lowercase().contains(&search))
                 .collect();
             list.sort_by(|a, b| order(&a.category).cmp(&order(&b.category)).then(a.name.cmp(&b.name)));
-            ok(json!({"current_customer": e.current_customer, "packages": list.iter().map(|p| p.to_json()).collect::<Vec<_>>()}))
+            // Bauteile je Seite, damit die Liste nach TOP / BOT filtern kann
+            let mut per_side: std::collections::HashMap<String, [usize; 2]> = Default::default();
+            for c in &e.components {
+                per_side.entry(e.resolve_alias(&c.package)).or_default()[usize::from(c.side.eq_ignore_ascii_case("bot"))] += 1;
+            }
+            let pkgs: Vec<Value> = list
+                .iter()
+                .map(|p| {
+                    let mut v = p.to_json();
+                    let [top, bot] = per_side.get(&p.name).copied().unwrap_or_default();
+                    v["sides"] = json!({"top": top, "bot": bot});
+                    v
+                })
+                .collect();
+            ok(json!({"current_customer": e.current_customer, "packages": pkgs}))
         }
         ("GET", ["api", "package", name]) => ok(e.get_package_preview_data(name)),
         ("POST", ["api", "package", name, "rule"]) => {

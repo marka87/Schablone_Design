@@ -176,6 +176,9 @@ pub struct ComponentItem {
     pub rotation: f64,
     pub side: String,
     pub outline: Vec<Pt>,
+    /// Lage von Pin 1 (Board-Koordinaten) für die Markierung
+    #[serde(default)]
+    pub pin1: Option<Pt>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -243,7 +246,7 @@ pub enum Prim {
     #[serde(rename = "p")]
     Poly { pts: Vec<Pt> },
     #[serde(rename = "comp")]
-    Comp { refdes: String, pkg: String, x: f64, y: f64, w: f64, h: f64, rot: f64 },
+    Comp { refdes: String, pkg: String, x: f64, y: f64, w: f64, h: f64, rot: f64, o: Vec<Pt>, p1: Option<Pt> },
 }
 
 impl Prim {

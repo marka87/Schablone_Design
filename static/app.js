@@ -1221,7 +1221,7 @@ function renderComponents() {
     const own = compLayers.find(l => (l.side || "top") === (state.side || "top"));
     const other = compLayers.filter(l => l !== own && l.visible !== false);
     drawComponentBoxes(other.flatMap(l => (state.layerPrimitives[l.id]?.prims || []).filter(p => p.t === 'comp')
-        .map(p => ({ cx: p.x, cy: p.y, width: p.w, height: p.h, rot: p.rot, refdes: p.refdes }))), "rgba(250, 204, 21, 0.35)");
+        .map(p => ({ cx: p.x, cy: p.y, width: p.w, height: p.h, rot: p.rot, refdes: p.refdes, outline: p.o, pin1: p.p1 }))), "rgba(250, 204, 21, 0.35)");
     if (!own || own.visible !== false) drawComponentBoxes(state.components, "rgba(250, 204, 21, 0.75)");
 }
 
@@ -1232,6 +1232,26 @@ function drawComponentBoxes(list, stroke) {
     ctx.font = "bold 9px Inter, sans-serif";
 
     for (const c of list) {
+        // Körperumriss aus den CAD-Daten (ODB++), sonst Rechteck aus der Package-Größe
+        if (c.outline && c.outline.length >= 3) {
+            ctx.beginPath();
+            c.outline.forEach(([x, y], i) => { const q = worldToScreen(x, y); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
+            ctx.closePath();
+            ctx.stroke();
+            if (c.pin1 && state.zoom > 1.5) {
+                const q = worldToScreen(c.pin1[0], c.pin1[1]);
+                ctx.beginPath();
+                ctx.arc(q.x, q.y, Math.max(1.5, Math.min(4, 0.08 * state.zoom)), 0, Math.PI * 2);
+                ctx.fill();
+            }
+            if (state.zoom > 2.5 && c.refdes) {
+                // Beschriftung oben links am Umriss, wie bisher am Rechteck
+                const xs = c.outline.map(p => p[0]), ys = c.outline.map(p => p[1]);
+                const q = worldToScreen(Math.min(...xs), Math.max(...ys));
+                ctx.fillText(c.refdes, q.x + 2, q.y - 2);
+            }
+            continue;
+        }
         const center = worldToScreen(c.cx, c.cy);
         const sw = Math.max(2, c.width * state.zoom);
         const sh = Math.max(2, c.height * state.zoom);
@@ -3488,6 +3508,9 @@ function renderPkgTree() {
     const filtered = pkgState.packages.filter(p => {
         if (pkgState.activeCategory && (p.group || "SMD") !== pkgState.activeCategory) return false;
         if (query && !p.name.toLowerCase().includes(query)) return false;
+        // Seite: Bibliotheks-Packages ohne Bauteile bleiben sichtbar
+        const f = pkgState.sideFilter || state.side || "top";
+        if (f !== "both" && p.sides && p.sides.top + p.sides.bot > 0 && !p.sides[f]) return false;
         return true;
     });
     pkgState.collapsedGroups = pkgState.collapsedGroups || { Library: true };
@@ -3537,10 +3560,14 @@ function renderPkgTreeItem(list, p) {
             <div class="pkg-item-badges">
                 ${p.pitch > 0 ? `<span class="pkg-badge-pitch">${p.pitch}mm</span>` : ''}
                 ${p.component_count > 0 ? `<span class="pkg-badge-count" title="${p.component_count}x auf Platine">${p.component_count}x</span>` : ''}
+                ${pkgState.sideFilter === "both" && p.sides && p.sides.top + p.sides.bot > 0 ? `<span class="pkg-badge-side" title="TOP ${p.sides.top}x · BOT ${p.sides.bot}x">${[p.sides.top ? "T" : "", p.sides.bot ? "B" : ""].filter(Boolean).join("+")}</span>` : ""}
             </div>
         `;
 
-        item.addEventListener("click", () => {
+        item.addEventListener("click", async () => {
+            // Package nur auf der anderen Seite: dorthin wechseln, damit Pads und Vorschau stimmen
+            const s = p.sides;
+            if (s && s.top + s.bot > 0 && !s[state.side || "top"]) await switchSide(s.top ? "top" : "bot");
             selectPackage(p.name);
         });
         item.querySelector(".pkg-pin-toggle")?.addEventListener("click", (e) => {
@@ -5367,7 +5394,7 @@ async function refreshSides() {
         for (const sd of d.sides) {
             const btn = document.querySelector(`#sideSwitch button[data-side="${sd.side}"]`);
             if (!btn) continue;
-            btn.classList.toggle("active", sd.active);
+            btn.classList.toggle("active", sd.active && pkgState.sideFilter !== "both");
             const usable = sd.loaded || sd.available;
             btn.disabled = !usable && !sd.active;
             const cnt = document.getElementById(sd.side === "top" ? "cntSideTop" : "cntSideBot");
@@ -5396,8 +5423,12 @@ async function switchSide(side) {
 }
 window.switchSide = switchSide;
 
-document.querySelectorAll("#sideSwitch button").forEach(b => b.addEventListener("click", () => {
-    if (!b.classList.contains("active")) switchSide(b.dataset.side);
+document.querySelectorAll("#sideSwitch button").forEach(b => b.addEventListener("click", async () => {
+    pkgState.sideFilter = b.dataset.side;
+    document.querySelector('#sideSwitch button[data-side="both"]').classList.toggle("active", b.dataset.side === "both");
+    if (b.dataset.side !== "both" && b.dataset.side !== state.side) await switchSide(b.dataset.side);
+    await refreshSides();
+    renderPkgTree();
 }));
 
 // -------------------------------------------------------------

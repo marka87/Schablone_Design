@@ -1,6 +1,7 @@
 //! Import von Gerber-Dateien, Gerber-Archiven/-Ordnern und ODB++ Datensätzen in die Engine.
 
 use super::gerber::{parse_gerber, GerberData};
+use super::geometry::rotate_pts;
 use super::odb::{self, OdbFiles, PadGeom, MAX_LAYER_PRIMS};
 use super::types::*;
 use super::StencilEngine;
@@ -364,8 +365,14 @@ impl StencilEngine {
                     let comps = odb::parse_components(c);
                     let comp_side = if lside == "bot" { "BOT" } else { "TOP" };
                     for c in &comps {
-                        let (pkg, w, h) = usize::try_from(c.pkg_ref).ok().and_then(|i| eda.get(i)).map(|p| (p.name.clone(), p.w, p.h)).unwrap_or(("GENERIC".into(), 1.6, 1.0));
-                        prims.push(Prim::Comp { refdes: c.refdes.clone(), pkg: pkg.clone(), x: r3(c.x), y: r3(c.y), w, h, rot: c.rot });
+                        let ep = usize::try_from(c.pkg_ref).ok().and_then(|i| eda.get(i));
+                        let (pkg, w, h) = ep.map(|p| (p.name.clone(), p.w, p.h)).unwrap_or(("GENERIC".into(), 1.6, 1.0));
+                        // Körperumriss: ODB dreht im Uhrzeigersinn, gespiegelte Bauteile an X spiegeln
+                        let outline: Vec<Pt> = ep
+                            .map(|p| rotate_pts(&p.outline, 0.0, 0.0, -c.rot).into_iter().map(|(x, y)| (r3(c.x + if c.mirror { -x } else { x }), r3(c.y + y))).collect())
+                            .unwrap_or_default();
+                        let pin1 = c.pins.iter().find(|p| p.0 == 1).map(|p| (r3(p.1), r3(p.2)));
+                        prims.push(Prim::Comp { refdes: c.refdes.clone(), pkg: pkg.clone(), x: r3(c.x), y: r3(c.y), w, h, rot: c.rot, o: outline.clone(), p1: pin1 });
                         self.components.push(ComponentItem {
                             refdes: c.refdes.clone(),
                             package: pkg,
@@ -375,7 +382,8 @@ impl StencilEngine {
                             height: h,
                             rotation: c.rot,
                             side: comp_side.into(),
-                            outline: Vec::new(),
+                            outline,
+                            pin1,
                         });
                     }
                     side_toeprints.entry(if comp_side == "BOT" { "bot" } else { "top" }).or_default().extend(comps.into_iter().map(|c| (c.refdes, c.pins)));

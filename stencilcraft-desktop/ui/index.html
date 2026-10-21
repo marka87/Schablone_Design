@@ -147,16 +147,6 @@
                 <span class="rb-cap">Schablone</span>
             </div>
 
-            <div class="rb-group">
-                <div class="rb-body">
-                    <div class="side-switch" id="sideSwitch" title="Bestückungsseite (TOP / BOT)">
-                        <button data-side="top" class="active">TOP <span class="side-count" id="cntSideTop"></span></button>
-                        <button data-side="bot">BOT <span class="side-count" id="cntSideBot"></span></button>
-                    </div>
-                </div>
-                <span class="rb-cap">Seite</span>
-            </div>
-
             <div class="rb-group ov-only">
                 <div class="rb-body">
                     <button id="btnCheckBridges" class="btn btn-sm btn-secondary" title="Schablonenstegbreite prüfen (Web Check)">
@@ -644,6 +634,13 @@
                     <button class="cat-pill" data-cat="THT">THT</button>
                     <button class="cat-pill" data-cat="Other">Other</button>
                     <button class="cat-pill" data-cat="Library" title="Bibliotheks-Packages, die nicht auf der Platine vorkommen">Bibliothek</button>
+                </div>
+
+                <!-- Seite: TOP / BOT bearbeitet diese Seite, Beide zeigt alle Packages -->
+                <div class="side-switch pkg-side-switch" id="sideSwitch" title="Packages nach Bestückungsseite">
+                    <button data-side="top" class="active">TOP <span class="side-count" id="cntSideTop"></span></button>
+                    <button data-side="bot">BOT <span class="side-count" id="cntSideBot"></span></button>
+                    <button data-side="both">Beide</button>
                 </div>
 
                 <!-- Package Tree List -->

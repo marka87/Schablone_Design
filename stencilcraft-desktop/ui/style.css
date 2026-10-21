@@ -2275,3 +2275,8 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: none; outli
 .tomb-row .t-shape { grid-column: 1 / -1; font-size: 0.75rem; color: var(--text-secondary); }
 .tomb-row .t-shape strong { color: var(--text-primary); }
 .tomb-row .ok-tag { display: inline-flex; align-items: center; gap: 3px; }
+
+/* Seitenfilter in der Package-Liste */
+.pkg-side-switch { display: flex; margin: 6px 10px; }
+.pkg-side-switch button { flex: 1; padding: 4px 8px; }
+.pkg-badge-side { font-size: 0.65rem; padding: 0 4px; border-radius: 3px; border: 1px solid var(--border-color); color: var(--text-secondary); }

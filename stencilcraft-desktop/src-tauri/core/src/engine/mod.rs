@@ -110,6 +110,8 @@ pub struct SideData {
     pub odb_toeprints: Vec<(String, Vec<(i64, f64, f64)>)>,
     pub bridge_violations: Vec<BridgeViolation>,
     pub base_thickness: f64,
+    /// Package-Regeln beim Ablegen der Seite; geänderte werden beim Zurückwechseln neu berechnet
+    pub rule_stamp: std::collections::HashMap<String, String>,
 }
 
 /// Ermittelt das Datenverzeichnis (enthält `Libraries/` und `Export/`).
@@ -221,6 +223,7 @@ impl StencilEngine {
             odb_toeprints: std::mem::take(&mut self.odb_toeprints),
             bridge_violations: std::mem::take(&mut self.bridge_violations),
             base_thickness: self.base_thickness,
+            rule_stamp: self.rule_stamp(),
         }
     }
 
@@ -249,10 +252,22 @@ impl StencilEngine {
         let old = std::mem::replace(&mut self.current_side, side.to_string());
         self.sides.insert(old, current);
         let next = self.sides.remove(side).unwrap_or_else(|| SideData { base_thickness: self.base_thickness, ..Default::default() });
+        let stamp = next.rule_stamp.clone();
         self.put_side_data(next);
+        // Package-Regeln gelten für beide Seiten: auf der anderen Seite geänderte nachziehen
+        if !stamp.is_empty() {
+            let changed: Vec<String> = self.rule_stamp().into_iter().filter(|(k, v)| stamp.get(k) != Some(v)).map(|(k, _)| k).collect();
+            for pkg in changed {
+                self.regenerate_package_apertures(&pkg, None);
+            }
+        }
         self.apply_side_visibility();
         self.annotate_packages();
         true
+    }
+
+    fn rule_stamp(&self) -> std::collections::HashMap<String, String> {
+        self.packages.iter().map(|(k, p)| (k.clone(), format!("{}{:?}", serde_json::to_string(&p.rule).unwrap_or_default(), p.pad_overrides))).collect()
     }
 
     /// Lagen der aktiven Seite einblenden, die der anderen Seite ausblenden.

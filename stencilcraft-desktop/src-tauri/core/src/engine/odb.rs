@@ -616,7 +616,10 @@ pub struct EdaPackage {
     pub w: f64,
     pub h: f64,
     pub pins: Vec<EdaPin>,
+    /// Bauteilkörper (erste Form vor dem ersten PIN), Package-Koordinaten
+    pub outline: Vec<Pt>,
 }
+
 
 pub fn parse_eda(content: &str) -> Vec<EdaPackage> {
     let mut pkgs: Vec<EdaPackage> = Vec::new();
@@ -624,6 +627,7 @@ pub fn parse_eda(content: &str) -> Vec<EdaPackage> {
     let mut pin_pts: Vec<Pt> = Vec::new();
     let mut in_pin = false;
     let mut pin_arc = false;
+    let mut body: Vec<Pt> = Vec::new();
 
     fn finish_pin(pkgs: &mut [EdaPackage], pts: &mut Vec<Pt>, arc: &mut bool) {
         if let (Some(pkg), false) = (pkgs.last_mut(), pts.is_empty()) {
@@ -670,7 +674,9 @@ pub fn parse_eda(content: &str) -> Vec<EdaPackage> {
                     w: r3((xmax - xmin).max(0.5)),
                     h: r3((ymax - ymin).max(0.5)),
                     pins: Vec::new(),
+                    outline: Vec::new(),
                 });
+                body.clear();
             }
             "PIN" if p.len() >= 5 => {
                 if in_pin {
@@ -710,6 +716,29 @@ pub fn parse_eda(content: &str) -> Vec<EdaPackage> {
                         pin.h = r3(2.0 * hs);
                     }
                 }
+            }
+            // Körperumriss: nur die erste Form vor dem ersten PIN
+            "RC" | "CR" | "SQ" if !in_pin => {
+                if let Some(pkg) = pkgs.last_mut().filter(|p| p.outline.is_empty()) {
+                    let o = match (p[0], f(1), f(2), f(3), f(4)) {
+                        ("RC", Some(x), Some(y), Some(w), Some(h)) => rect_pts(x + w / 2.0, y + h / 2.0, w, h),
+                        ("CR", Some(x), Some(y), Some(r), _) => circle_pts(x, y, r, 24),
+                        ("SQ", Some(x), Some(y), Some(hs), _) => rect_pts(x, y, 2.0 * hs, 2.0 * hs),
+                        _ => Vec::new(),
+                    };
+                    pkg.outline = o.into_iter().map(|(x, y)| (r3(x), r3(y))).collect();
+                }
+            }
+            "OB" | "OS" | "OC" if !in_pin => {
+                if let (Some(x), Some(y)) = (f(1), f(2)) {
+                    body.push((r3(x), r3(y)));
+                }
+            }
+            "OE" if !in_pin => {
+                if let Some(pkg) = pkgs.last_mut().filter(|p| p.outline.is_empty() && body.len() >= 3) {
+                    pkg.outline = std::mem::take(&mut body);
+                }
+                body.clear();
             }
             "OB" | "OS" | "OC" if in_pin => {
                 if p[0] == "OC" {
@@ -910,6 +939,8 @@ mod tests {
         assert_eq!(pk.len(), 1);
         assert_eq!(pk[0].pins.len(), 2);
         assert!((pk[0].pins[1].w - 1.2).abs() < 1e-9);
+        // Körperumriss aus dem RC vor dem ersten PIN, Pin-RCs zählen nicht dazu
+        assert_eq!(pk[0].outline, vec![(-1.5, -0.7), (1.5, -0.7), (1.5, 0.7), (-1.5, 0.7)]);
         let comps = parse_components("UNITS=MM\nCMP 0 10 10 90 N R1 RES;0=1\nTOP 0 9.15 10 0 N 1 0 1\nTOP 1 10.85 10 0 N 2 0 2\n");
         assert_eq!(comps[0].refdes, "R1");
         assert_eq!(comps[0].pins.len(), 2);
