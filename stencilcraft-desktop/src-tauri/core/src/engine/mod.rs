@@ -91,6 +91,8 @@ pub struct StencilEngine {
     pub group_rules: BTreeMap<String, PackageRule>,
     /// Bauteilregeln je RefDes (höchste Priorität)
     pub component_rules: BTreeMap<String, PackageRule>,
+    /// Bearbeitungsstand je Package im Job: "auto" (automatisch erzeugt) oder "done" (bearbeitet)
+    pub package_review: BTreeMap<String, String>,
 
     pub data_root: PathBuf,
 }
@@ -193,6 +195,7 @@ impl StencilEngine {
             sides: BTreeMap::new(),
             group_rules: rulesets::default_group_rules(),
             component_rules: BTreeMap::new(),
+            package_review: BTreeMap::new(),
             data_root,
         };
         e.init_standard_packages();
@@ -428,6 +431,7 @@ impl StencilEngine {
         self.history.clear();
         self.sides.clear();
         self.component_rules.clear();
+        self.package_review.clear();
         self.bounds = [0.0; 4];
         self.dataset_name = NO_DATASET.into();
         self.init_standard_packages();

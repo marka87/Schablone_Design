@@ -277,6 +277,8 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
         ("POST", ["api", "group", g, "generate"]) => {
             let ids = e.group_aperture_ids(g);
             let n = e.regenerate_ids(&ids) + e.on_other_side(|e| { let ids = e.group_aperture_ids(g); e.regenerate_ids(&ids) }).unwrap_or(0);
+            let names: Vec<String> = e.packages.values().filter(|p| p.group == *g).map(|p| p.name.clone()).collect();
+            e.mark_packages(names, "auto");
             ok(json!({"status": "ok", "modified_count": n, "stats": stats(e)}))
         }
         ("GET", ["api", "components"]) => ok(e.components_json()),
@@ -300,7 +302,7 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             ok(json!({"status": "ok", "modified_count": n, "stats": stats(e)}))
         }
         ("POST", ["api", "generate_all"]) => {
-            let n = e.generate_all();
+            let n = e.generate_all_sides();
             ok(json!({"status": "ok", "modified_count": n, "stats": stats(e)}))
         }
         ("POST", ["api", "side"]) => {
@@ -588,10 +590,12 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             for c in &e.components {
                 per_side.entry(e.resolve_alias(&c.package)).or_default()[usize::from(c.side.eq_ignore_ascii_case("bot"))] += 1;
             }
+            let status = e.package_status();
             let pkgs: Vec<Value> = list
                 .iter()
                 .map(|p| {
                     let mut v = p.to_json();
+                    v["review"] = json!(status.get(&p.name));
                     let [top, bot] = per_side.get(&p.name).copied().unwrap_or_default();
                     v["sides"] = json!({"top": top, "bot": bot});
                     v
@@ -609,6 +613,7 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
         }
         ("POST", ["api", "package", name, "generate"]) => {
             let n = e.apply_package_rule(name, body);
+            e.mark_packages([name.to_string()], "done");
             ok(json!({"status": "ok", "package": name, "modified_count": n, "stats": stats(e)}))
         }
         ("POST", ["api", "pad", id, "override"]) => {
@@ -626,6 +631,7 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
         (m @ ("POST" | "DELETE"), ["api", "package", name, "pin", pin, "override"]) => {
             let Ok(pin) = pin.parse::<i64>() else { return err(400, "Ungültige Pin-Nummer") };
             let s = if m == "POST" { e.override_package_pin(name, pin, body.clone()) } else { e.reset_package_pin(name, pin) };
+            e.mark_packages([name.to_string()], "done");
             ok(json!({"status": if s { "ok" } else { "error" }, "preview": e.get_package_preview_data(name), "stats": stats(e)}))
         }
         ("POST", ["api", "package", name, "pins", "override"]) => {
@@ -636,11 +642,13 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             let match_pin = body.get("match_pin").and_then(val_f64).map(|v| v as i64);
             let only: Option<Vec<i64>> = body.get("pins").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(val_f64).map(|v| v as i64).collect());
             let n = e.override_package_pins_bulk(name, data, w, h, match_pin, only.as_deref());
+            e.mark_packages([name.to_string()], "done");
             ok(json!({"status": if n > 0 { "ok" } else { "error" }, "pins": n, "preview": e.get_package_preview_data(name), "stats": stats(e)}))
         }
         ("POST", ["api", "package", name, "pins", "reset"]) => {
             let pins: Vec<i64> = body.get("pins").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(val_f64).map(|v| v as i64).collect()).unwrap_or_default();
             let n = e.reset_package_pins(name, &pins);
+            e.mark_packages([name.to_string()], "done");
             ok(json!({"status": "ok", "pins": n, "preview": e.get_package_preview_data(name), "stats": stats(e)}))
         }
         ("DELETE", ["api", "package", name, "pins", "override"]) => {

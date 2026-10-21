@@ -33,6 +33,50 @@ pub fn default_group_rules() -> BTreeMap<String, PackageRule> {
 }
 
 impl StencilEngine {
+    /// Ampel je Package mit Bauteilen (beide Seiten): "open" nichts erzeugt, "auto" automatisch
+    /// erzeugt, "done" bearbeitet bzw. erledigt (THT, Take Existing, Ignore).
+    pub fn package_status(&self) -> BTreeMap<String, &'static str> {
+        let mut seen: BTreeMap<String, bool> = BTreeMap::new();
+        for a in self.apertures.iter().chain(self.sides.values().flat_map(|d| d.apertures.iter())) {
+            *seen.entry(self.resolve_alias(&a.package_name)).or_default() |= a.custom_slices.is_some();
+        }
+        seen.into_iter()
+            .map(|(name, generated)| {
+                let review = self.package_review.get(&name).map(String::as_str);
+                let pkg = self.packages.get(&name);
+                let rule = pkg.map(|p| self.package_effective_rule(p).0.rule_type).unwrap_or_default();
+                let finished = pkg.is_some_and(|p| p.group == "THT") || rule == "take_existing" || rule == "ignore";
+                let s = match review {
+                    Some("done") => "done",
+                    _ if finished => "done",
+                    Some("auto") => "auto",
+                    _ if generated => "auto",
+                    _ => "open",
+                };
+                (name, s)
+            })
+            .collect()
+    }
+
+    /// Bearbeitungsstand setzen; "auto" überschreibt kein "done".
+    pub fn mark_packages(&mut self, names: impl IntoIterator<Item = String>, state: &str) {
+        for n in names {
+            let n = self.resolve_alias(&n);
+            if state == "auto" && self.package_review.get(&n).is_some_and(|s| s == "done") {
+                continue;
+            }
+            self.package_review.insert(n, state.to_string());
+        }
+    }
+
+    /// Alle Regeln auf beiden Seiten anwenden; nicht bearbeitete Packages gelten als "auto".
+    pub fn generate_all_sides(&mut self) -> usize {
+        let n = self.generate_all() + self.on_other_side(|e| e.generate_all()).unwrap_or(0);
+        let names: Vec<String> = self.package_status().into_keys().collect();
+        self.mark_packages(names, "auto");
+        n
+    }
+
     pub fn group_rule(&self, group: &str) -> PackageRule {
         self.group_rules.get(group).cloned().unwrap_or_else(|| self.group_rules.get("SMD").cloned().unwrap_or_default())
     }

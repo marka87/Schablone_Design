@@ -35,6 +35,7 @@ pub struct EditState {
     sides: BTreeMap<String, super::SideData>,
     group_rules: BTreeMap<String, PackageRule>,
     component_rules: BTreeMap<String, PackageRule>,
+    package_review: BTreeMap<String, String>,
 }
 
 #[derive(Default)]
@@ -136,6 +137,8 @@ struct ProjectFile {
     group_rules: BTreeMap<String, PackageRule>,
     #[serde(default)]
     component_rules: BTreeMap<String, PackageRule>,
+    #[serde(default)]
+    package_review: BTreeMap<String, String>,
 }
 
 fn aperture_saves(aps: &[ApertureItem]) -> Vec<ApertureSave> {
@@ -200,6 +203,7 @@ impl StencilEngine {
             sides: self.sides.clone(),
             group_rules: self.group_rules.clone(),
             component_rules: self.component_rules.clone(),
+            package_review: self.package_review.clone(),
         }
     }
 
@@ -211,6 +215,7 @@ impl StencilEngine {
         self.sides = s.sides;
         self.group_rules = s.group_rules;
         self.component_rules = s.component_rules;
+        self.package_review = s.package_review;
         self.apertures = s.apertures;
         self.packages = s.packages;
         self.package_aliases = s.aliases;
@@ -331,6 +336,7 @@ impl StencilEngine {
             active_side: self.current_side.clone(),
             group_rules: self.group_rules.clone(),
             component_rules: self.component_rules.clone(),
+            package_review: self.package_review.clone(),
         }
     }
 
@@ -439,6 +445,7 @@ impl StencilEngine {
             self.group_rules = pf.group_rules;
         }
         self.component_rules = pf.component_rules;
+        self.package_review = pf.package_review;
 
         let mut unmatched = 0;
         if pf.sides.is_empty() {

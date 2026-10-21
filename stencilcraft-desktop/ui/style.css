@@ -2284,3 +2284,11 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: none; outli
 /* Package-Pins ohne Kundenpaste */
 .pkg-missing-paste { display: flex; align-items: center; gap: 8px; margin: 6px 0; padding: 6px 8px; border-left: 3px solid #d29922; background: rgba(210, 153, 34, 0.10); font-size: 0.78rem; }
 .pkg-missing-paste span { flex: 1; }
+
+/* Bearbeitungsstand je Package: rot offen, gelb automatisch, grün bearbeitet */
+.pkg-tree-item.review-open .pkg-item-name { color: #f87171; }
+.pkg-tree-item.review-auto .pkg-item-name { color: #facc15; }
+.pkg-tree-item.review-done .pkg-item-name { color: #4ade80; }
+.pkg-tree-item.review-open { border-left: 3px solid #f87171; }
+.pkg-tree-item.review-auto { border-left: 3px solid #facc15; }
+.pkg-tree-item.review-done { border-left: 3px solid #4ade80; }

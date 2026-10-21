@@ -3621,8 +3621,10 @@ function renderPkgTreeItem(list, p) {
     {
         const item = document.createElement("div");
         const inherits = p.rule?.rule_type === "inherit";
-        item.className = `pkg-tree-item ${p.name === pkgState.activePkgName && pkgState.ruleTarget?.kind === "package" ? 'active' : ''} ${inherits ? 'inherits' : ''}`;
-        item.title = inherits ? "Regel von der Gruppe geerbt" : `Eigene Regel: ${p.rule?.rule_type}`;
+        item.className = `pkg-tree-item ${p.name === pkgState.activePkgName && pkgState.ruleTarget?.kind === "package" ? 'active' : ''} ${inherits ? 'inherits' : ''} ${p.review ? `review-${p.review}` : ""}`;
+        const reviewText = { open: "Offen – noch nichts erzeugt", auto: "Automatisch erzeugt – noch nicht bearbeitet", done: "Bearbeitet / erledigt" }[p.review] || "";
+        item.title = `${inherits ? "Regel von der Gruppe geerbt" : `Eigene Regel: ${p.rule?.rule_type}`}${reviewText ? `
+${reviewText}` : ""}`;
         
         let pkgIcon = icon("package");
         if (p.category === "SMD Passives") pkgIcon = icon("shrink");
@@ -4712,10 +4714,35 @@ function setupPkgEventListeners() {
                 btn.disabled = false;
             }, 2500);
 
-            // Aktualisiere Board-Aperturen im Hintergrund
+            // Aktualisiere Board-Aperturen und Status-Farben im Hintergrund
             await refreshApertureData();
+            await loadPackagesList();
         } catch (e) {
             console.error("Fehler bei Generate Stencil Pads:", e);
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
+    });
+
+    // Alle Packages beider Seiten erzeugen (Status: offen → automatisch)
+    document.getElementById("btnGenerateAll")?.addEventListener("click", async () => {
+        const btn = document.getElementById("btnGenerateAll");
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<span></span> Generiere alles...`;
+        try {
+            const res = await fetch("/api/generate_all", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            await refreshApertureData();
+            await loadPackagesList();
+            if (pkgState.activePkgName) await selectPackage(pkgState.activePkgName);
+            refreshHistory();
+            showToast(`${data.modified_count} Pads auf TOP und BOT erzeugt`);
+        } catch (e) {
+            console.error("Fehler bei Alles generieren:", e);
+            showToast("Alles generieren fehlgeschlagen");
+        } finally {
             btn.innerHTML = originalText;
             btn.disabled = false;
         }
@@ -5267,6 +5294,8 @@ async function refreshHistory() {
     try {
         const r = await fetch("/api/history");
         updateHistoryUI(await r.json());
+        // Nach jeder Änderung (auch Rückgängig) die Status-Farben der Package-Liste nachziehen
+        if (pkgState.packages.length) loadPackagesList();
     } catch (e) { /* ignorieren */ }
 }
 
