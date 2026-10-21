@@ -671,6 +671,38 @@ function nearestSnap(items, wx, wy, maxDist) {
             }
         }
     }
+    // Kein Fangpunkt in Reichweite: auf die nächste Kontur fangen (Lotfußpunkt)
+    return best || nearestEdgeSnap(items, wx, wy, maxDist);
+}
+
+function nearestEdgeSnap(items, wx, wy, maxDist) {
+    let best = null, bestD = maxDist;
+    const seg = (ax, ay, bx, by, label) => {
+        const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+        const t = l2 > 0 ? Math.max(0, Math.min(1, ((wx - ax) * dx + (wy - ay) * dy) / l2)) : 0;
+        const x = ax + t * dx, y = ay + t * dy, d = Math.hypot(x - wx, y - wy);
+        if (d < bestD) { bestD = d; best = { x, y, label: `${label} · Linie` }; }
+    };
+    for (const it of items) {
+        const reach = Math.max(it.w || 0, it.h || 0) / 2 + maxDist;
+        if (!it.w && !it.pts) continue;
+        if (Math.abs(it.cx - wx) > reach || Math.abs(it.cy - wy) > reach) continue;
+        if (it.pts && it.pts.length >= 3) {
+            for (let i = 0; i < it.pts.length; i++) {
+                const a = it.pts[i], b = it.pts[(i + 1) % it.pts.length];
+                seg(a[0], a[1], b[0], b[1], it.label);
+            }
+        } else if (it.round) {
+            const r = it.w / 2, d0 = Math.hypot(wx - it.cx, wy - it.cy);
+            if (d0 > 0 && Math.abs(d0 - r) < bestD) {
+                bestD = Math.abs(d0 - r);
+                best = { x: it.cx + (wx - it.cx) * r / d0, y: it.cy + (wy - it.cy) * r / d0, label: `${it.label} · Linie` };
+            }
+        } else {
+            const x0 = it.cx - it.w / 2, x1 = it.cx + it.w / 2, y0 = it.cy - it.h / 2, y1 = it.cy + it.h / 2;
+            seg(x0, y0, x1, y0, it.label); seg(x1, y0, x1, y1, it.label); seg(x1, y1, x0, y1, it.label); seg(x0, y1, x0, y0, it.label);
+        }
+    }
     return best;
 }
 
