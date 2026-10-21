@@ -563,6 +563,10 @@ async function updateStats() {
     document.getElementById("statTotal").innerText = state.stats.total_apertures.toLocaleString();
     document.getElementById("statOk").innerText = state.stats.ok_count.toLocaleString();
     document.getElementById("statWarn").innerText = state.stats.warn_count.toLocaleString();
+    const wp = document.getElementById("warnPill");
+    if (wp) wp.title = `Grenzwertig (Pastenauslösung schwankend)
+Vias im Pad: ${state.stats.via_in_pad_count ?? 0}
+Schmale Öffnungen quer zur Rakel: ${state.stats.squeegee_slot_count ?? 0}`;
     document.getElementById("statCrit").innerText = state.stats.crit_count.toLocaleString();
     document.getElementById("zonesCount").innerText = state.stats.zones_count;
     document.getElementById("lblMinAr").innerText = state.stats.ipc_min_ar.toFixed(2);
@@ -1747,6 +1751,11 @@ function updateInspectorUI(ap) {
         } else {
             grAlert.classList.add("hidden");
         }
+    }
+    for (const [id, on, msg] of [["via", ap.ipc?.via_warn, ap.ipc?.via_msg], ["squeegee", ap.ipc?.squeegee_warn, ap.ipc?.squeegee_msg]]) {
+        document.getElementById(`${id}Alert`)?.classList.toggle("hidden", !on);
+        const el = document.getElementById(`${id}AlertMsg`);
+        if (el) el.innerText = msg || "";
     }
 }
 

@@ -83,7 +83,7 @@
                         <span class="pill-label"><span class="dot ok"></span></span>
                         <span id="statOk" class="pill-val">0</span>
                     </div>
-                    <div class="pill warn" title="Grenzwertig (Pastenauslösung schwankend)">
+                    <div class="pill warn" id="warnPill" title="Grenzwertig (Pastenauslösung schwankend)">
                         <span class="pill-label"><span class="dot warn"></span></span>
                         <span id="statWarn" class="pill-val">0</span>
                     </div>
@@ -431,6 +431,12 @@
                         <!-- 5-BALL GRAIN WARN -->
                         <div id="grainAlert" class="alert-box warn hidden">
                             <i class="ic ic-warning"></i> <strong id="grainAlertTitle">Pastenkorn-Warnung:</strong> <span id="grainAlertMsg">5-Ball-Regel verletzt!</span>
+                        </div>
+                        <div id="viaAlert" class="alert-box warn hidden">
+                            <i class="ic ic-warning"></i> <strong>Via im Pad:</strong> <span id="viaAlertMsg"></span>
+                        </div>
+                        <div id="squeegeeAlert" class="alert-box warn hidden">
+                            <i class="ic ic-warning"></i> <strong>Rakelrichtung:</strong> <span id="squeegeeAlertMsg"></span>
                         </div>
 
                         <!-- Einzelpad-Werkzeuge: bewusst eingeklappt (Übersicht ≠ Bearbeitung) -->

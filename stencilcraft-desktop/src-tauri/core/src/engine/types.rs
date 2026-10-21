@@ -661,4 +661,10 @@ pub struct IpcResult {
     pub grain_status: &'static str,
     pub grain_msg: String,
     pub min_required_w: f64,
+    /// Bohrung (Via) in der Öffnung: Lot läuft beim Reflow ab
+    pub via_warn: bool,
+    pub via_msg: String,
+    /// Schmale, lange Öffnung quer zur Rakelrichtung: Füllung prüfen
+    pub squeegee_warn: bool,
+    pub squeegee_msg: String,
 }

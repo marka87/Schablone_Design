@@ -5,7 +5,7 @@ use super::geometry::{circle_pts, polygon_area, polygon_distance, polygon_perime
 use super::types::*;
 use super::StencilEngine;
 use rayon::prelude::*;
-use rstar::{RTree, RTreeObject, AABB};
+use rstar::{primitives::GeomWithData, RTree, RTreeObject, AABB};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::f64::consts::PI;
@@ -62,6 +62,14 @@ fn ratios_at_unit_thickness(item: &ApertureItem) -> (f64, f64, f64) {
         ),
     }
 }
+
+/// Bohrungen bis zu diesem Durchmesser gelten als Via (THT-Pins sind größer)
+const VIA_MAX_DRILL: f64 = 0.45;
+/// Schmale, lange Öffnung: Breite bis 0,3 mm und Länge mindestens 3 × Breite
+const SLOT_MAX_W: f64 = 0.30;
+const SLOT_MIN_RATIO: f64 = 3.0;
+
+type DrillTree = RTree<GeomWithData<[f64; 2], usize>>;
 
 impl StencilEngine {
     /// Größte Blechdicke (mm), bei der die Öffnung Area- und Aspect-Ratio-Grenze noch einhält.
@@ -157,6 +165,53 @@ impl StencilEngine {
 
     /// IPC-7525 Kennzahlen einer Apertur unter ihrer effektiven Schablonendicke.
     pub fn calculate_aperture_ipc(&self, item: &ApertureItem) -> IpcResult {
+        self.aperture_ipc_with(item, None)
+    }
+
+    fn drill_tree(&self) -> DrillTree {
+        RTree::bulk_load(self.drills.iter().enumerate().map(|(i, d)| GeomWithData::new([d.0, d.1], i)).collect())
+    }
+
+    /// Öffnungsrechtecke (Teilöffnungen bzw. Original); leer, wenn das Pad ignoriert wird.
+    fn opening_boxes(item: &ApertureItem) -> Vec<[f64; 4]> {
+        match &item.custom_slices {
+            Some(s) => s.iter().map(|s| [s.cx - s.w / 2.0, s.cy - s.h / 2.0, s.cx + s.w / 2.0, s.cy + s.h / 2.0]).collect(),
+            None => vec![item.bbox],
+        }
+    }
+
+    /// Kleinste Bohrung (Via) innerhalb der Öffnung; THT-Bohrungen in Padmitte zählen nicht.
+    fn via_in_opening(&self, item: &ApertureItem, boxes: &[[f64; 4]], tree: Option<&DrillTree>) -> Option<f64> {
+        let is_via = |&(x, y, d): &(f64, f64, f64)| d <= VIA_MAX_DRILL || (x - item.cx).hypot(y - item.cy) > 0.15;
+        let mut best: Option<f64> = None;
+        for b in boxes {
+            let inside = |&(x, y, _): &(f64, f64, f64)| x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3];
+            let hits: Vec<(f64, f64, f64)> = match tree {
+                Some(t) => t.locate_in_envelope(&AABB::from_corners([b[0], b[1]], [b[2], b[3]])).map(|g| self.drills[g.data]).collect(),
+                None => self.drills.iter().copied().filter(inside).collect(),
+            };
+            for d in hits.iter().filter(|d| is_via(d)) {
+                best = Some(best.map_or(d.2, |m: f64| m.min(d.2)));
+            }
+        }
+        best
+    }
+
+    /// Schmale, lange Öffnung, deren Längsachse quer zur Rakelbewegung liegt.
+    fn slot_across_squeegee(&self, item: &ApertureItem, boxes: &[[f64; 4]]) -> Option<(f64, f64)> {
+        if item.shape_type == "circle" {
+            return None;
+        }
+        boxes.iter().find_map(|b| {
+            let (w, h) = (b[2] - b[0], b[3] - b[1]);
+            let (narrow, long) = (w.min(h), w.max(h));
+            // Rakel fährt in Y → Längsachse in X liegt quer (und umgekehrt)
+            let across = if self.squeegee_dir == "Y" { w > h } else { h > w };
+            (narrow <= SLOT_MAX_W && long >= SLOT_MIN_RATIO * narrow && across).then_some((r3(narrow), r3(long)))
+        })
+    }
+
+    fn aperture_ipc_with(&self, item: &ApertureItem, drills: Option<&DrillTree>) -> IpcResult {
         let (t, zone) = self.get_effective_thickness(item.cx, item.cy);
 
         let (ar, aspect, min_ap_dim) = match item.custom_slices.as_ref().filter(|s| !s.is_empty()) {
@@ -215,6 +270,13 @@ impl StencilEngine {
             format!("{balls:.0}-Ball-Regel OK ({:.3}mm >= {:.3}mm)", min_ap_dim, min_required_w)
         };
 
+        let boxes = Self::opening_boxes(item);
+        let via = self.via_in_opening(item, &boxes, drills);
+        if via.is_some() && status == "OK" {
+            status = "WARN";
+        }
+        let slot = self.slot_across_squeegee(item, &boxes);
+
         IpcResult {
             effective_thickness: t,
             zone_id: zone.map(|z| z.id.clone()),
@@ -228,16 +290,23 @@ impl StencilEngine {
             grain_status: if grain_warn { "WARN_GRAIN" } else { "OK" },
             grain_msg,
             min_required_w: r3(min_required_w),
+            via_warn: via.is_some(),
+            via_msg: via.map_or_else(String::new, |d| format!("Bohrung ⌀{:.2} mm in der Öffnung – Lot läuft ab (Via füllen/abdecken oder Öffnung freistellen)", d)),
+            squeegee_warn: slot.is_some(),
+            squeegee_msg: slot.map_or_else(String::new, |(n, l)| format!("Schmale Öffnung {n:.3} × {l:.3} mm quer zur Rakel ({}) – Füllung prüfen", self.squeegee_dir)),
         }
     }
 
     pub fn all_ipc(&self) -> Vec<IpcResult> {
-        self.apertures.par_iter().map(|a| self.calculate_aperture_ipc(a)).collect()
+        let tree = self.drill_tree();
+        self.apertures.par_iter().map(|a| self.aperture_ipc_with(a, Some(&tree))).collect()
     }
 
     pub fn get_panel_statistics(&self) -> Value {
         let ipcs = self.all_ipc();
         let (mut ok, mut warn, mut crit, mut grain) = (0usize, 0usize, 0usize, 0usize);
+        let vias = ipcs.iter().filter(|i| i.via_warn).count();
+        let slots = ipcs.iter().filter(|i| i.squeegee_warn).count();
         let mut min_ar = f64::INFINITY;
         let mut groups: HashMap<&str, usize> = HashMap::new();
         let mut crit_groups: HashMap<&str, usize> = HashMap::new();
@@ -270,6 +339,8 @@ impl StencilEngine {
             "warn_count": warn,
             "crit_count": crit,
             "grain_warn_count": grain,
+            "via_in_pad_count": vias,
+            "squeegee_slot_count": slots,
             "min_ar": if min_ar.is_finite() { r3(min_ar) } else { 0.0 },
             "base_thickness": self.base_thickness,
             "zones_count": self.zones.len(),
@@ -563,6 +634,31 @@ mod tests {
         let rows = r["results"].as_array().unwrap();
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0]["transfer_pct"], 100);
+    }
+}
+
+#[cfg(test)]
+mod dfm_check_tests {
+    use super::*;
+
+    #[test]
+    fn via_in_pad_and_slot_across_squeegee() {
+        let mut e = StencilEngine::new(0.12, std::env::temp_dir().join("sc_dfm_test"));
+        e.squeegee_dir = "Y".into();
+        // Pad 1,0 × 0,6 mit Via ⌀0,25 neben der Mitte; THT-Bohrung ⌀0,8 in Padmitte zählt nicht
+        e.drills = vec![(0.3, 0.0, 0.25), (5.0, 0.0, 0.8)];
+        let pad = ApertureItem::new(0, "rectangle", 0.0, 0.0, 1.0, 0.6);
+        let tht = ApertureItem::new(1, "circle", 5.0, 0.0, 1.6, 1.6);
+        assert!(e.calculate_aperture_ipc(&pad).via_warn);
+        assert!(!e.calculate_aperture_ipc(&tht).via_warn);
+        // Schlitz 1,0 × 0,2: Längsachse X liegt quer zur Rakel in Y
+        let slot = ApertureItem::new(2, "rectangle", 9.0, 9.0, 1.0, 0.2);
+        assert!(e.calculate_aperture_ipc(&slot).squeegee_warn);
+        e.squeegee_dir = "X".into();
+        assert!(!e.calculate_aperture_ipc(&slot).squeegee_warn);
+        // Baumsuche (all_ipc) liefert dasselbe wie die Einzelprüfung
+        e.apertures = vec![pad];
+        assert!(e.all_ipc()[0].via_warn);
     }
 }
 
