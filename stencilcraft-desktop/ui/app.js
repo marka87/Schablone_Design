@@ -910,11 +910,18 @@ function drawSingleMeasurement(targetCtx, pt1, pt2, toScreenFn, isActive) {
     const padW = Math.max(textW1, textW2) + 16;
     const padH = 34;
 
+    // Beschriftung neben die Messlinie (Normale nach oben), damit die gemessene Stelle sichtbar bleibt
+    const ls = Math.hypot(s2.x - s1.x, s2.y - s1.y) || 1;
+    let nx = -(s2.y - s1.y) / ls, ny = (s2.x - s1.x) / ls;
+    if (ny > 0 || (ny === 0 && nx < 0)) { nx = -nx; ny = -ny; }
+    const off = Math.abs(nx) * padW / 2 + Math.abs(ny) * padH / 2 + 10;
+    const lx = midX + nx * off, ly = midY + ny * off;
+
     targetCtx.fillStyle = "rgba(15, 23, 42, 0.90)";
     targetCtx.strokeStyle = color;
     targetCtx.lineWidth = 1;
     targetCtx.beginPath();
-    targetCtx.roundRect(midX - padW / 2, midY - padH / 2, padW, padH, 5);
+    targetCtx.roundRect(lx - padW / 2, ly - padH / 2, padW, padH, 5);
     targetCtx.fill();
     targetCtx.stroke();
 
@@ -922,11 +929,11 @@ function drawSingleMeasurement(targetCtx, pt1, pt2, toScreenFn, isActive) {
     targetCtx.font = "bold 11px Inter, sans-serif";
     targetCtx.textAlign = "center";
     targetCtx.textBaseline = "middle";
-    targetCtx.fillText(line1, midX, midY - 6);
+    targetCtx.fillText(line1, lx, ly - 6);
 
     targetCtx.fillStyle = "#94a3b8";
     targetCtx.font = "9px Inter, sans-serif";
-    targetCtx.fillText(line2, midX, midY + 7);
+    targetCtx.fillText(line2, lx, ly + 7);
 
     targetCtx.restore();
 }
