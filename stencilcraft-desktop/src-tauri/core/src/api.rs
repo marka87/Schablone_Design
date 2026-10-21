@@ -276,7 +276,7 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
         }
         ("POST", ["api", "group", g, "generate"]) => {
             let ids = e.group_aperture_ids(g);
-            let n = e.regenerate_ids(&ids);
+            let n = e.regenerate_ids(&ids) + e.on_other_side(|e| { let ids = e.group_aperture_ids(g); e.regenerate_ids(&ids) }).unwrap_or(0);
             ok(json!({"status": "ok", "modified_count": n, "stats": stats(e)}))
         }
         ("GET", ["api", "components"]) => ok(e.components_json()),

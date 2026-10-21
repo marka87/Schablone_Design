@@ -227,6 +227,19 @@ impl StencilEngine {
         }
     }
 
+    /// Führt `f` auf der abgelegten anderen Seite aus (falls geladen) und legt sie wieder ab.
+    pub fn on_other_side<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> Option<R> {
+        let other = if self.current_side == "bot" { "top" } else { "bot" };
+        let data = self.sides.remove(other)?;
+        let cur = self.take_side_data();
+        self.put_side_data(data);
+        let r = f(self);
+        let back = self.take_side_data();
+        self.put_side_data(cur);
+        self.sides.insert(other.to_string(), back);
+        Some(r)
+    }
+
     fn put_side_data(&mut self, d: SideData) {
         self.apertures = d.apertures;
         self.original_apertures = d.original_apertures;
@@ -834,7 +847,9 @@ impl StencilEngine {
             .or_insert_with(|| PackageTemplate::new(&target, 2, 1.0, 1.0, 1.0))
             .rule
             .apply_map(rule);
-        self.regenerate_package_apertures(&target, None)
+        // Package-Regeln gelten für TOP und BOT: beide Seiten gleich erzeugen
+        let other = self.on_other_side(|e| e.regenerate_package_apertures(&target, None)).unwrap_or(0);
+        self.regenerate_package_apertures(&target, None) + other
     }
 
     /// Berechnet alle (nicht manuell übersteuerten) Aperturen eines Packages neu.
@@ -1349,4 +1364,27 @@ pub fn donut_segments(cx: f64, cy: f64, d_in: f64, d_out: f64, web: f64) -> Vec<
         });
     }
     out
+}
+
+#[cfg(test)]
+mod side_tests {
+    use super::*;
+
+    #[test]
+    fn package_rule_generates_both_sides() {
+        let mut e = StencilEngine::new(0.12, std::env::temp_dir().join("sc_side_test"));
+        let ap = |id| {
+            let mut a = ApertureItem::new(id, "rectangle", 1.0, 1.0, 0.6, 0.3);
+            a.package_name = "P".into();
+            a
+        };
+        e.apertures = vec![ap(0)];
+        e.switch_side("bot");
+        e.apertures = vec![ap(0)];
+        let rule: Map<String, Value> = serde_json::from_str(r#"{"rule_type":"simple_rect","corner_radius":0.075}"#).unwrap();
+        assert_eq!(e.apply_package_rule("P", &rule), 2);
+        assert!(e.apertures[0].custom_slices.is_some());
+        assert!(e.sides["top"].apertures[0].custom_slices.is_some());
+        assert_eq!(e.current_side, "bot");
+    }
 }
