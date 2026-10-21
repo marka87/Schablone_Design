@@ -3995,7 +3995,28 @@ function onSinglePinParamChanged() {
 // -------------------------------------------------------------
 // Package Canvas Renderer (PCB Investigator Style)
 // -------------------------------------------------------------
+// Pins ohne Kundenpaste (z. B. Zugentlastung): ohne Öffnung auf dem Board wirkt keine Regel
+function renderPkgMissingPaste() {
+    const box = document.getElementById("pkgMissingPaste");
+    if (!box) return;
+    const pins = pkgState.activePackageData?.missing_paste_pins || [];
+    box.classList.toggle("hidden", pins.length === 0);
+    document.getElementById("pkgMissingPasteText").textContent =
+        `Pin ${pins.join(", ")} ohne Kundenpaste – auf dem Board gibt es dort keine Öffnung, Regeln wirken nicht.`;
+}
+
+document.getElementById("btnPkgAddMissing")?.addEventListener("click", async () => {
+    const name = pkgState.activePackageData?.name;
+    if (!name) return;
+    const d = await (await fetch("/api/paste/add_missing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ package: name }) })).json();
+    await refreshApertureData();
+    await selectPackage(name);
+    refreshHistory();
+    showToast(`${d.added} Öffnungen für ${name} aus dem Kupfer erzeugt`);
+});
+
 function renderPkgPreview() {
+    renderPkgMissingPaste();
     if (!pkgCtx || !pkgCanvas || !pkgState.activePackageData) return;
     const rect = pkgCanvas.getBoundingClientRect();
     const w = rect.width;

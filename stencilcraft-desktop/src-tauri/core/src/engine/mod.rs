@@ -1024,6 +1024,7 @@ impl StencilEngine {
             "rule_source": source,
             "base_thickness": self.base_thickness,
             "pad_overrides": pkg.overrides_json(),
+            "missing_paste_pins": self.missing_paste_pins_of(&target),
         })
     }
 

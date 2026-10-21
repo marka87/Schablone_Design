@@ -2280,3 +2280,7 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: none; outli
 .pkg-side-switch { display: flex; margin: 6px 10px; }
 .pkg-side-switch button { flex: 1; padding: 4px 8px; }
 .pkg-badge-side { font-size: 0.65rem; padding: 0 4px; border-radius: 3px; border: 1px solid var(--border-color); color: var(--text-secondary); }
+
+/* Package-Pins ohne Kundenpaste */
+.pkg-missing-paste { display: flex; align-items: center; gap: 8px; margin: 6px 0; padding: 6px 8px; border-left: 3px solid #d29922; background: rgba(210, 153, 34, 0.10); font-size: 0.78rem; }
+.pkg-missing-paste span { flex: 1; }

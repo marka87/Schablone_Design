@@ -658,7 +658,8 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
         // Bauteilpins ohne Kundenpaste (PCB-I erzeugt dort Öffnungen aus dem Kupfer)
         ("GET", ["api", "paste", "missing"]) => ok(e.missing_paste_json()),
         ("POST", ["api", "paste", "add_missing"]) => {
-            let n = e.add_missing_paste();
+            let pkg = b.s("package");
+            let n = e.add_missing_paste_for(pkg.as_deref());
             ok(json!({"status": "ok", "added": n, "stats": stats(e)}))
         }
         ("POST", ["api", "paste", "remove_added"]) => {
