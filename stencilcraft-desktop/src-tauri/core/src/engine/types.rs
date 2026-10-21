@@ -179,7 +179,12 @@ pub struct ComponentItem {
     /// Lage von Pin 1 (Board-Koordinaten) für die Markierung
     #[serde(default)]
     pub pin1: Option<Pt>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pins: Vec<CompPin>,
 }
+
+/// Bauteil-Pin: Name, x, y, kleinste Padkante
+pub type CompPin = (String, f64, f64, f64);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StencilZone {
@@ -246,7 +251,7 @@ pub enum Prim {
     #[serde(rename = "p")]
     Poly { pts: Vec<Pt> },
     #[serde(rename = "comp")]
-    Comp { refdes: String, pkg: String, x: f64, y: f64, w: f64, h: f64, rot: f64, o: Vec<Pt>, p1: Option<Pt> },
+    Comp { refdes: String, pkg: String, x: f64, y: f64, w: f64, h: f64, rot: f64, o: Vec<Pt>, p1: Option<Pt>, pn: Vec<CompPin> },
 }
 
 impl Prim {

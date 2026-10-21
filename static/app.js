@@ -1051,6 +1051,9 @@ function renderFrame(rect) {
     // 8. Apertures (Paste / Pink oder Heatmap)
     renderApertures();
 
+    // 8b. Bauteil-Beschriftung über Kupfer und Paste
+    renderComponentLabels();
+
     // 9. Selected Aperture Highlight
     if (state.selectedAperture) {
         renderSelectionHighlight();
@@ -1214,60 +1217,87 @@ function renderPads() {
     }
 }
 
-function renderComponents() {
-    if (!state.showComponents) return;
-    // Je Seite die eigene Bauteil-Lage: aktive Seite aus state.components, andere Seite aus den Lagen-Primitiven
+// Sichtbare Bauteile je Seite: aktive Seite aus state.components, andere Seite aus den Lagen-Primitiven
+function visibleComponentSets() {
+    if (!state.showComponents) return [];
     const compLayers = (state.layers || []).filter(l => l.type === 'component');
     const own = compLayers.find(l => (l.side || "top") === (state.side || "top"));
     const other = compLayers.filter(l => l !== own && l.visible !== false);
-    drawComponentBoxes(other.flatMap(l => (state.layerPrimitives[l.id]?.prims || []).filter(p => p.t === 'comp')
-        .map(p => ({ cx: p.x, cy: p.y, width: p.w, height: p.h, rot: p.rot, refdes: p.refdes, outline: p.o, pin1: p.p1 }))), "rgba(250, 204, 21, 0.35)");
-    if (!own || own.visible !== false) drawComponentBoxes(state.components, "rgba(250, 204, 21, 0.75)");
+    const sets = [{ dim: true, list: other.flatMap(l => (state.layerPrimitives[l.id]?.prims || []).filter(p => p.t === 'comp')
+        .map(p => ({ cx: p.x, cy: p.y, width: p.w, height: p.h, rot: p.rot, refdes: p.refdes, outline: p.o, pin1: p.p1, pins: p.pn }))) }];
+    if (!own || own.visible !== false) sets.push({ dim: false, list: state.components });
+    return sets;
 }
 
-function drawComponentBoxes(list, stroke) {
-    ctx.strokeStyle = stroke;
-    ctx.fillStyle = "#facc15";
-    ctx.lineWidth = 1;
-    ctx.font = "bold 9px Inter, sans-serif";
-
-    for (const c of list) {
-        // Körperumriss aus den CAD-Daten (ODB++), sonst Rechteck aus der Package-Größe
-        if (c.outline && c.outline.length >= 3) {
+// Körper wie PCB-Investigator: gefüllter Umriss unter Kupfer/Paste
+function renderComponents() {
+    for (const { dim, list } of visibleComponentSets()) {
+        ctx.strokeStyle = dim ? "rgba(214, 170, 90, 0.35)" : "rgba(214, 170, 90, 0.85)";
+        ctx.fillStyle = dim ? "rgba(110, 85, 45, 0.18)" : "rgba(110, 85, 45, 0.40)";
+        ctx.lineWidth = 1;
+        for (const c of list) {
             ctx.beginPath();
-            c.outline.forEach(([x, y], i) => { const q = worldToScreen(x, y); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
+            if (c.outline && c.outline.length >= 3) {
+                c.outline.forEach(([x, y], i) => { const q = worldToScreen(x, y); i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y); });
+            } else {
+                // Ohne CAD-Umriss: gedrehtes Rechteck aus der Package-Größe
+                const a = -(c.rot || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a), q0 = worldToScreen(c.cx, c.cy);
+                const hw = c.width * state.zoom / 2, hh = c.height * state.zoom / 2;
+                [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].forEach(([x, y], i) => ctx[i ? "lineTo" : "moveTo"](q0.x + x * ca - y * sa, q0.y + x * sa + y * ca));
+            }
             ctx.closePath();
+            ctx.fill();
             ctx.stroke();
-            if (c.pin1 && state.zoom > 1.5) {
-                const q = worldToScreen(c.pin1[0], c.pin1[1]);
+        }
+    }
+}
+
+// Beschriftung über allen Lagen: RefDes mittig in Körpergröße, Pin-Namen auf den Pads, Pin 1 markiert
+function renderComponentLabels() {
+    const z = state.zoom;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const { dim, list } of visibleComponentSets()) {
+        for (const c of list) {
+            let bw = c.width, bh = c.height, mx = c.cx, my = c.cy;
+            if (c.outline && c.outline.length >= 3) {
+                const xs = c.outline.map(p => p[0]), ys = c.outline.map(p => p[1]);
+                const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+                [bw, bh, mx, my] = [x1 - x0, y1 - y0, (x0 + x1) / 2, (y0 + y1) / 2];
+            }
+            const q = worldToScreen(mx, my);
+            if (q.x < -200 || q.y < -200 || q.x > canvas.width + 200 || q.y > canvas.height + 200) continue;
+            if (c.refdes) {
+                const px = Math.min(bh * z * 0.5, bw * z / (c.refdes.length * 0.62), 64);
+                if (px >= 7) {
+                    ctx.font = `${Math.round(px)}px Inter, sans-serif`;
+                    ctx.fillStyle = dim ? "rgba(249, 168, 212, 0.45)" : "rgba(249, 168, 212, 0.9)";
+                    ctx.fillText(c.refdes, q.x, q.y);
+                }
+            }
+            let named = false;
+            for (const [name, x, y, sz] of c.pins || []) {
+                const px = Math.min(sz * z * 0.55, 14);
+                if (px < 6) continue;
+                const p = worldToScreen(x, y);
+                ctx.font = `${Math.round(px)}px Inter, sans-serif`;
+                // Pin 1 grün hervorheben (wie PCB-Investigator)
+                const first = c.pin1 && Math.abs(x - c.pin1[0]) < 1e-3 && Math.abs(y - c.pin1[1]) < 1e-3;
+                ctx.fillStyle = first ? "#84cc16" : dim ? "rgba(255, 255, 255, 0.4)" : "rgba(255, 255, 255, 0.85)";
+                ctx.fillText(name, p.x, p.y);
+                named = named || first;
+            }
+            if (c.pin1 && z > 1.5 && !named) {
+                const p = worldToScreen(c.pin1[0], c.pin1[1]);
+                ctx.fillStyle = "#84cc16";
                 ctx.beginPath();
-                ctx.arc(q.x, q.y, Math.max(1.5, Math.min(4, 0.08 * state.zoom)), 0, Math.PI * 2);
+                ctx.arc(p.x, p.y, Math.max(1.5, Math.min(4, 0.08 * z)), 0, Math.PI * 2);
                 ctx.fill();
             }
-            if (state.zoom > 2.5 && c.refdes) {
-                // Beschriftung oben links am Umriss, wie bisher am Rechteck
-                const xs = c.outline.map(p => p[0]), ys = c.outline.map(p => p[1]);
-                const q = worldToScreen(Math.min(...xs), Math.max(...ys));
-                ctx.fillText(c.refdes, q.x + 2, q.y - 2);
-            }
-            continue;
         }
-        const center = worldToScreen(c.cx, c.cy);
-        const sw = Math.max(2, c.width * state.zoom);
-        const sh = Math.max(2, c.height * state.zoom);
-
-        ctx.save();
-        ctx.translate(center.x, center.y);
-        if (c.rot) {
-            ctx.rotate(-c.rot * Math.PI / 180.0);
-        }
-        ctx.strokeRect(-sw / 2, -sh / 2, sw, sh);
-
-        if (state.zoom > 2.5 && c.refdes) {
-            ctx.fillText(c.refdes, -sw / 2 + 2, -sh / 2 - 2);
-        }
-        ctx.restore();
     }
+    ctx.textAlign = "start";
+    ctx.textBaseline = "alphabetic";
 }
 
 function renderZones() {

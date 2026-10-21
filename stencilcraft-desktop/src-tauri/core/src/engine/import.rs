@@ -372,7 +372,17 @@ impl StencilEngine {
                             .map(|p| rotate_pts(&p.outline, 0.0, 0.0, -c.rot).into_iter().map(|(x, y)| (r3(c.x + if c.mirror { -x } else { x }), r3(c.y + y))).collect())
                             .unwrap_or_default();
                         let pin1 = c.pins.iter().find(|p| p.0 == 1).map(|p| (r3(p.1), r3(p.2)));
-                        prims.push(Prim::Comp { refdes: c.refdes.clone(), pkg: pkg.clone(), x: r3(c.x), y: r3(c.y), w, h, rot: c.rot, o: outline.clone(), p1: pin1 });
+                        // Pins mit Name und kleinster Padkante (für die Beschriftungsgröße)
+                        let pins: Vec<CompPin> = c
+                            .pins
+                            .iter()
+                            .zip(&c.pin_names)
+                            .map(|(&(n, x, y), name)| {
+                                let s = ep.and_then(|p| p.pins.get((n - 1) as usize)).map_or(0.3, |q| q.w.min(q.h));
+                                (name.clone(), r3(x), r3(y), r3(s))
+                            })
+                            .collect();
+                        prims.push(Prim::Comp { refdes: c.refdes.clone(), pkg: pkg.clone(), x: r3(c.x), y: r3(c.y), w, h, rot: c.rot, o: outline.clone(), p1: pin1, pn: pins.clone() });
                         self.components.push(ComponentItem {
                             refdes: c.refdes.clone(),
                             package: pkg,
@@ -384,6 +394,7 @@ impl StencilEngine {
                             side: comp_side.into(),
                             outline,
                             pin1,
+                            pins,
                         });
                     }
                     side_toeprints.entry(if comp_side == "BOT" { "bot" } else { "top" }).or_default().extend(comps.into_iter().map(|c| (c.refdes, c.pins)));

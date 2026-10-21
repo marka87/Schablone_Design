@@ -773,6 +773,8 @@ pub struct OdbComponent {
     pub mirror: bool,
     /// Toeprints: (Pin-Nummer 1-basiert, x, y) in Board-Koordinaten
     pub pins: Vec<(i64, f64, f64)>,
+    /// Pin-Namen der Toeprints (z. B. "1", "A1"), parallel zu `pins`
+    pub pin_names: Vec<String>,
 }
 
 pub fn parse_components(content: &str) -> Vec<OdbComponent> {
@@ -800,11 +802,13 @@ pub fn parse_components(content: &str) -> Vec<OdbComponent> {
                     rot: f(4).unwrap_or(0.0),
                     mirror: p.get(5).map_or(false, |m| m.eq_ignore_ascii_case("M")),
                     pins: Vec::new(),
+                    pin_names: Vec::new(),
                 });
             }
             Some("TOP") if p.len() >= 4 => {
                 if let (Some(c), Some(pin), Some(x), Some(y)) = (out.last_mut(), p[1].parse::<i64>().ok(), f(2), f(3)) {
                     c.pins.push((pin + 1, x * scale, y * scale));
+                    c.pin_names.push(p.get(8).map_or_else(|| (pin + 1).to_string(), |n| n.to_string()));
                 }
             }
             _ => {}
