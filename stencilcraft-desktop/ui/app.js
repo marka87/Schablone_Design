@@ -5392,16 +5392,18 @@ async function refreshSides() {
     try {
         const d = await (await fetch("/api/sides")).json();
         for (const sd of d.sides) {
-            const btn = document.querySelector(`#sideSwitch button[data-side="${sd.side}"]`);
-            if (!btn) continue;
-            btn.classList.toggle("active", sd.active && pkgState.sideFilter !== "both");
-            const usable = sd.loaded || sd.available;
-            btn.disabled = !usable && !sd.active;
-            const cnt = document.getElementById(sd.side === "top" ? "cntSideTop" : "cntSideBot");
-            if (cnt) cnt.textContent = usable ? `(${sd.apertures})` : "";
-            btn.title = sd.loaded ? `${sd.side.toUpperCase()}: ${sd.apertures} Pastenöffnungen`
-                : sd.available ? `${sd.side.toUpperCase()}: keine Kundenpaste – Öffnungen können aus dem Kupfer ergänzt werden`
-                : `${sd.side.toUpperCase()}: keine Daten für diese Seite`;
+            // Kopfleiste und Package-Liste zeigen dieselbe Seite
+            for (const btn of document.querySelectorAll(`.side-switch button[data-side="${sd.side}"]`)) {
+                const inList = btn.closest("#sideSwitch");
+                btn.classList.toggle("active", sd.active && !(inList && pkgState.sideFilter === "both"));
+                const usable = sd.loaded || sd.available;
+                btn.disabled = !usable && !sd.active;
+                const cnt = btn.querySelector(".side-count");
+                if (cnt) cnt.textContent = usable ? `(${sd.apertures})` : "";
+                btn.title = sd.loaded ? `${sd.side.toUpperCase()}: ${sd.apertures} Pastenöffnungen`
+                    : sd.available ? `${sd.side.toUpperCase()}: keine Kundenpaste – Öffnungen können aus dem Kupfer ergänzt werden`
+                    : `${sd.side.toUpperCase()}: keine Daten für diese Seite`;
+            }
         }
         state.side = d.active;
     } catch (e) { /* Web-Version ohne Seitenwechsel */ }
@@ -5422,6 +5424,13 @@ async function switchSide(side) {
     if (sd && !sd.loaded) await offerMissingPaste(true);
 }
 window.switchSide = switchSide;
+
+document.querySelectorAll("#boardSideSwitch button").forEach(b => b.addEventListener("click", async () => {
+    if (b.dataset.side === state.side) return;
+    if (pkgState.sideFilter !== "both") pkgState.sideFilter = b.dataset.side;
+    await switchSide(b.dataset.side);
+    renderPkgTree();
+}));
 
 document.querySelectorAll("#sideSwitch button").forEach(b => b.addEventListener("click", async () => {
     pkgState.sideFilter = b.dataset.side;
