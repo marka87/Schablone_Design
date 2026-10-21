@@ -4694,7 +4694,9 @@ function setupPkgEventListeners() {
 
         try {
             const ruleData = collectRuleFromInputs();
-            const url = target.kind === "package"
+            // Pin-Auswahl: Pin-Regeln sind schon gespeichert, das ganze Package neu erzeugen (Regel unverändert)
+            const pinTarget = target.kind === "pin" || target.kind === "pins";
+            const url = target.kind === "package" || pinTarget
                 ? `/api/package/${encodeURIComponent(target.id)}/generate`
                 : `/api/${target.kind}/${encodeURIComponent(target.id)}/generate`;
             const res = await fetch(url, {
@@ -4702,6 +4704,7 @@ function setupPkgEventListeners() {
                 headers: { "Content-Type": "application/json" },
                 body: target.kind === "package" ? JSON.stringify(ruleData) : "{}"
             });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             btn.innerHTML = `<span>✓</span> ${data.modified_count} Pads aktualisiert!`;
             setTimeout(() => {
