@@ -538,6 +538,9 @@ pub struct PadRel {
     /// Kupferpad (B, H, rund) im Package-Rahmen, falls bekannt
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub copper: Option<(f64, f64, bool)>,
+    /// Mitte des Kupferpads im Package-Rahmen (kann von der Pin-Mitte der Bibliothek abweichen)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copper_c: Option<(f64, f64)>,
 }
 
 fn rect_shape() -> String {
@@ -546,7 +549,7 @@ fn rect_shape() -> String {
 
 impl PadRel {
     pub fn new(pin: i64, cx: f64, cy: f64, w: f64, h: f64, facing: &str) -> Self {
-        PadRel { pin, cx, cy, w, h, facing: facing.into(), is_thermal: false, shape: rect_shape(), mask_w: None, mask_h: None, mask_round: None, drill: None, copper: None }
+        PadRel { pin, cx, cy, w, h, facing: facing.into(), is_thermal: false, shape: rect_shape(), mask_w: None, mask_h: None, mask_round: None, drill: None, copper: None, copper_c: None }
     }
 
     pub fn round(mut self, round: bool) -> Self {

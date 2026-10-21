@@ -22,7 +22,7 @@ pub mod types;
 pub mod zone_plan;
 
 use geometry::circle_pts;
-use rules::{elongated_narrow_width, generate_rule_aperture_geometry, resolve_pin_rule, take_existing_rounded, PadCtx};
+use rules::{elongated_narrow_width, generate_rule_aperture_geometry, resolve_pin_rule, take_existing_rounded, frame_to_pkg, PadCtx};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -999,9 +999,22 @@ impl StencilEngine {
             Some((r, src)) => ((*r).clone(), src.clone()),
             None => self.package_effective_rule(pkg),
         };
-        let rel: Vec<(f64, f64, f64, f64)> = pkg.pads_relative.iter().map(|p| (p.cx, p.cy, p.w, p.h)).collect();
+        // Anzeige nach dem echten Kupferpad der Platine (Größe und Lage), sonst nach der Bibliotheks-Pin-Geometrie
+        let pads: Vec<PadRel> = pkg
+            .pads_relative
+            .iter()
+            .map(|p| {
+                let mut v = p.clone();
+                if let (Some((w, h, round)), Some((x, y))) = (p.copper, p.copper_c) {
+                    (v.cx, v.cy, v.w, v.h) = (x, y, w, h);
+                    v.shape = if round { "circle" } else { "rect" }.into();
+                }
+                v
+            })
+            .collect();
+        let rel: Vec<(f64, f64, f64, f64)> = pads.iter().map(|p| (p.cx, p.cy, p.w, p.h)).collect();
         let mut paste = Vec::new();
-        for (i, p) in pkg.pads_relative.iter().enumerate() {
+        for (i, p) in pads.iter().enumerate() {
             let (rule, pw, ph) = match pkg.pad_overrides.get(&p.pin) {
                 Some(ov) => (resolve_pin_rule(&eff, ov), ov.get("w").and_then(val_f64).unwrap_or(p.w), ov.get("h").and_then(val_f64).unwrap_or(p.h)),
                 None => (eff.clone(), p.w, p.h),
@@ -1036,7 +1049,7 @@ impl StencilEngine {
             "group": pkg.group,
             "component_count": pkg.component_count,
             "outline": pkg.outline,
-            "pads": pkg.pads_relative,
+            "pads": pads,
             "paste": paste,
             "rule": pkg.rule.to_json(),
             "effective_rule": eff.to_json(),
@@ -1209,6 +1222,9 @@ impl StencilEngine {
         let mut first: std::collections::HashMap<(String, i64), (f64, f64, bool)> = std::collections::HashMap::new();
         let mut instances: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         let mut copper_first: std::collections::HashMap<(String, i64), (f64, f64, bool)> = std::collections::HashMap::new();
+        let mut copper_center: std::collections::HashMap<(String, i64), (f64, f64)> = std::collections::HashMap::new();
+        let comp_frame: std::collections::HashMap<&str, (f64, f64, f64, bool)> =
+            self.components.iter().map(|c| (c.refdes.as_str(), (c.cx, c.cy, c.rotation, c.side.eq_ignore_ascii_case("BOT")))).collect();
         let comp_rot: std::collections::HashMap<&str, f64> = self.components.iter().map(|c| (c.refdes.as_str(), c.rotation)).collect();
         let quarter = |rot: f64| ((rot.rem_euclid(180.0)) - 90.0).abs() < 1.0;
         for ap in &self.apertures {
@@ -1220,6 +1236,11 @@ impl StencilEngine {
             };
             if let Some(c) = &ap.copper_ref {
                 copper_first.entry((pkg.clone(), ap.pin_number)).or_insert(if rotated { (c.h, c.w, c.round) } else { (c.w, c.h, c.round) });
+                // Kupfermitte zurück in den Package-Rahmen (Drehung/Spiegelung des Bauteils aufheben)
+                if let Some(&(ccx, ccy, rot, mirror)) = comp_frame.get(ap.component_id.as_str()) {
+                    let rel = frame_to_pkg(((c.x0 + c.x1) / 2.0 - ccx, (c.y0 + c.y1) / 2.0 - ccy), rot, mirror);
+                    copper_center.entry((pkg.clone(), ap.pin_number)).or_insert((r3(rel.0), r3(rel.1)));
+                }
             }
             first.entry((pkg, ap.pin_number)).or_insert((ap.cx, ap.cy, rotated));
         }
@@ -1265,6 +1286,7 @@ impl StencilEngine {
                 if let Some(&(w, h, round)) = copper_first.get(&(name.clone(), p.pin)) {
                     p.copper = Some((r3(w), r3(h), round));
                 }
+                p.copper_c = copper_center.get(&(name.clone(), p.pin)).copied();
             }
             let mut drilled = 0usize;
             let pin_total = per_pin.len().max(1);
