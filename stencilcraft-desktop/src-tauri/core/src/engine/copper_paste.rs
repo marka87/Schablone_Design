@@ -110,13 +110,18 @@ impl StencilEngine {
 
     /// Ergänzt Öffnungen für alle Pins ohne Kundenpaste und wendet die Regeln darauf an.
     pub fn add_missing_paste(&mut self) -> usize {
-        self.add_missing_paste_for(None)
+        self.add_missing_paste_for(None, None)
     }
 
-    /// Wie `add_missing_paste`, optional nur für ein Package.
-    pub fn add_missing_paste_for(&mut self, package: Option<&str>) -> usize {
+    /// Wie `add_missing_paste`, optional nur für ein Package und bestimmte Pins.
+    pub fn add_missing_paste_for(&mut self, package: Option<&str>, pins: Option<&[i64]>) -> usize {
         let target = package.map(|p| self.resolve_alias(p));
-        let missing: Vec<MissingPin> = self.missing_paste_pins().into_iter().filter(|m| target.as_ref().map_or(true, |t| self.resolve_alias(&m.package) == *t)).collect();
+        let missing: Vec<MissingPin> = self
+            .missing_paste_pins()
+            .into_iter()
+            .filter(|m| target.as_ref().map_or(true, |t| self.resolve_alias(&m.package) == *t))
+            .filter(|m| pins.map_or(true, |p| p.contains(&m.pin)))
+            .collect();
         let start = self.apertures.len();
         for m in &missing {
             let id = self.apertures.len();

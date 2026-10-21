@@ -4042,12 +4042,22 @@ function renderPkgMissingPaste() {
     box.classList.toggle("hidden", pins.length === 0);
     document.getElementById("pkgMissingPasteText").textContent =
         `Pin ${pins.join(", ")} ohne Kundenpaste – auf dem Board gibt es dort keine Öffnung, Regeln wirken nicht.`;
+    // Markierte Kupferpads (Klick / Strg+Klick / Rahmen) nur diese übernehmen, sonst alle
+    const sel = selectedMissingPins();
+    document.getElementById("btnPkgAddMissing").textContent = sel.length ? `Pin ${sel.join(", ")} als Paste übernehmen` : "Alle als Paste übernehmen";
+}
+
+function selectedMissingPins() {
+    const missing = pkgState.activePackageData?.missing_paste_pins || [];
+    const sel = pkgState.pinBarMode === "multi" ? pkgState.selectedPins || [] : (pkgState.selectedPin != null ? [pkgState.selectedPin] : []);
+    return sel.filter(p => missing.includes(p));
 }
 
 document.getElementById("btnPkgAddMissing")?.addEventListener("click", async () => {
     const name = pkgState.activePackageData?.name;
     if (!name) return;
-    const d = await (await fetch("/api/paste/add_missing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ package: name }) })).json();
+    const sel = selectedMissingPins();
+    const d = await (await fetch("/api/paste/add_missing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sel.length ? { package: name, pins: sel } : { package: name }) })).json();
     await refreshApertureData();
     await selectPackage(name);
     refreshHistory();

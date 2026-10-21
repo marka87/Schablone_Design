@@ -659,7 +659,8 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
         ("GET", ["api", "paste", "missing"]) => ok(e.missing_paste_json()),
         ("POST", ["api", "paste", "add_missing"]) => {
             let pkg = b.s("package");
-            let n = e.add_missing_paste_for(pkg.as_deref());
+            let pins: Option<Vec<i64>> = body.get("pins").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_i64()).collect());
+            let n = e.add_missing_paste_for(pkg.as_deref(), pins.as_deref());
             ok(json!({"status": "ok", "added": n, "stats": stats(e)}))
         }
         ("POST", ["api", "paste", "remove_added"]) => {

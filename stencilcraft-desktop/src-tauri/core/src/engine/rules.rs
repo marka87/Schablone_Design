@@ -31,6 +31,12 @@ fn rounded_slice(cx: f64, cy: f64, w: f64, h: f64, r: f64, kind: &str) -> Slice 
     }
 }
 
+/// "Take Existing" bei rechteckiger Kundenpaste: gleiche Größe, Ecken mit dem Eckradius der Regel
+/// abgerundet (wie PCB Investigator); Radius 0 lässt das Original unverändert.
+pub fn take_existing_rounded(rule: &PackageRule, rectangle: bool, cx: f64, cy: f64, w: f64, h: f64) -> Option<Vec<Slice>> {
+    (rule.rule_type == "take_existing" && rectangle && rule.corner_radius > 0.005).then(|| vec![rounded_slice(cx, cy, w, h, rule.corner_radius, "take_existing")])
+}
+
 /// Haus-Öffnung; Ecken und Spitze mit dem Eckradius abgerundet (wie PCB Investigator).
 fn house_slice(cx: f64, cy: f64, w: f64, h: f64, pts: &[Pt], r: f64, kind: &str) -> Slice {
     let r = r.min(w / 2.2).min(h / 2.2).max(0.0);
@@ -635,6 +641,13 @@ mod tests {
         assert!(generate_rule_aperture_geometry(&PadCtx::new(1.0, 1.0, 0.0, 0.0, "right"), &rule).is_none());
         rule.rule_type = "ignore".into();
         assert!(generate_rule_aperture_geometry(&PadCtx::new(1.0, 1.0, 0.0, 0.0, "right"), &rule).unwrap().is_empty());
+        // Rechteckige Kundenpaste wird abgerundet, Radius 0 lässt sie eckig
+        rule.rule_type = "take_existing".into();
+        let s = take_existing_rounded(&rule, true, 0.0, 0.0, 1.0, 0.5).unwrap();
+        assert_eq!(s[0].radius, Some(0.075));
+        assert!(take_existing_rounded(&rule, false, 0.0, 0.0, 1.0, 0.5).is_none());
+        rule.corner_radius = 0.0;
+        assert!(take_existing_rounded(&rule, true, 0.0, 0.0, 1.0, 0.5).is_none());
     }
 
     #[test]

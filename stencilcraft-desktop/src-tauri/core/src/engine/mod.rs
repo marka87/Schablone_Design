@@ -22,7 +22,7 @@ pub mod types;
 pub mod zone_plan;
 
 use geometry::circle_pts;
-use rules::{elongated_narrow_width, generate_rule_aperture_geometry, resolve_pin_rule, PadCtx};
+use rules::{elongated_narrow_width, generate_rule_aperture_geometry, resolve_pin_rule, take_existing_rounded, PadCtx};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -672,7 +672,7 @@ impl StencilEngine {
             drill: self.drill_at(ap.cx, ap.cy, ap.width.min(ap.height)),
             ..PadCtx::new(pw, ph, ap.cx, ap.cy, &ap.facing_dir)
         };
-        generate_rule_aperture_geometry(&ctx, &rule)
+        generate_rule_aperture_geometry(&ctx, &rule).or_else(|| take_existing_rounded(&rule, ap.shape_type == "rectangle" && !ap.from_copper, ap.cx, ap.cy, pw, ph))
     }
 
     pub fn reset_single_pad(&mut self, ap_id: i64) -> bool {
@@ -1000,7 +1000,7 @@ impl StencilEngine {
                 thickness: self.base_thickness,
                 ..PadCtx::new(pw, ph, p.cx, p.cy, &p.facing)
             };
-            if let Some(mut g) = generate_rule_aperture_geometry(&ctx, &rule) {
+            if let Some(mut g) = generate_rule_aperture_geometry(&ctx, &rule).or_else(|| take_existing_rounded(&rule, !p.is_round(), p.cx, p.cy, pw, ph)) {
                 for s in g.iter_mut() {
                     s.pin = Some(p.pin);
                 }
