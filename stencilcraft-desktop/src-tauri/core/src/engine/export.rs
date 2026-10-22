@@ -2,6 +2,7 @@
 //! Platinenkontur und Prüfbericht; Optionen werden im Datenverzeichnis gemerkt.
 
 use super::gerber;
+use super::types::StencilZone;
 use super::StencilEngine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -149,6 +150,8 @@ impl StencilEngine {
                 .replace("{side}", side_label)
                 .replace("{dicke}", &format!("{}", thick_um.round() as i64))
                 .replace("{datum}", &date);
+            // Ohne {side} im Muster würden TOP, BOT und Kontur in dieselbe Datei geschrieben
+            let n = if pattern.contains("{side}") { n } else { format!("{n}_{side_label}") };
             let n = sanitize(&n);
             if n.is_empty() { format!("{job}_{side_label}") } else { n }
         };
@@ -180,15 +183,17 @@ impl StencilEngine {
             }
             files.push(json!({"kind": "stencil", "side": side, "path": p.to_string_lossy(), "count": self.apertures.len()}));
 
-            if opts.zones && !self.zones.is_empty() {
-                let z = gerber::write_zones(&self.zones, self.base_thickness);
+            // Nur Stufenzonen; reine Regelzonen ändern die Blechdicke nicht
+            let steps: Vec<StencilZone> = self.zones.iter().filter(|z| z.step).cloned().collect();
+            if opts.zones && !steps.is_empty() {
+                let z = gerber::write_zones(&steps, self.base_thickness);
                 let z = if opts.x2 { with_attributes(z, &["TF.FileFunction,Other,Stufenzonen".into(), "TF.SameCoordinates".into()]) } else { z };
                 let p = dir.join(format!("{base}_zonen.gbr"));
                 if let Err(e) = std::fs::write(&p, z) {
                     result = Err(format!("{}: {e}", p.display()));
                     break;
                 }
-                files.push(json!({"kind": "zones", "side": side, "path": p.to_string_lossy(), "count": self.zones.len()}));
+                files.push(json!({"kind": "zones", "side": side, "path": p.to_string_lossy(), "count": steps.len()}));
             }
         }
 

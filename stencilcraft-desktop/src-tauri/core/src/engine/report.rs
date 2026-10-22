@@ -91,7 +91,7 @@ impl StencilEngine {
         }
         for (a, r) in self.apertures.iter().zip(ipc) {
             let fill = status_color(r.status);
-            match a.custom_slices.as_ref().filter(|s| !s.is_empty()) {
+            match a.custom_slices.as_ref() {
                 Some(slices) => {
                     for s in slices {
                         if let Some(p) = s.polygon_pts() {
@@ -206,7 +206,7 @@ svg.board {{ width: 100%; height: auto; border: 1px solid #cbd5e1; border-radius
                 min_ar = if min_ar.is_finite() { min_ar } else { 0.0 },
                 bridges = self.bridge_violations.len(),
                 bcls = if self.bridge_violations.is_empty() { "ok" } else { "crit" },
-                zones = self.zones.len(),
+                zones = self.zones.iter().filter(|z| z.step).count(),
                 sq = esc(&self.squeegee_dir),
             );
             h.push_str(&self.side_svg(&ipc));
@@ -217,7 +217,7 @@ svg.board {{ width: 100%; height: auto; border: 1px solid #cbd5e1; border-radius
                     let _ = write!(
                         h,
                         "<tr><td>{}</td><td class=\"num\">{:.0} µm</td><td>{}</td><td class=\"num\">{:.2}, {:.2} – {:.2}, {:.2}</td></tr>",
-                        esc(&z.name), z.thickness * 1000.0, if z.is_step_down { "Step-Down" } else { "Step-Up" },
+                        esc(&z.name), z.thickness * 1000.0, if !z.step { "Regelzone (keine Stufe)" } else if z.is_step_down { "Step-Down" } else { "Step-Up" },
                         z.x0.min(z.x1), z.y0.min(z.y1), z.x0.max(z.x1), z.y0.max(z.y1)
                     );
                 }

@@ -22,7 +22,7 @@ pub mod types;
 pub mod zone_plan;
 
 use geometry::circle_pts;
-use rules::{elongated_narrow_width, generate_rule_aperture_geometry, resolve_pin_rule, take_existing_rounded, frame_to_pkg, PadCtx};
+use rules::{elongated_narrow_width, generate_rule_aperture_geometry, resolve_pin_rule, shape_true_opening, take_existing_rounded, frame_to_pkg, PadCtx};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -112,8 +112,6 @@ pub struct SideData {
     pub odb_toeprints: Vec<(String, Vec<(i64, f64, f64)>)>,
     pub bridge_violations: Vec<BridgeViolation>,
     pub base_thickness: f64,
-    /// Package-Regeln beim Ablegen der Seite; geänderte werden beim Zurückwechseln neu berechnet
-    pub rule_stamp: std::collections::HashMap<String, String>,
 }
 
 /// Ermittelt das Datenverzeichnis (enthält `Libraries/` und `Export/`).
@@ -226,7 +224,6 @@ impl StencilEngine {
             odb_toeprints: std::mem::take(&mut self.odb_toeprints),
             bridge_violations: std::mem::take(&mut self.bridge_violations),
             base_thickness: self.base_thickness,
-            rule_stamp: self.rule_stamp(),
         }
     }
 
@@ -236,11 +233,12 @@ impl StencilEngine {
         let data = self.sides.remove(other)?;
         let cur = self.take_side_data();
         self.put_side_data(data);
-        let r = f(self);
+        // Auch bei einem Fehler in `f` beide Seiten zurücklegen, sonst wären TOP/BOT vertauscht
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
         let back = self.take_side_data();
         self.put_side_data(cur);
         self.sides.insert(other.to_string(), back);
-        Some(r)
+        Some(r.unwrap_or_else(|p| std::panic::resume_unwind(p)))
     }
 
     fn put_side_data(&mut self, d: SideData) {
@@ -268,22 +266,10 @@ impl StencilEngine {
         let old = std::mem::replace(&mut self.current_side, side.to_string());
         self.sides.insert(old, current);
         let next = self.sides.remove(side).unwrap_or_else(|| SideData { base_thickness: self.base_thickness, ..Default::default() });
-        let stamp = next.rule_stamp.clone();
         self.put_side_data(next);
-        // Package-Regeln gelten für beide Seiten: auf der anderen Seite geänderte nachziehen
-        if !stamp.is_empty() {
-            let changed: Vec<String> = self.rule_stamp().into_iter().filter(|(k, v)| stamp.get(k) != Some(v)).map(|(k, _)| k).collect();
-            for pkg in changed {
-                self.regenerate_package_apertures(&pkg, None);
-            }
-        }
         self.apply_side_visibility();
         self.annotate_packages();
         true
-    }
-
-    fn rule_stamp(&self) -> std::collections::HashMap<String, String> {
-        self.packages.iter().map(|(k, p)| (k.clone(), format!("{}{:?}", serde_json::to_string(&p.rule).unwrap_or_default(), p.pad_overrides))).collect()
     }
 
     /// Lagen der aktiven Seite einblenden, die der anderen Seite ausblenden.
@@ -545,6 +531,8 @@ impl StencilEngine {
                 }
             }
             ap.custom_slices = Some(slices);
+            // Handarbeit: "Alles generieren" und Regeländerungen überschreiben sie nicht
+            ap.is_manually_overridden = true;
             count += 1;
         }
         count
@@ -560,6 +548,7 @@ impl StencilEngine {
                 s.shape = Some("circle".into());
             }
             ap.custom_slices = Some(vec![s]);
+            ap.is_manually_overridden = true;
         }
         ids.len()
     }
@@ -608,6 +597,7 @@ impl StencilEngine {
                 kind: Some("elongated".into()),
                 ..Default::default()
             }]);
+            ap.is_manually_overridden = true;
         }
         ids.len()
     }
@@ -689,7 +679,10 @@ impl StencilEngine {
             drill: self.drill_at(ap.cx, ap.cy, ap.width.min(ap.height)),
             ..PadCtx::new(pw, ph, ap.cx, ap.cy, &ap.facing_dir)
         };
-        generate_rule_aperture_geometry(&ctx, &rule).or_else(|| take_existing_rounded(&rule, ap.shape_type == "rectangle" && !ap.from_copper, ap.cx, ap.cy, pw, ph))
+        let shaped = if !sized && ap.shape_type == "polygon" { shape_true_opening(&ap.points, &rule) } else { None };
+        let r = shaped.or_else(|| generate_rule_aperture_geometry(&ctx, &rule)).or_else(|| take_existing_rounded(&rule, ap.shape_type == "rectangle" && !ap.from_copper, ap.cx, ap.cy, pw, ph));
+        // Ergänzte Kupfer-Öffnung ohne erzeugende Regel ("Take Existing"): keine Paste, außer bewusst übernommen (Zugentlastung)
+        if r.is_none() && ap.from_copper && !ap.is_manually_overridden { Some(Vec::new()) } else { r }
     }
 
     pub fn reset_single_pad(&mut self, ap_id: i64) -> bool {
@@ -851,9 +844,13 @@ impl StencilEngine {
             .or_insert_with(|| PackageTemplate::new(&target, 2, 1.0, 1.0, 1.0))
             .rule
             .apply_map(rule);
-        // Package-Regeln gelten für TOP und BOT: beide Seiten gleich erzeugen
-        let other = self.on_other_side(|e| e.regenerate_package_apertures(&target, None)).unwrap_or(0);
-        self.regenerate_package_apertures(&target, None) + other
+        self.regenerate_package_both(&target, None)
+    }
+
+    /// Package-Regeln gelten für TOP und BOT: beide Seiten gleich erzeugen.
+    fn regenerate_package_both(&mut self, target: &str, only_pin: Option<i64>) -> usize {
+        let other = self.on_other_side(|e| e.regenerate_package_apertures(target, only_pin)).unwrap_or(0);
+        self.regenerate_package_apertures(target, only_pin) + other
     }
 
     /// Berechnet alle (nicht manuell übersteuerten) Aperturen eines Packages neu.
@@ -887,7 +884,7 @@ impl StencilEngine {
         let target = self.resolve_alias(pkg_name);
         let Some(pkg) = self.packages.get_mut(&target) else { return false };
         pkg.pad_overrides.insert(pin, data);
-        self.regenerate_package_apertures(&target, Some(pin));
+        self.regenerate_package_both(&target, Some(pin));
         true
     }
 
@@ -917,7 +914,7 @@ impl StencilEngine {
                 }
             }
         }
-        self.regenerate_package_apertures(&target, None);
+        self.regenerate_package_both(&target, None);
         pins.len()
     }
 
@@ -926,7 +923,7 @@ impl StencilEngine {
         let target = self.resolve_alias(pkg_name);
         let Some(pkg) = self.packages.get_mut(&target) else { return 0 };
         let n = pins.iter().filter(|p| pkg.pad_overrides.remove(p).is_some()).count();
-        self.regenerate_package_apertures(&target, None);
+        self.regenerate_package_both(&target, None);
         n
     }
 
@@ -934,7 +931,7 @@ impl StencilEngine {
         let target = self.resolve_alias(pkg_name);
         let Some(pkg) = self.packages.get_mut(&target) else { return false };
         pkg.pad_overrides.clear();
-        self.regenerate_package_apertures(&target, None);
+        self.regenerate_package_both(&target, None);
         true
     }
 
@@ -942,7 +939,7 @@ impl StencilEngine {
         let target = self.resolve_alias(pkg_name);
         let Some(pkg) = self.packages.get_mut(&target) else { return false };
         pkg.pad_overrides.remove(&pin);
-        self.regenerate_package_apertures(&target, Some(pin));
+        self.regenerate_package_both(&target, Some(pin));
         true
     }
 
@@ -954,7 +951,8 @@ impl StencilEngine {
         let real_old = self.resolve_alias(old);
         if let Some(mut pkg) = self.packages.remove(&real_old) {
             pkg.name = new.to_string();
-            self.packages.insert(new.to_string(), pkg);
+            // Vorhandenes Package gleichen Namens (z. B. aus der Bibliothek) behalten, nur zuordnen
+            self.packages.entry(new.to_string()).or_insert(pkg);
         }
         self.package_aliases.insert(old.to_string(), new.to_string());
         self.package_aliases.insert(real_old.clone(), new.to_string());
@@ -1091,7 +1089,19 @@ impl StencilEngine {
             eprintln!("Fehler beim Laden der Kundenbibliothek {customer}: ungültiges JSON");
             return false;
         };
-        self.current_customer = data.get("customer").and_then(|v| v.as_str()).unwrap_or(customer).to_string();
+        let new_customer = data.get("customer").and_then(|v| v.as_str()).unwrap_or(customer).to_string();
+        // Kundenwechsel: Regeln, Aliase und PCB-I-Einstellungen des vorigen Kunden verwerfen,
+        // sonst landen sie beim nächsten Speichern in der Bibliothek des neuen Kunden
+        if !self.current_customer.is_empty() && self.current_customer != new_customer {
+            for p in self.packages.values_mut().filter(|p| p.group != "Library") {
+                p.rule = PackageRule::with("inherit", "Inherit");
+                p.pad_overrides.clear();
+            }
+            self.package_aliases.clear();
+            self.group_rules = rulesets::default_group_rules();
+            self.pcbi_settings_xml = None;
+        }
+        self.current_customer = new_customer;
         if let Some(pkgs) = data.get("packages").and_then(|v| v.as_object()) {
             for (name, rule) in pkgs {
                 if let (Some(pkg), Some(r)) = (self.packages.get_mut(&self.package_aliases.get(name).cloned().unwrap_or_else(|| name.clone())), rule.as_object()) {
@@ -1148,7 +1158,12 @@ impl StencilEngine {
         }
         let file = dir.join(format!("{name}.json"));
         // Vorhandene Einträge behalten: die Bibliothek enthält auch Packages anderer Jobs dieses Kunden
-        let old: Value = std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
+        // Unlesbare Bibliothek nicht überschreiben, sonst gingen die Regeln aller anderen Jobs verloren
+        let old: Value = match std::fs::read_to_string(&file) {
+            Ok(t) => serde_json::from_str(t.trim_start_matches('\u{feff}'))
+                .map_err(|e| format!("Bibliothek {} ist beschädigt und wird nicht überschrieben ({e}). Bitte Datei prüfen.", file.display()))?,
+            Err(_) => Value::Null,
+        };
         let obj = |k: &str| old.get(k).and_then(|v| v.as_object()).cloned().unwrap_or_default();
         let mut packages = obj("packages");
         let mut pins = obj("pin_overrides");
@@ -1180,7 +1195,7 @@ impl StencilEngine {
             payload["pcbi_settings"] = s.clone();
         }
         let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
-        std::fs::write(&file, text).map_err(|e| format!("Fehler beim Schreiben von {}: {e}", file.display()))?;
+        project::write_atomic(&file, &text)?;
         self.current_customer = customer.to_string();
         Ok(file.to_string_lossy().to_string())
     }

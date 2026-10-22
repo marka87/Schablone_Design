@@ -1,7 +1,7 @@
 //! Regelhierarchie wie im PCB Investigator:
 //! Bauteilregel (RefDes) → Zonenregel → Package-Regel (+ Pin-Anpassung) → Gruppenregel ("Inherit").
 
-use super::rules::{generate_rule_aperture_geometry, take_existing_rounded, PadCtx};
+use super::rules::{generate_rule_aperture_geometry, shape_true_opening, take_existing_rounded, PadCtx};
 use super::types::*;
 use super::StencilEngine;
 use serde_json::{json, Map, Value};
@@ -133,11 +133,12 @@ impl StencilEngine {
                         drill: self.drill_at(ap.cx, ap.cy, ap.width.min(ap.height)),
                         ..PadCtx::new(ap.width, ap.height, ap.cx, ap.cy, &ap.facing_dir)
                     };
-                    generate_rule_aperture_geometry(&ctx, &rule).or_else(|| take_existing_rounded(&rule, ap.shape_type == "rectangle" && !ap.from_copper, ap.cx, ap.cy, ap.width, ap.height))
+                    let shaped = if ap.shape_type == "polygon" { shape_true_opening(&ap.points, &rule) } else { None };
+                    shaped.or_else(|| generate_rule_aperture_geometry(&ctx, &rule)).or_else(|| take_existing_rounded(&rule, ap.shape_type == "rectangle" && !ap.from_copper, ap.cx, ap.cy, ap.width, ap.height))
                 }
             };
             // Ergänzte Kupfer-Öffnung ohne erzeugende Regel ("Take Existing"): keine Paste
-            let slices = if ap.from_copper && slices.is_none() { Some(Vec::new()) } else { slices };
+            let slices = if ap.from_copper && !ap.is_manually_overridden && slices.is_none() { Some(Vec::new()) } else { slices };
             updates.push((id, slices));
         }
         let n = updates.len();

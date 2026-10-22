@@ -84,11 +84,14 @@ pub struct PadBox {
     pub h: f64,
     #[serde(default)]
     pub round: bool,
+    /// Kontur bei nicht rechteckigen Pads (Oval, schräg, Sonderform), sonst leer
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pts: Vec<Pt>,
 }
 
 impl PadBox {
     pub fn new(x0: f64, y0: f64, x1: f64, y1: f64) -> Self {
-        PadBox { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0, round: false }
+        PadBox { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0, round: false, pts: Vec::new() }
     }
 }
 

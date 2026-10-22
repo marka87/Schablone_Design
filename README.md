@@ -64,12 +64,8 @@ Alle Berechnungen, Regeln und Modifikationen arbeiten **strikt non-destruktiv** 
 
 ## 🚀 Schnellstart & Bedienung
 
-1. **Server starten:**
-   ```powershell
-   python app.py
-   ```
-2. **Browser öffnen:**
-   Auf `http://127.0.0.1:5055` navigieren.
+1. **App starten:** `start_desktop.bat` (bzw. `stencilcraft-desktop/src-tauri/target/release/stencilcraft-desktop.exe`). Bauen mit `build_desktop.bat`.
+2. **Oberfläche bearbeiten:** Quellen liegen in `static/` und `templates/`; `build_desktop.bat` übernimmt sie nach `stencilcraft-desktop/ui/`.
 3. **Datensatz laden:**
    - Klick auf `Ordner öffnen` oder `ZIP öffnen` (Windows-Dateidialog) oder Drag & Drop.
 4. **Auto-Klassifizierung:**
@@ -79,22 +75,21 @@ Alle Berechnungen, Regeln und Modifikationen arbeiten **strikt non-destruktiv** 
 6. **Pin-in-Paste Berechnen:**
    - Pad anklicken $\rightarrow$ `🔌 Pin-in-Paste` öffnen $\rightarrow$ Parameter eingeben $\rightarrow$ `⚡ PiP-Apertur auf Schablone erzeugen`.
 7. **Export:**
-   - Klick auf `💾 Gerber Export` speichert laserfertige Schablonendaten in `A:\Schablone\Export\`.
+   - Klick auf `💾 Gerber Export` speichert laserfertige Schablonendaten in den gewählten Export-Ordner.
 
 ---
 
 ## 🖥️ Desktop-App (Rust / Tauri) – `stencilcraft-desktop/`
 
-Eigenständige Windows-Anwendung ohne Python-Laufzeit. Oberfläche und Funktionsumfang sind identisch zur Web-App: Die Web-Oberfläche (`static/`, `templates/`) wird unverändert übernommen, alle `/api/...`-Aufrufe gehen über die Tauri-Bridge an die native Rust-Engine.
+Eigenständige Windows-Anwendung ohne Python-Laufzeit. Die Oberfläche (`static/`, `templates/`) wird unverändert übernommen, alle `/api/...`-Aufrufe gehen über die Tauri-Bridge an die native Rust-Engine. Das frühere Python-Backend (Flask) wurde entfernt.
 
 | Pfad | Inhalt |
 |---|---|
-| `src-tauri/core/src/engine/` | Rust-Portierung von `stencil_engine.py`: Regelgeometrie (`rules.rs`), IPC-7525/Stegprüfung/PiP/Kalkulator (`dfm.rs`), Package-Erkennung & Auto-Klassifizierung (`packages.rs`), ODB++ (`odb.rs`), RS-274X Leser/Schreiber (`gerber.rs`), Import (`import.rs`) |
-| `src-tauri/core/src/api.rs` | 1:1-Nachbildung aller Flask-Routen aus `app.py` |
+| `src-tauri/core/src/engine/` | Engine: Regelgeometrie (`rules.rs`), IPC-7525/Stegprüfung/PiP/Kalkulator (`dfm.rs`), Package-Erkennung & Auto-Klassifizierung (`packages.rs`), ODB++ (`odb.rs`), RS-274X Leser/Schreiber (`gerber.rs`), Import (`import.rs`) |
+| `src-tauri/core/src/api.rs` | Router aller `/api/...`-Routen der Oberfläche |
 | `src-tauri/src/lib.rs` | Tauri-Commands `api_request` und `stage_upload` (Drag & Drop), native Windows-Dialoge |
 | `ui/bridge.js`, `ui/desktop.js` | `fetch("/api/...")` → Rust; Tastenkürzel (Strg+O, Strg+E, 1/2/3) |
 | `ui/app.js`, `ui/style.css`, `ui/index.html` | Kopie der Web-Oberfläche (wird von `build_desktop.bat` synchronisiert) |
-| `src-tauri/legacy/` | Vorherige Rust-Module (nicht mehr kompiliert, nur zur Referenz) |
 
 **Bedienung (Auszug):**
 - Projekt: `Strg+S` speichern, `Strg+Umschalt+S` speichern unter, Menü „📁 Projekt“ mit „Zuletzt geöffnet“. Projektdateien (`*.stencilproj`) enthalten Datensatzpfad, Parameter, Regeln, Pin-Anpassungen, Zonen und alle Öffnungen; verschobene Datensätze können beim Öffnen neu ausgewählt werden.

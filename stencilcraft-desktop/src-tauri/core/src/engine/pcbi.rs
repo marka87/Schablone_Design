@@ -671,7 +671,7 @@ impl StencilEngine {
             }
         }
         let out = serde_json::to_string_pretty(&lib).map_err(|e| e.to_string())?;
-        std::fs::write(&file, out).map_err(|e| e.to_string())?;
+        super::project::write_atomic(Path::new(&file), &out)?;
         Ok(file)
     }
 

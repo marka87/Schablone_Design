@@ -239,6 +239,43 @@ pub fn clip_halfplane(poly: &[Pt], nx: f64, ny: f64, c: f64) -> Vec<Pt> {
     out
 }
 
+/// Konvexes Polygon um `d` nach innen versetzen: Schnitt der um `d` verschobenen Kanten-Halbebenen.
+/// Nicht konvexe Eingaben werden über ihre konvexe Hülle versetzt. Leer, wenn nichts übrig bleibt.
+pub fn inset_convex(pts: &[Pt], d: f64) -> Vec<Pt> {
+    let hull = convex_hull(pts);
+    let mut out = hull.clone();
+    for i in 0..hull.len() {
+        let (a, b) = (hull[i], hull[(i + 1) % hull.len()]);
+        let len = (b.0 - a.0).hypot(b.1 - a.1);
+        if len < 1e-9 {
+            continue;
+        }
+        // Hülle läuft gegen den Uhrzeigersinn: innen liegt links der Kante
+        let (nx, ny) = (-(b.1 - a.1) / len, (b.0 - a.0) / len);
+        out = clip_halfplane(&out, nx, ny, nx * a.0 + ny * a.1 + d);
+        if out.len() < 3 {
+            return Vec::new();
+        }
+    }
+    out
+}
+
+/// Kleinste Breite eines Polygons in beliebiger Richtung (Rotating Calipers über die konvexe Hülle).
+pub fn min_width(pts: &[Pt]) -> f64 {
+    let hull = convex_hull(pts);
+    let n = hull.len();
+    if n < 3 {
+        return 0.0;
+    }
+    (0..n)
+        .filter_map(|i| {
+            let (a, b) = (hull[i], hull[(i + 1) % n]);
+            let len = (b.0 - a.0).hypot(b.1 - a.1);
+            (len > 1e-9).then(|| hull.iter().map(|p| ((b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)).abs() / len).fold(0.0, f64::max))
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
 /// Konvexe Hülle (Andrew Monotone Chain), gegen den Uhrzeigersinn.
 pub fn convex_hull(points: &[Pt]) -> Vec<Pt> {
     let mut pts: Vec<Pt> = points.to_vec();

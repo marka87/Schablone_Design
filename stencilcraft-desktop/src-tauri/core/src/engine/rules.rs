@@ -1,7 +1,7 @@
 //! Regelbasierte Apertur-Geometrie (Simple Rectangle, HouseBuilder, Inverted House, Chamfer,
 //! Länglich & Schmal, Array Slicing orthogonal und 45°-diagonal).
 
-use super::geometry::{bounds, centroid, circle_pts, clip_halfplane, fillet_polygon, polygon_area, rect_pts, rounded_rect_pts};
+use super::geometry::{bounds, centroid, circle_pts, clip_halfplane, convex_hull, fillet_polygon, inset_convex, polygon_area, rect_pts, rounded_rect_pts};
 use super::donut_segments;
 use super::types::{r4, r5, round_pts, PackageRule, Pt, Slice};
 use serde_json::{Map, Value};
@@ -35,6 +35,26 @@ fn rounded_slice(cx: f64, cy: f64, w: f64, h: f64, r: f64, kind: &str) -> Slice 
 /// abgerundet (wie PCB Investigator); Radius 0 lässt das Original unverändert.
 pub fn take_existing_rounded(rule: &PackageRule, rectangle: bool, cx: f64, cy: f64, w: f64, h: f64) -> Option<Vec<Slice>> {
     (rule.rule_type == "take_existing" && rectangle && rule.corner_radius > 0.005).then(|| vec![rounded_slice(cx, cy, w, h, rule.corner_radius, "take_existing")])
+}
+
+/// Schräge oder nicht rechteckige Pads (das Polygon füllt sein umschließendes Rechteck nicht):
+/// Die Regelformen sind achsparallel, daher wird die echte Kontur um das Undersize nach innen versetzt.
+/// Abgerundete Rechtecke (Füllgrad ≥ 95 %) laufen weiter über die normale Regel.
+pub fn shape_true_opening(pts: &[Pt], rule: &PackageRule) -> Option<Vec<Slice>> {
+    if pts.len() < 3 || matches!(rule.rule_type.as_str(), "take_existing" | "ignore") {
+        return None;
+    }
+    let (x0, y0, x1, y1) = bounds(pts);
+    let area = polygon_area(pts);
+    if area >= 0.95 * ((x1 - x0) * (y1 - y0)).max(1e-12) {
+        return None;
+    }
+    // Nicht konvexe Sonderformen unverändert lassen, das Versetzen über die Hülle würde sie füllen
+    let convex = area >= 0.98 * polygon_area(&convex_hull(pts));
+    let inset = if convex { inset_convex(pts, rule.undersize_w.min(rule.undersize_h).max(0.0)) } else { Vec::new() };
+    let poly = if inset.len() >= 3 { inset } else { pts.to_vec() };
+    let (a, b, c, d) = bounds(&poly);
+    Some(vec![poly_slice((a + c) / 2.0, (b + d) / 2.0, c - a, d - b, &poly, "shape_true")])
 }
 
 /// Haus-Öffnung; Ecken und Spitze mit dem Eckradius abgerundet (wie PCB Investigator).
@@ -632,6 +652,19 @@ mod tests {
         let s = generate_rule_aperture_geometry(&PadCtx::new(2.2, 2.2, 0.0, 0.0, "center"), &rule).unwrap();
         assert_eq!(s.len(), 4);
         assert!((s[0].w - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rotated_pad_keeps_its_shape() {
+        // 0,8 × 0,4 mm Pad um 45° gedreht: Öffnung folgt der Kontur statt der Bounding Box (≈0,85 × 0,85)
+        let pts = crate::engine::geometry::rotate_pts(&rect_pts(0.0, 0.0, 0.8, 0.4), 0.0, 0.0, 45.0);
+        let rule = PackageRule { rule_type: "package_group".into(), undersize_w: 0.025, undersize_h: 0.025, ..Default::default() };
+        let s = shape_true_opening(&pts, &rule).unwrap();
+        let area = polygon_area(s[0].polygon_pts().unwrap());
+        assert!((area - 0.75 * 0.35).abs() < 1e-4, "{area}");
+        assert!((crate::engine::geometry::min_width(s[0].polygon_pts().unwrap()) - 0.35).abs() < 1e-4);
+        // Achsparalleles abgerundetes Rechteck bleibt bei der normalen Regel
+        assert!(shape_true_opening(&rounded_rect_pts(0.0, 0.0, 0.8, 0.4, 0.05), &rule).is_none());
     }
 
     #[test]

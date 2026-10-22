@@ -234,6 +234,12 @@ function setupPackageHighlight() {
     document.getElementById("stepGap")?.addEventListener("change", () => updateStepProposal());
     document.getElementById("btnStepCreate")?.addEventListener("click", createProposedZones);
     document.getElementById("btnSuggestZones")?.addEventListener("click", suggestZones);
+    document.getElementById("btnMergeZones")?.addEventListener("click", async () => {
+        const d = await (await fetch("/api/zones/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json();
+        await refreshApertureData();
+        await refreshHistory();
+        showToast(d.merged ? `${d.merged} Zone(n) mit überlappenden gleicher Dicke verbunden (Strg+Z rückgängig)` : "Keine überlappenden Stufenzonen gleicher Dicke");
+    });
 }
 
 // Stufenzonen um alle Bauteile eines Packages vorschlagen (Vorschau gestrichelt, dann anlegen)
@@ -716,7 +722,7 @@ function findSnapPointBoard(wx, wy) {
     const items = [];
     for (const ap of state.apertures || []) {
         const label = ap.comp_id ? `${ap.comp_id}` : "Pad";
-        if (ap.slices && ap.slices.length > 0) {
+        if (ap.slices) {
             for (const s of ap.slices) items.push({ cx: s.cx, cy: s.cy, w: s.w, h: s.h, pts: s.pts, round: s.shape === "circle", label });
         }
         items.push({ cx: ap.cx, cy: ap.cy, w: ap.w, h: ap.h, pts: ap.pts, round: ap.shape === "circle", label });
@@ -1454,8 +1460,8 @@ function renderApertures() {
 
         ctx.fillStyle = fillColor;
 
-        // Wenn Slices oder Länglich&Schmal aktiv
-        if (ap.slices && ap.slices.length > 0) {
+        // Wenn Slices oder Länglich&Schmal aktiv (leere Liste = keine Öffnung, z. B. Ignore)
+        if (ap.slices) {
             for (const s of ap.slices) {
                 if (s.pts && s.pts.length > 0) {
                     ctx.beginPath();
@@ -2022,6 +2028,19 @@ function layerRow(layer) {
         });
 
         return tr;
+}
+
+// Kundenbibliothek speichern; bei Fehler Meldung zeigen und false liefern
+async function saveLibrary(customer) {
+    try {
+        const res = await fetch("/api/library/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customer }) });
+        const d = await res.json();
+        if (res.ok && d.status === "ok") return true;
+        showToast(`Bibliothek „${customer}“ nicht gespeichert: ${d.message || res.status}`, 8000);
+    } catch (e) {
+        showToast(`Bibliothek „${customer}“ nicht gespeichert: ${e}`, 8000);
+    }
+    return false;
 }
 
 function escapeHtml(text) {
@@ -2994,7 +3013,7 @@ function renderZonesList() {
         const thickUm = Math.round(z.thickness * 1000);
         card.innerHTML = `
             <div class="zone-card-info">
-                <h4>${z.name}</h4>
+                <h4>${escapeHtml(z.name)}</h4>
                 <div class="zone-card-meta">${z.width} x ${z.height} mm | Dicke: <strong>${thickUm} µm</strong></div>
             </div>
             <div style="display: flex; gap: 6px;">
@@ -3193,8 +3212,7 @@ async function saveTombstoneConfig(extra = {}) {
     renderTombstones();
     if (document.getElementById("chkTombSaveLib").checked) {
         const cust = (await (await fetch("/api/libraries")).json()).current_customer || "Standard";
-        await fetch("/api/library/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customer: cust }) });
-        showToast(`Grabstein-Einstellungen in „${cust}“ gespeichert`);
+        if (await saveLibrary(cust)) showToast(`Grabstein-Einstellungen in „${cust}“ gespeichert`);
     } else {
         showToast("Grabstein-Einstellungen übernommen");
     }
@@ -3634,7 +3652,7 @@ ${reviewText}` : ""}`;
         item.innerHTML = `
             <div class="pkg-item-main">
                 <span class="pkg-item-icon">${pkgIcon}</span>
-                <span class="pkg-item-name" title="${p.name}">${p.name}</span>${inherits ? "" : '<span class="own-rule-dot">●</span>'}
+                <span class="pkg-item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>${inherits ? "" : '<span class="own-rule-dot">●</span>'}
                 ${p.name === pkgState.activePkgName && pkgState.activePackageData?.pads?.length ? `<button class="pkg-pin-toggle" title="Pins ein-/ausklappen">${pkgState.pinsExpanded ? "−" : "+"}</button>` : ""}
             </div>
             <div class="pkg-item-badges">
@@ -4719,6 +4737,7 @@ function setupPkgEventListeners() {
             await loadPackagesList();
         } catch (e) {
             console.error("Fehler bei Generate Stencil Pads:", e);
+            showToast(`Generate fehlgeschlagen: ${e.message || e}`, 6000);
             btn.innerHTML = originalText;
             btn.disabled = false;
         }
@@ -4765,13 +4784,7 @@ function setupPkgEventListeners() {
 
     document.getElementById("btnSaveCurrentLib").addEventListener("click", async () => {
         const cust = pkgState.currentCustomer;
-        const res = await fetch("/api/library/save", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ customer: cust })
-        });
-        const data = await res.json();
-        alert(`Kunden-Bibliothek "${cust}" erfolgreich gespeichert!`);
+        if (await saveLibrary(cust)) showToast(`Kunden-Bibliothek „${cust}“ gespeichert`);
     });
 
     // Werkzeug-Menü der Bibliothek
@@ -4815,11 +4828,7 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
     document.getElementById("btnConfirmNewLib").addEventListener("click", async () => {
         const name = document.getElementById("inputNewCustName").value.trim();
         if (!name) return;
-        await fetch("/api/library/save", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ customer: name })
-        });
+        if (!(await saveLibrary(name))) return;
         newLibModal.classList.add("hidden");
         await loadLibraries();
         document.getElementById("selectCustomerLib").value = name;
@@ -5156,15 +5165,17 @@ async function runBridgeCheck(minBridge = null) {
                             ${v.dist.toFixed(3)} mm
                         </td>
                         <td style="padding: 6px 10px; color: var(--text-secondary);">
-                            #${v.ap_id_1} (${v.pkg_1}) &harr; #${v.ap_id_2} (${v.pkg_2})
+                            #${v.ap_id_1} (${escapeHtml(v.pkg_1)}) &harr; #${v.ap_id_2} (${escapeHtml(v.pkg_2)})
                         </td>
                         <td style="padding: 6px 10px; text-align: right;">
-                            <button class="btn btn-xs btn-secondary" onclick="zoomToBridgeViolation(${v.p1[0]}, ${v.p1[1]})">
+                            <button class="btn btn-xs btn-secondary" data-x="${v.p1[0]}" data-y="${v.p1[1]}">
                                 Zu Stelle
                             </button>
                         </td>
                     </tr>
                 `).join("");
+                // Ohne Inline-Handler (Content Security Policy)
+                tbody.querySelectorAll("button[data-x]").forEach(b => b.addEventListener("click", () => zoomToBridgeViolation(+b.dataset.x, +b.dataset.y)));
             }
         }
 
@@ -5214,7 +5225,14 @@ async function refreshActivePackage() {
     populatePinDropdown(data.pads, data.pad_overrides);
     const dd = document.getElementById("selectPinDropdown");
     if (dd) dd.value = pkgState.selectedPin ?? "all";
-    populateRuleInputs(data.rule);
+    // Panel für das bisherige Ziel neu füllen, sonst schreibt die nächste Änderung alte/fremde Werte
+    const t = pkgState.ruleTarget;
+    if (t?.kind === "pin" && t.id === data.name) setPinRuleTarget(t.pin);
+    else if (t?.kind === "pins" && t.id === data.name) selectPkgPins(t.pins);
+    else if (t?.kind === "group") await selectGroupRule(t.id);
+    else if (t?.kind === "zone" && (state.zones || []).some(z => z.id === t.id)) await selectZoneRule(t.id);
+    else if (t?.kind === "component") await selectComponentRule(t.id);
+    else setPackageRuleTarget();
     renderPkgPreview();
     renderPkgTree();
 }
@@ -5451,16 +5469,19 @@ async function openProject(path = null, extra = {}) {
         const r = await askChoice("Datensatz nicht gefunden",
             `Der Datensatz des Projekts liegt nicht mehr am gespeicherten Ort:\n${(d.dataset_paths || []).join("\n")}\n\nBitte den Datensatz (ODB++ / Gerber) neu auswählen.`,
             [{ label: "Abbrechen", value: "cancel", cls: "btn-ghost" }, { label: "Datensatz auswählen…", value: "relocate", cls: "btn-primary" }]);
-        if (r === "relocate") return openProject(d.path, { relocate: true });
-        return;
+        // "recovered" mitgeben, damit die wiederhergestellte Sitzung nicht als gespeichert gilt
+        if (r === "relocate") return openProject(d.path, { ...extra, relocate: true });
+        return false;
     }
     if (d.status === "ok") {
         await reloadAllViews(true);
         showToast(extra.recovered ? "Sitzung wiederhergestellt" : `Projekt geöffnet: ${d.path}`);
         if (d.warnings?.length) setTimeout(() => showToast(`${d.warnings.join(" ")}`, 6000), 1200);
+        return true;
     } else if (d.status !== "cancelled") {
         showToast(`Projekt konnte nicht geöffnet werden: ${d.message}`, 6000);
     }
+    return false;
 }
 
 async function renderRecentProjects() {
@@ -5508,7 +5529,8 @@ async function offerRecovery() {
             `Es gibt eine automatische Sicherung mit ungespeicherten Änderungen:\n${info.dataset || "Unbenannt"}\n\nMöchten Sie diese wiederherstellen?`,
             [{ label: "Verwerfen", value: "discard", cls: "btn-ghost" }, { label: "Wiederherstellen", value: "restore", cls: "btn-primary" }]);
         if (r === "restore") {
-            await openProject(info.path, { recovered: true });
+            // Sicherung nur verwerfen, wenn die Wiederherstellung geklappt hat (sonst ginge sie verloren)
+            if (!(await openProject(info.path, { recovered: true }))) return;
             // Sicherung ist nun Teil dieser Sitzung (eigene Sicherung übernimmt)
             await fetch("/api/project/discard_recovery", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: info.path }) });
         } else if (r === "discard") {
@@ -5556,6 +5578,8 @@ async function switchSide(side) {
     setPackageHighlight(null);
     state.selectedApertureId = null;
     state.selectedAperture = null;
+    // Zonen-IDs gelten je Seite (beide Seiten haben "zone_1"): Zonenziel nicht mitnehmen
+    if (pkgState.ruleTarget?.kind === "zone") pkgState.ruleTarget = { kind: "package", id: pkgState.activePkgName };
     await loadLayers();
     await reloadAllViews(false);
     await refreshSides();
@@ -5613,7 +5637,7 @@ function updateExportPreview() {
     }
     if (o.outline) lines.push(`${name("Kontur")}.gbr`);
     if (o.report) lines.push(`${exportState.job}_Pruefbericht_${today}.html`);
-    document.getElementById("expPreview").innerHTML = lines.map(l => `<div>${l}</div>`).join("") || "–";
+    document.getElementById("expPreview").innerHTML = lines.map(l => `<div>${escapeHtml(l)}</div>`).join("") || "–";
 }
 
 async function openExportDialog() {
@@ -5672,7 +5696,7 @@ function setupExportDialog() {
             exportState.lastReport = d.report_file;
             const icon = { stencil: "", zones: "", outline: "", report: "" };
             document.getElementById("exportMsg").textContent = d.message;
-            document.getElementById("exportFileList").innerHTML = d.files.map(f => `<div>${icon[f.kind] || ""} ${f.path}${f.count !== undefined ? ` (${f.count})` : ""}</div>`).join("");
+            document.getElementById("exportFileList").innerHTML = d.files.map(f => `<div>${icon[f.kind] || ""} ${escapeHtml(f.path)}${f.count !== undefined ? ` (${f.count})` : ""}</div>`).join("");
             document.getElementById("exportForm").classList.add("hidden");
             document.getElementById("exportResult").classList.remove("hidden");
             btn.classList.add("hidden");
@@ -5820,7 +5844,7 @@ function renderZoneRuleList() {
         const el = document.createElement("div");
         const active = pkgState.ruleTarget?.kind === "zone" && pkgState.ruleTarget.id === z.id;
         el.className = `list-item ${active ? "active" : ""}`;
-        el.innerHTML = `<div class="li-main">${z.name}<div class="li-sub">${z.width.toFixed(1)} × ${z.height.toFixed(1)} mm</div></div>` +
+        el.innerHTML = `<div class="li-main">${escapeHtml(z.name)}<div class="li-sub">${z.width.toFixed(1)} × ${z.height.toFixed(1)} mm</div></div>` +
             (z.step ? `<span class="li-badge step">${Math.round(z.thickness * 1000)} µm</span>` : "") +
             (z.rule ? `<span class="li-badge rule">${z.rule.rule_type}</span>` : '<span class="li-badge">keine Regel</span>');
         el.addEventListener("click", () => selectZoneRule(z.id));
@@ -5868,7 +5892,7 @@ function renderComponentList() {
         const el = document.createElement("div");
         const active = pkgState.ruleTarget?.kind === "component" && pkgState.ruleTarget.id === c.refdes;
         el.className = `list-item ${active ? "active" : ""}`;
-        el.innerHTML = `<div class="li-main"><b>${c.refdes}</b> <span class="li-sub">${c.package}</span></div><span class="li-badge">${c.pads} Pads</span>${c.has_rule ? '<span class="li-badge rule">eigene Regel</span>' : ""}`;
+        el.innerHTML = `<div class="li-main"><b>${escapeHtml(c.refdes)}</b> <span class="li-sub">${escapeHtml(c.package)}</span></div><span class="li-badge">${c.pads} Pads</span>${c.has_rule ? '<span class="li-badge rule">eigene Regel</span>' : ""}`;
         el.addEventListener("click", () => selectComponentRule(c.refdes));
         box.appendChild(el);
     }

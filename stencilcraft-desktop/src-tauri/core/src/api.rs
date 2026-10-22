@@ -147,9 +147,14 @@ pub fn dispatch(engine: &Mutex<StencilEngine>, method: &str, url: &str, body: &V
                 None
             };
             let recovered = b.b("recovered", false);
+            let relocated = relocate.is_some();
             let mut e = lock(engine);
             match e.open_project(&path, relocate) {
                 Ok(project::OpenResult::Opened { warnings }) => {
+                    // Neuer Datensatz-Ort ist noch nicht im Projekt gespeichert
+                    if relocated {
+                        e.dirty = true;
+                    }
                     if recovered {
                         // Wiederhergestellte Sitzung: noch nicht als Projekt gespeichert
                         e.project_path = None;
@@ -441,6 +446,10 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             ok(json!({"package": pkg, "thickness": step.min(e.base_thickness), "needed": step < e.base_thickness - 1e-9, "t_step": step, "zones": e.propose_zones_for_package(&pkg, gap)}))
         }
         ("GET", ["api", "zones", "suggest"]) => ok(json!({"suggestions": e.suggest_zones(Body(query).f("merge_gap", 0.0))})),
+        ("POST", ["api", "zones", "merge"]) => {
+            let n = e.merge_step_zones();
+            ok(json!({"status": "ok", "merged": n, "zones": e.zones.iter().map(|z| z.to_json()).collect::<Vec<_>>(), "stats": stats(e)}))
+        }
         ("POST", ["api", "zones", "create"]) => {
             let rects: Vec<[f64; 4]> = body.get("zones").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|z| {
                 let f = |k: &str| z.get(k).and_then(val_f64);
@@ -691,7 +700,7 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
                         r["added_from_copper"] = json!(e.add_missing_paste());
                     }
                     if b.b("generate", true) {
-                        r["modified_count"] = json!(e.generate_all());
+                        r["modified_count"] = json!(e.generate_all_sides());
                     }
                     r["missing_paste"] = json!(e.missing_paste_pins().len());
                     r["status"] = json!("ok");

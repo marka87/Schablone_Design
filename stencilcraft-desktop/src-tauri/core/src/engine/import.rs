@@ -369,7 +369,7 @@ impl StencilEngine {
                         let (pkg, w, h) = ep.map(|p| (p.name.clone(), p.w, p.h)).unwrap_or(("GENERIC".into(), 1.6, 1.0));
                         // Körperumriss: ODB dreht im Uhrzeigersinn, gespiegelte Bauteile an X spiegeln
                         let outline: Vec<Pt> = ep
-                            .map(|p| rotate_pts(&p.outline, 0.0, 0.0, -c.rot).into_iter().map(|(x, y)| (r3(c.x + if c.mirror { -x } else { x }), r3(c.y + y))).collect())
+                            .map(|p| rotate_pts(&p.outline, 0.0, 0.0, -c.rot).into_iter().map(|(x, y)| (r3(c.x + if c.mirror || lside == "bot" { -x } else { x }), r3(c.y + y))).collect())
                             .unwrap_or_default();
                         let pin1 = c.pins.iter().find(|p| p.0 == 1).map(|p| (r3(p.1), r3(p.2)));
                         // Pins mit Name und kleinster Padkante (für die Beschriftungsgröße)
@@ -433,6 +433,9 @@ impl StencilEngine {
                         };
                         let mut pb = PadBox::new(b.0, b.1, b.2, b.3);
                         pb.round = round;
+                        if let PadGeom::Poly { pts } = &p.geom {
+                            pb.pts = pts.clone();
+                        }
                         target.entry(if lside == "bot" { "bot" } else { "top" }).or_default().push(pb);
                     }
                 }

@@ -108,6 +108,25 @@ impl StencilEngine {
         rects.len()
     }
 
+    /// Überlappende Stufenzonen gleicher Dicke (ohne eigene Zonenregel) zu je einer Zone verbinden.
+    /// Die verbundene Zone ist das umschließende Rechteck und behält Namen und ID der ersten Zone.
+    pub fn merge_step_zones(&mut self) -> usize {
+        let before = self.zones.len();
+        let mut groups: std::collections::BTreeMap<i64, Vec<(Rect, Vec<String>)>> = Default::default();
+        for z in self.zones.iter().filter(|z| z.step && z.rule.is_none()) {
+            groups.entry((z.thickness * 1e4).round() as i64).or_default().push(([z.x0, z.y0, z.x1, z.y1], vec![z.id.clone()]));
+        }
+        for rects in groups.into_values() {
+            for (r, ids) in merge_rects(rects, 0.0).into_iter().filter(|(_, ids)| ids.len() > 1) {
+                self.zones.retain(|z| z.id == ids[0] || !ids.contains(&z.id));
+                if let Some(z) = self.zones.iter_mut().find(|z| z.id == ids[0]) {
+                    (z.x0, z.y0, z.x1, z.y1) = (r[0], r[1], r[2], r[3]);
+                }
+            }
+        }
+        before - self.zones.len()
+    }
+
     /// Lage/Größe einer Zone ändern.
     pub fn set_zone_geometry(&mut self, id: &str, r: Rect) -> bool {
         let Some(z) = self.zones.iter_mut().find(|z| z.id == id) else { return false };
@@ -130,5 +149,17 @@ mod tests {
         assert_eq!(m.len(), 2);
         assert_eq!(m[0].1, vec!["A".to_string(), "B".to_string()]);
         assert_eq!(merge_rects(r, 0.0).len(), 3);
+    }
+
+    #[test]
+    fn merges_overlapping_step_zones_of_same_thickness() {
+        let mut e = StencilEngine::new(0.12, std::env::temp_dir().join("sc_zone_merge"));
+        e.add_zone_ext(0.0, 0.0, 2.0, 2.0, 0.10, "A", true);
+        e.add_zone_ext(1.0, 1.0, 3.0, 3.0, 0.10, "B", true);
+        e.add_zone_ext(1.5, 1.5, 4.0, 4.0, 0.08, "C", true);
+        assert_eq!(e.merge_step_zones(), 1);
+        assert_eq!(e.zones.len(), 2);
+        let a = e.zones.iter().find(|z| z.name == "A").unwrap();
+        assert_eq!((a.x0, a.y0, a.x1, a.y1), (0.0, 0.0, 3.0, 3.0));
     }
 }

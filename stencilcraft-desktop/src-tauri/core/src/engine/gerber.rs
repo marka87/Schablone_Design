@@ -418,6 +418,8 @@ pub fn parse_gerber(content: &str) -> GerberData {
         sr: None,
     };
     let mut objects: Vec<GObj> = Vec::new();
+    // Byte Order Mark am Dateianfang (manche Editoren schreiben ihn) überspringen
+    let content = content.trim_start_matches('\u{feff}');
     let bytes = content.as_bytes();
     let mut i = 0;
 
@@ -435,8 +437,11 @@ pub fn parse_gerber(content: &str) -> GerberData {
             continue;
         }
         // Wort endet an '*'; tolerant gegenüber fehlendem '*' vor einem '%'-Block (Gerbonara schreibt "G75" ohne '*')
-        let end = content[i..].find(['*', '%']).map(|p| i + p).unwrap_or(bytes.len());
-        let word: String = content[i..end].chars().filter(|c| !c.is_whitespace()).collect();
+        // Kommentare (G04) enden nur an '*', ein '%' im Text ("10%") beginnt keinen Block
+        let end = if content[i..].starts_with("G04") { content[i..].find('*') } else { content[i..].find(['*', '%']) };
+        let end = end.map(|p| i + p).unwrap_or(bytes.len());
+        // Nur ASCII: Sonderzeichen würden das Zerlegen in Buchstabe + Zahl an Bytegrenzen sprengen
+        let word: String = content[i..end].chars().filter(|c| c.is_ascii_graphic()).collect();
         i = if bytes.get(end) == Some(&b'*') { end + 1 } else { end };
         handle_word(&word, &mut st, &mut objects);
     }
@@ -798,7 +803,7 @@ pub fn write_stencil(apertures: &[ApertureItem], title: &str) -> String {
     let mut items: Vec<Item> = Vec::new();
     let key = |kind: char, w: f64, h: f64| (kind, (w * 10_000.0).round() as i64, (h * 10_000.0).round() as i64);
     for ap in apertures {
-        match ap.custom_slices.as_ref().filter(|s| !s.is_empty()) {
+        match ap.custom_slices.as_ref() {
             Some(slices) => {
                 for s in slices {
                     if s.is_circle() {
@@ -890,6 +895,12 @@ pub fn write_zones(zones: &[StencilZone], base_thickness: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bom_and_percent_in_comment() {
+        let g = format!("{}%FSLAX46Y46*%%MOMM*%G04 reduziert 10%*%ADD10R,1.0X0.5*%D10*X1000000Y1000000D03*M02*", '\u{feff}');
+        assert_eq!(parse_gerber(&g).paste_apertures().len(), 1);
+    }
 
     #[test]
     fn parses_flashes_regions_and_macros() {

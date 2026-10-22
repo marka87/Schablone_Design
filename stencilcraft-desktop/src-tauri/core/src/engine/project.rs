@@ -169,7 +169,7 @@ fn now_string() -> String {
     secs.to_string()
 }
 
-fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
+pub(crate) fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("Ordner nicht anlegbar: {e}"))?;
     }
@@ -520,7 +520,9 @@ impl StencilEngine {
     /// Eigene Sicherung löschen; optional zusätzlich eine angebotene fremde Sicherung.
     pub fn discard_autosave(&self, other: Option<&Path>) {
         let _ = std::fs::remove_file(self.autosave_path());
-        if let Some(o) = other.filter(|o| o.starts_with(self.data_root.join("Autosave"))) {
+        // Nur Sicherungsdateien direkt im Autosave-Ordner ("..\" im Pfad zählt nicht)
+        let autosave_dir = self.data_root.join("Autosave");
+        if let Some(o) = other.filter(|o| o.parent() == Some(autosave_dir.as_path()) && o.extension().is_some_and(|e| e == PROJECT_EXT)) {
             let _ = std::fs::remove_file(o);
         }
     }
@@ -603,6 +605,7 @@ pub fn edit_label(method: &str, seg: &[&str], body: &Map<String, Value>) -> Opti
         ("POST", ["api", "zone", z, "rule"]) => format!("Zonenregel {z}"),
         ("POST", ["api", "zone", z, "generate"]) => format!("Zone {z} anwenden"),
         ("POST", ["api", "generate_all"]) => "Alle Regeln anwenden".into(),
+        ("POST", ["api", "zones", "merge"]) => "Stufenzonen verbinden".into(),
         ("POST", ["api", "library", "load"]) => "Bibliothek laden".into(),
         ("POST", ["api", "set_ipc_mode"]) => "IPC-Klasse".into(),
         ("POST", ["api", "set_paste_type"]) => "Pastentyp".into(),

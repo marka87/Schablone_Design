@@ -89,7 +89,8 @@ impl StencilEngine {
     /// Erzeugt eine Öffnung aus einem Kupferpad (ohne Kundenpaste).
     pub(crate) fn copper_aperture(id: usize, cu: &PadBox, package: &str, refdes: &str, pin: i64, facing: &str) -> ApertureItem {
         let (cx, cy) = ((cu.x0 + cu.x1) / 2.0, (cu.y0 + cu.y1) / 2.0);
-        let mut ap = ApertureItem::new(id, if cu.round { "circle" } else { "rectangle" }, cx, cy, cu.w, cu.h);
+        // Ovale/schräge Kupferpads behalten ihre Kontur (z. B. Zugentlastung an Steckern)
+        let mut ap = ApertureItem::from_polygon(id, &cu.pts).unwrap_or_else(|| ApertureItem::new(id, if cu.round { "circle" } else { "rectangle" }, cx, cy, cu.w, cu.h));
         ap.package_name = package.to_string();
         ap.component_id = refdes.to_string();
         ap.pin_number = pin;
@@ -133,6 +134,17 @@ impl StencilEngine {
         }
         let ids: Vec<usize> = (start..self.apertures.len()).collect();
         self.regenerate_ids(&ids);
+        // Gezielt übernommene Pads (z. B. Zugentlastung) behalten ihre Kupferform als Öffnung,
+        // auch wenn die Regel "Take Existing" keine Paste erzeugt
+        if package.is_some() {
+            for &id in &ids {
+                let ap = &mut self.apertures[id];
+                if ap.custom_slices.as_ref().is_some_and(|s| s.is_empty()) {
+                    ap.custom_slices = None;
+                    ap.is_manually_overridden = true;
+                }
+            }
+        }
         ids.len()
     }
 

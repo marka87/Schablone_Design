@@ -1,7 +1,7 @@
 //! DFM-Prüfungen: IPC-7525 (Area/Aspect Ratio, 5-Ball-Regel, Stufenkantenabstand),
 //! Schablonensteg-Prüfung (R-Tree + exakte Polygonabstände, parallel), Pin-in-Paste, Auslösekalkulator.
 
-use super::geometry::{circle_pts, polygon_area, polygon_distance, polygon_perimeter, rect_pts};
+use super::geometry::{circle_pts, min_width, polygon_area, polygon_distance, polygon_perimeter, rect_pts};
 use super::types::*;
 use super::StencilEngine;
 use rayon::prelude::*;
@@ -16,10 +16,17 @@ fn slice_metrics(s: &Slice) -> (f64, f64, f64) {
     if s.is_circle() {
         (PI * (s.w / 2.0).powi(2), PI * s.w, s.w)
     } else if let Some(pts) = s.polygon_pts() {
-        (polygon_area(pts), polygon_perimeter(pts), min_dim)
+        // Schräge Öffnungen: echte kleinste Breite statt der Breite des umschließenden Rechtecks
+        (polygon_area(pts), polygon_perimeter(pts), min_width(pts).min(min_dim))
     } else {
         (s.w * s.h, 2.0 * (s.w + s.h), min_dim)
     }
+}
+
+/// Kleinste Breite einer unveränderten Öffnung (schräge Polygone: echte Breite).
+fn item_min_dim(item: &ApertureItem) -> f64 {
+    let b = item.width.min(item.height);
+    if item.shape_type == "polygon" && item.points.len() >= 3 { min_width(&item.points).min(b) } else { b }
 }
 
 pub fn grain_diameter(paste_type: &str) -> f64 {
@@ -41,7 +48,9 @@ pub fn recommended_step(t_max: f64) -> f64 {
 /// Area Ratio und Aspect Ratio bei 1 mm Dicke plus kleinste Öffnungsbreite.
 /// Beide Kennzahlen sind umgekehrt proportional zur Dicke: Wert(t) = Wert(1 mm) / t.
 fn ratios_at_unit_thickness(item: &ApertureItem) -> (f64, f64, f64) {
-    match item.custom_slices.as_ref().filter(|s| !s.is_empty()) {
+    match item.custom_slices.as_ref() {
+        // Keine Öffnung (Ignore): nichts zu prüfen
+        Some(slices) if slices.is_empty() => (NO_OPENING, NO_OPENING, NO_OPENING),
         Some(slices) => {
             let (mut ar, mut aspect, mut min_dim) = (f64::INFINITY, f64::INFINITY, f64::INFINITY);
             for s in slices {
@@ -49,7 +58,7 @@ fn ratios_at_unit_thickness(item: &ApertureItem) -> (f64, f64, f64) {
                 if p > 0.0 {
                     ar = ar.min(a / p);
                 }
-                aspect = aspect.min(s.w.min(s.h));
+                aspect = aspect.min(d);
                 min_dim = min_dim.min(d);
             }
             (if ar.is_finite() { ar } else { 0.0 }, aspect, min_dim)
@@ -57,11 +66,14 @@ fn ratios_at_unit_thickness(item: &ApertureItem) -> (f64, f64, f64) {
         None if item.shape_type == "circle" => (item.width / 4.0, item.width, item.width),
         None => (
             if item.perimeter > 0.0 { item.area / item.perimeter } else { 0.0 },
-            item.width.min(item.height),
-            item.width.min(item.height),
+            item_min_dim(item),
+            item_min_dim(item),
         ),
     }
 }
+
+/// Kennwert für Pads ohne Öffnung (Ignore): besteht jede Prüfung
+const NO_OPENING: f64 = 99.0;
 
 /// Bohrungen bis zu diesem Durchmesser gelten als Via (THT-Pins sind größer)
 const VIA_MAX_DRILL: f64 = 0.45;
@@ -214,7 +226,8 @@ impl StencilEngine {
     fn aperture_ipc_with(&self, item: &ApertureItem, drills: Option<&DrillTree>) -> IpcResult {
         let (t, zone) = self.get_effective_thickness(item.cx, item.cy);
 
-        let (ar, aspect, min_ap_dim) = match item.custom_slices.as_ref().filter(|s| !s.is_empty()) {
+        let (ar, aspect, min_ap_dim) = match item.custom_slices.as_ref() {
+            Some(slices) if slices.is_empty() => (NO_OPENING, NO_OPENING, NO_OPENING),
             Some(slices) => {
                 // Kritischste Teilöffnung ist maßgeblich
                 let mut ar = f64::INFINITY;
@@ -225,7 +238,7 @@ impl StencilEngine {
                     if p > 0.0 {
                         ar = ar.min(a / (p * t));
                     }
-                    aspect = aspect.min(s.w.min(s.h) / t);
+                    aspect = aspect.min(d / t);
                     min_dim = min_dim.min(d);
                 }
                 (if ar.is_finite() { ar } else { 0.0 }, aspect, min_dim)
@@ -233,8 +246,8 @@ impl StencilEngine {
             None if item.shape_type == "circle" => (item.width / (4.0 * t), item.width / t, item.width),
             None => (
                 if item.perimeter > 0.0 { item.area / (item.perimeter * t) } else { 0.0 },
-                item.width.min(item.height) / t,
-                item.width.min(item.height),
+                item_min_dim(item) / t,
+                item_min_dim(item),
             ),
         };
 
@@ -371,10 +384,11 @@ impl StencilEngine {
             slice_idx: i64,
             pts: Vec<Pt>,
             pkg: &'a str,
+            comp: &'a str,
         }
         let mut items: Vec<GeomItem> = Vec::with_capacity(self.apertures.len());
         for ap in &self.apertures {
-            match ap.custom_slices.as_ref().filter(|s| !s.is_empty()) {
+            match ap.custom_slices.as_ref() {
                 Some(slices) => {
                     for (i, s) in slices.iter().enumerate() {
                         let pts = if let Some(p) = s.polygon_pts() {
@@ -384,7 +398,7 @@ impl StencilEngine {
                         } else {
                             rect_pts(s.cx, s.cy, s.w, s.h)
                         };
-                        items.push(GeomItem { ap_id: ap.id, slice_idx: i as i64, pts, pkg: &ap.package_name });
+                        items.push(GeomItem { ap_id: ap.id, slice_idx: i as i64, pts, pkg: &ap.package_name, comp: &ap.component_id });
                     }
                 }
                 None => {
@@ -395,7 +409,7 @@ impl StencilEngine {
                     } else {
                         rect_pts(ap.cx, ap.cy, ap.width, ap.height)
                     };
-                    items.push(GeomItem { ap_id: ap.id, slice_idx: -1, pts, pkg: &ap.package_name });
+                    items.push(GeomItem { ap_id: ap.id, slice_idx: -1, pts, pkg: &ap.package_name, comp: &ap.component_id });
                 }
             }
         }
@@ -435,7 +449,10 @@ impl StencilEngine {
                     let same_pad = it.ap_id == ot.ap_id && it.slice_idx >= 0 && ot.slice_idx >= 0;
                     let threshold = if same_pad { 0.08 } else { limit };
                     let (dist, p1, p2) = polygon_distance(&it.pts, &ot.pts);
-                    if dist > 0.0005 && dist < threshold {
+                    // Abstand 0 zwischen Öffnungen verschiedener Bauteile: kein Steg mehr (schlimmster Fall).
+                    // Überlappungen innerhalb eines Bauteils sind oft gewollt (Pad aus mehreren Flashes).
+                    let touching_parts = !it.comp.is_empty() && !ot.comp.is_empty() && it.comp != ot.comp;
+                    if dist < threshold && (dist > 0.0005 || touching_parts) {
                         let severity = if dist < threshold * 0.75 { "CRIT" } else { "WARN" };
                         found.push(BridgeViolation {
                             id: 0,

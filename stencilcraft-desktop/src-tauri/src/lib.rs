@@ -160,6 +160,11 @@ fn open_path(path: String) -> Result<(), String> {
     if !p.exists() {
         return Err(format!("Nicht gefunden: {path}"));
     }
+    // Nur Ordner und Exportdateien öffnen, nie Programme (Schutz, falls fremdes Skript in die Oberfläche gelangt)
+    let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if p.is_file() && !matches!(ext.as_str(), "html" | "htm" | "gbr" | "ger" | "xml" | "json" | "txt" | "pdf" | "svg") {
+        return Err(format!("Dateityp nicht erlaubt: {path}"));
+    }
     std::process::Command::new("explorer").arg(p).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
@@ -208,7 +213,7 @@ pub fn run() {
             // Hauptfenster schließen bei ungespeicherten Änderungen: erst nachfragen (Oberfläche)
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
-                    let dirty = window.app_handle().state::<AppState>().engine.lock().map(|e| e.dirty).unwrap_or(false);
+                    let dirty = window.app_handle().state::<AppState>().engine.lock().unwrap_or_else(|p| p.into_inner()).dirty;
                     if dirty {
                         api.prevent_close();
                         let _ = window.emit("close-requested", ());
