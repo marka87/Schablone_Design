@@ -151,7 +151,7 @@
                 <span class="rb-cap">Schablone</span>
             </div>
 
-            <div class="rb-group">
+            <div class="rb-group hidden">
                 <div class="rb-body">
                     <div class="side-switch" id="boardSideSwitch" title="Bestückungsseite, die bearbeitet wird (TOP / BOT)">
                         <button data-side="top" class="active">TOP <span class="side-count"></span></button>
@@ -261,8 +261,7 @@
                                 <th class="col-chk" title="Sichtbarkeit (Haken)"><i class="ic ic-eye"></i></th>
                                 <th class="col-color" title="Lagenfarbe">Farbe</th>
                                 <th class="col-name">Name</th>
-                                <th class="col-type">Typ</th>
-                                <th class="col-count">Objekte</th>
+                                <th class="col-info">Info</th>
                                 <th class="col-del"></th>
                             </tr>
                         </thead>
@@ -685,7 +684,7 @@
                 </div>
 
                 <!-- Seite: TOP / BOT bearbeitet diese Seite, Beide zeigt alle Packages -->
-                <div class="side-switch pkg-side-switch" id="sideSwitch" title="Packages nach Bestückungsseite">
+                <div class="side-switch pkg-side-switch hidden" id="sideSwitch" title="Packages nach Bestückungsseite">
                     <button data-side="top" class="active">TOP <span class="side-count" id="cntSideTop"></span></button>
                     <button data-side="bot">BOT <span class="side-count" id="cntSideBot"></span></button>
                     <button data-side="both">Beide</button>
@@ -1389,7 +1388,6 @@
                 </div>
                 <label>Seiten</label>
                 <select id="expSides">
-                    <option value="active">Aktive Seite</option>
                     <option value="top">TOP</option>
                     <option value="bot">BOT</option>
                     <option value="both">TOP + BOT</option>

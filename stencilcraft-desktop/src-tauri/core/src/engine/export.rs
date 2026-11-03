@@ -29,7 +29,7 @@ impl Default for ExportSettings {
         ExportSettings {
             target_dir: String::new(),
             pattern: "{job}_{side}_{dicke}um".into(),
-            sides: "active".into(),
+            sides: "both".into(),
             zones: true,
             outline: false,
             report: true,
@@ -133,10 +133,10 @@ impl StencilEngine {
         let dir = if opts.target_dir.trim().is_empty() { self.export_dir() } else { PathBuf::from(opts.target_dir.trim()) };
         std::fs::create_dir_all(&dir).map_err(|e| format!("Zielordner nicht anlegbar ({}): {e}", dir.display()))?;
         let sides: Vec<String> = match opts.sides.as_str() {
-            "both" => self.loaded_sides(),
+            // Eine Ansicht für beide Seiten: "active" (alte Einstellung) exportiert ebenfalls alles Geladene
             "top" => vec!["top".into()],
             "bot" => vec!["bot".into()],
-            _ => vec![self.current_side.clone()],
+            _ => self.loaded_sides(),
         };
         if sides.is_empty() {
             return Err("Keine Seite mit Pastendaten geladen".into());

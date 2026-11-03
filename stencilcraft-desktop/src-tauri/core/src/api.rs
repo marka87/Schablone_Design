@@ -323,7 +323,16 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
         }
         ("POST", ["api", "side"]) => {
             let side = b.s("side").unwrap_or_else(|| "top".into());
+            // keep_layers: stiller Wechsel (eine Ansicht für beide Seiten), Lagen-Sichtbarkeit bleibt
+            let vis: Vec<(String, bool)> = e.layers.iter().map(|l| (l.id.clone(), l.visible)).collect();
             e.switch_side(&side);
+            if b.b("keep_layers", false) {
+                for (id, v) in vis {
+                    if let Some(l) = e.layer_mut(&id) {
+                        l.visible = v;
+                    }
+                }
+            }
             ok(json!({"status": "ok", "sides": e.sides_json(), "stats": stats(e)}))
         }
         ("POST", ["api", "undo"]) => {
@@ -363,8 +372,27 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
             e.dataset_name = format!("{} Side Panel ({}µm)", if side == "top" { "Top" } else { "Bottom" }, (e.base_thickness * 1000.0).round());
             ok(json!({"status": "ok", "dataset_name": e.dataset_name, "layers": e.layers_summary(), "stats": stats(e)}))
         }
-        ("GET", ["api", "stats"]) => ok(json!({"dataset_name": e.dataset_name, "stats": stats(e)})),
-        ("GET", ["api", "apertures"]) => ok(apertures_payload(e)),
+        ("GET", ["api", "stats"]) => {
+            // Eine Ansicht für beide Seiten: Zähler über TOP und BOT
+            let mut s = stats(e);
+            if let Some(o) = e.on_other_side(|o| stats(o)) {
+                for k in ["total_apertures", "ok_count", "warn_count", "crit_count", "via_in_pad_count", "squeegee_slot_count"] {
+                    s[k] = json!(s[k].as_u64().unwrap_or(0) + o[k].as_u64().unwrap_or(0));
+                }
+            }
+            ok(json!({"dataset_name": e.dataset_name, "stats": s}))
+        }
+        ("GET", ["api", "apertures"]) => {
+            // Andere Seite nur zum Zeichnen; Klick darauf wechselt die Seite still (keep_layers)
+            let mut v = apertures_payload(e);
+            if let Some(o) = e.on_other_side(|o| apertures_payload(o)["apertures"].take()) {
+                let other = if e.current_side == "bot" { "top" } else { "bot" };
+                v["other_side"] = json!(other);
+                v["other_apertures"] = o;
+                v["other_components"] = json!(e.components.iter().filter(|c| c.side.eq_ignore_ascii_case(other)).collect::<Vec<_>>());
+            }
+            ok(v)
+        }
         ("GET", ["api", "aperture", id]) => {
             let Some(ap) = id.parse::<usize>().ok().and_then(|i| e.apertures.get(i)) else {
                 return (404, json!({"error": "Not found"}));

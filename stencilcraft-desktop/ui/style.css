@@ -2399,3 +2399,38 @@ html[data-theme="light"] .pkg-tree-item.review-auto .pkg-item-name { color: #a16
 html[data-theme="light"] .pkg-tree-item.review-done .pkg-item-name { color: #15803d; }
 html[data-theme="light"] .pkg-tree-item.review-open .pkg-item-name { color: #b91c1c; }
 html[data-theme="light"] input, html[data-theme="light"] select { background: #fff; color: #111827; border-color: #cfd6e2; }
+
+
+/* ===== Ruhige, gleichmäßige Gestaltung: eine Zeilenhöhe, keine bunten Abzeichen ===== */
+:root { --row-h: 20px; }
+.layer-table td, .layer-table th { height: var(--row-h); padding-top: 0; padding-bottom: 0; font-size: 0.78rem; }
+.layer-table .layer-name-cell { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+.layer-table .col-info { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 0.74rem; }
+.layer-table .layer-subname, .layer-table .badge-layer { display: none; }
+.layer-table .layer-color-picker { width: 12px; height: 12px; border-radius: 50%; padding: 0; border: 1px solid var(--border-strong, #555); }
+
+/* Package-Baum: normale Schrift, Stand als kleiner Punkt (grau offen, gelb automatisch, grün bearbeitet) */
+.pkg-tree-item { min-height: var(--row-h); }
+.pkg-tree-item.inherits .pkg-item-name { font-style: normal; opacity: 1; }
+.pkg-tree-item .pkg-item-name,
+.pkg-tree-item.review-open .pkg-item-name, .pkg-tree-item.review-auto .pkg-item-name, .pkg-tree-item.review-done .pkg-item-name { color: var(--text-primary); }
+.pkg-tree-item.review-open, .pkg-tree-item.review-auto, .pkg-tree-item.review-done { border-left: none; }
+.pkg-tree-item .pkg-item-main::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #6b7280; flex-shrink: 0; }
+.pkg-tree-item.review-auto .pkg-item-main::before { background: #d29922; }
+.pkg-tree-item.review-done .pkg-item-main::before { background: #3fb950; }
+.pkg-tree-item.active .pkg-item-name { color: #fff; }
+.pkg-badge-pitch, .pkg-badge-count, .pkg-badge-side { font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-ui); background: none; padding: 0; }
+.own-rule-dot { font-size: 0.6rem; color: var(--accent); }
+
+/* Eigenschaften: auch Schalter als Zeile "Name | ☐" */
+.prop-item.checkbox-prop { display: block; padding: 0; }
+.prop-item.checkbox-prop label { display: grid; grid-template-columns: 55% 1fr; align-items: center; min-height: 22px; padding: 1px 8px; border-bottom: 1px solid var(--border-color); border-right: none; }
+.prop-item.checkbox-prop label:last-child { border-bottom: none; }
+.prop-item.checkbox-prop input[type="checkbox"] { order: 2; justify-self: start; margin: 0; }
+.rule-description { font-style: normal; padding: 6px 10px; border-top: 1px solid var(--border-color); }
+
+/* Pin-Bearbeitung als flache Leiste am unteren Rand statt schwebender Box */
+.single-pad-bar { left: 0; right: 0; bottom: 0; transform: none; max-width: none; border-radius: 0; border: none; border-top: 1px solid var(--border-color); background: var(--bg-surface); backdrop-filter: none; box-shadow: none; padding: 4px 10px; gap: 8px; }
+
+/* Kopfleiste: Status-Zahlen kleiner */
+.app-header .pill, .ribbon .pill { font-size: 0.72rem; padding: 1px 6px; }

@@ -84,7 +84,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         switchWorkspace("package");
     }
     setupProjectUI();
-    pkgState.pinsExpanded = localStorage.getItem("sc.pinsOpen") === "1";
+    pkgState.pinsExpanded = localStorage.getItem("sc.pinsOpen") !== "0";
     // Einzelpad-Werkzeuge im Inspector: Auf-/Zu-Zustand merken
     const editTools = document.getElementById("inspEditTools");
     if (editTools) {
@@ -428,6 +428,10 @@ async function refreshApertureData() {
         const data = await res.json();
         state.bounds = data.bounds;
         state.apertures = data.apertures;
+        // Eine Ansicht für TOP und BOT: andere Seite nur zum Zeichnen und Anklicken
+        state.otherSide = data.other_side || null;
+        state.otherApertures = data.other_apertures || [];
+        state.otherComponents = data.other_components || [];
         state.pads = data.pads || [];
         state.components = data.components || [];
         state.zones = data.zones;
@@ -1431,18 +1435,67 @@ function renderFiducials() {
     }
 }
 
-function renderApertures() {
-    const pasteLayers = state.layers ? state.layers.filter(l => l.type === 'paste') : [];
-    if (pasteLayers.length > 0) {
-        const anyPasteVisible = pasteLayers.some(l => l.visible);
-        if (!anyPasteVisible) return;
+// Eine Öffnung (Slices, Kreis, Rechteck, Polygon) mit dem aktuellen fillStyle füllen
+function fillApertureShape(ap) {
+    const poly = pts => {
+        ctx.beginPath();
+        for (let i = 0; i < pts.length; i++) {
+            const sp = worldToScreen(pts[i][0], pts[i][1]);
+            if (i === 0) ctx.moveTo(sp.x, sp.y);
+            else ctx.lineTo(sp.x, sp.y);
+        }
+        ctx.closePath();
+        ctx.fill();
+    };
+    const rect = (cx, cy, w, h) => {
+        const sp = worldToScreen(cx - w / 2, cy + h / 2);
+        ctx.fillRect(sp.x, sp.y, Math.max(1, w * state.zoom), Math.max(1, h * state.zoom));
+    };
+    // Slices (leere Liste = keine Öffnung, z. B. Ignore)
+    if (ap.slices) {
+        for (const sl of ap.slices) {
+            if (sl.pts && sl.pts.length > 0) poly(sl.pts);
+            else rect(sl.cx, sl.cy, sl.w, sl.h);
+        }
+        return;
+    }
+    if (ap.shape === "circle") {
+        const sp = worldToScreen(ap.cx, ap.cy);
+        ctx.beginPath();
+        ctx.arc(sp.x, sp.y, Math.max(1, (ap.w / 2) * state.zoom), 0, Math.PI * 2);
+        ctx.fill();
+    } else if (ap.shape === "polygon" && ap.pts) {
+        poly(ap.pts);
     } else {
-        if (!state.showPaste) return;
+        rect(ap.cx, ap.cy, ap.w, ap.h);
+    }
+}
+
+const stencilLayerOf = side => (state.layers || []).find(l => l.id === `stencil_mod_${side}`);
+
+function renderApertures() {
+    // Andere Seite (z. B. bot_stencil) darunter, wenn ihre Lage eingeblendet ist
+    const other = state.otherSide && stencilLayerOf(state.otherSide);
+    if (other?.visible && state.otherApertures?.length) {
+        ctx.globalAlpha = other.opacity ?? 0.85;
+        ctx.fillStyle = other.color || "#94a3b8";
+        for (const ap of state.otherApertures) fillApertureShape(ap);
+        ctx.globalAlpha = 1.0;
+    }
+
+    const own = stencilLayerOf(state.side);
+    const pasteLayers = state.layers ? state.layers.filter(l => l.type === 'paste') : [];
+    if (own) {
+        if (!own.visible) { renderPackageHighlight(); return; }
+    } else if (pasteLayers.length > 0) {
+        if (!pasteLayers.some(l => l.visible)) return;
+    } else if (!state.showPaste) {
+        return;
     }
 
     const isHeatmap = state.colorMode === "ipc";
     const isLayers = state.colorMode === "layers";
-    const activePasteLayer = pasteLayers.find(l => l.visible);
+    const activePasteLayer = own || pasteLayers.find(l => l.visible);
     const pasteColor = (activePasteLayer && activePasteLayer.color) ? activePasteLayer.color : "rgba(244, 114, 182, 0.85)";
 
     const dimOthers = state.highlightPkg && state.highlightDim !== false;
@@ -1455,56 +1508,12 @@ function renderApertures() {
             else if (ap.status === "WARN") fillColor = "#f59e0b";
             else fillColor = "#ef4444";
         } else if (isLayers) {
-            fillColor = pasteColor; // Pink Paste wie im Kunden-Screenshot
+            fillColor = pasteColor;
         } else if (state.colorMode === "thickness") {
             fillColor = ap.thick < 0.120 ? "#c084fc" : (ap.thick > 0.120 ? "#f43f5e" : "#38bdf8");
         }
-
         ctx.fillStyle = fillColor;
-
-        // Wenn Slices oder Länglich&Schmal aktiv (leere Liste = keine Öffnung, z. B. Ignore)
-        if (ap.slices) {
-            for (const s of ap.slices) {
-                if (s.pts && s.pts.length > 0) {
-                    ctx.beginPath();
-                    for (let i = 0; i < s.pts.length; i++) {
-                        const sp = worldToScreen(s.pts[i][0], s.pts[i][1]);
-                        if (i === 0) ctx.moveTo(sp.x, sp.y);
-                        else ctx.lineTo(sp.x, sp.y);
-                    }
-                    ctx.closePath();
-                    ctx.fill();
-                } else {
-                    const sp = worldToScreen(s.cx - s.w/2, s.cy + s.h/2);
-                    const sw = Math.max(1, s.w * state.zoom);
-                    const sh = Math.max(1, s.h * state.zoom);
-                    ctx.fillRect(sp.x, sp.y, sw, sh);
-                }
-            }
-            continue;
-        }
-
-        if (ap.shape === "circle") {
-            const sp = worldToScreen(ap.cx, ap.cy);
-            const sr = Math.max(1, (ap.w / 2) * state.zoom);
-            ctx.beginPath();
-            ctx.arc(sp.x, sp.y, sr, 0, Math.PI * 2);
-            ctx.fill();
-        } else if (ap.shape === "rectangle" || !ap.pts) {
-            const sp = worldToScreen(ap.cx - ap.w/2, ap.cy + ap.h/2);
-            const sw = Math.max(1, ap.w * state.zoom);
-            const sh = Math.max(1, ap.h * state.zoom);
-            ctx.fillRect(sp.x, sp.y, sw, sh);
-        } else if (ap.shape === "polygon" && ap.pts) {
-            ctx.beginPath();
-            for (let i = 0; i < ap.pts.length; i++) {
-                const sp = worldToScreen(ap.pts[i][0], ap.pts[i][1]);
-                if (i === 0) ctx.moveTo(sp.x, sp.y);
-                else ctx.lineTo(sp.x, sp.y);
-            }
-            ctx.closePath();
-            ctx.fill();
-        }
+        fillApertureShape(ap);
     }
     ctx.globalAlpha = 1.0;
     renderPackageHighlight();
@@ -1929,7 +1938,7 @@ function renderLayerTable() {
 
         const gr = document.createElement("tr");
         gr.className = "layer-group-row";
-        gr.innerHTML = `<td colspan="6"><div class="layer-group-head">
+        gr.innerHTML = `<td colspan="5"><div class="layer-group-head">
             <span class="grp-caret">${collapsed ? "▸" : "▾"}</span>
             <span>${g.label}</span>
             <span class="grp-count">${members.length}${visibleCount ? ` · ${visibleCount} sichtbar` : ""}</span>
@@ -1956,10 +1965,12 @@ function renderLayerTable() {
     if (shown === 0 && state.layers.length > 0) {
         const tr = document.createElement("tr");
         tr.className = "layer-empty-row";
-        tr.innerHTML = `<td colspan="6">Keine Lage passt zu Suche/Filter</td>`;
+        tr.innerHTML = `<td colspan="5">Keine Lage passt zu Suche/Filter</td>`;
         tbody.appendChild(tr);
     }
 }
+
+const LAYER_TYPE_LABEL = { paste: "Paste", paste_orig: "Paste (Kunde)", component: "Component", copper: "Copper", mask: "Mask", drill: "Drill", zone: "Zone", fiducial: "Fiducial", profile: "Profile", silk: "Silk", other: "Misc" };
 
 function layerRow(layer) {
         const tr = document.createElement("tr");
@@ -1976,16 +1987,8 @@ function layerRow(layer) {
             <td class="col-color">
                 <input type="color" class="layer-color-picker" data-layer-id="${layer.id}" value="${color}" title="Farbe ändern">
             </td>
-            <td class="layer-name-cell" title="${layer.name} (${layer.filename || ''})">
-                <div style="font-weight:600;">${escapeHtml(layer.name)}</div>
-                <div class="layer-subname">${escapeHtml(layer.info ? `${layer.info} · ${layer.filename || ''}` : (layer.filename || ''))}</div>
-            </td>
-            <td class="col-type">
-                <span class="badge-layer ${typeBadge}">${layer.type || 'LAYER'}</span>
-            </td>
-            <td class="col-count layer-count-cell">
-                ${(layer.count || 0).toLocaleString()}
-            </td>
+            <td class="layer-name-cell" title="${escapeHtml(layer.name)} (${escapeHtml(layer.filename || '')})">${escapeHtml(layer.name)}</td>
+            <td class="col-info">${escapeHtml([layer.info, layer.count ? `Obj: ${layer.count.toLocaleString()}` : "", LAYER_TYPE_LABEL[typeBadge] || layer.type || ""].filter(Boolean).join("; "))}</td>
             <td class="col-del">
                 <button class="layer-del-btn" data-layer-id="${layer.id}" title="Lage entfernen">✕</button>
             </td>
@@ -2500,6 +2503,16 @@ function setupEventListeners() {
         }
 
         if (!bestItem) {
+            const other = state.otherSide && stencilLayerOf(state.otherSide);
+            const hit = other?.visible && (state.otherApertures || []).find(ap => Math.abs(ap.cx - w.x) <= ap.w / 2 + 0.3 && Math.abs(ap.cy - w.y) <= ap.h / 2 + 0.3);
+            if (hit) {
+                const side = state.otherSide;
+                switchSide(side, { silent: true }).then(() => {
+                    const ap = state.apertures.find(a => Math.abs(a.cx - hit.cx) < 1e-3 && Math.abs(a.cy - hit.cy) < 1e-3);
+                    if (ap) { setSelection([ap.id]); selectAperture(ap.id); }
+                });
+                return;
+            }
             // Klick ins Leere hebt die Mehrfachauswahl auf
             if (!opts.toggle) setSelection([]);
             return;
@@ -3645,7 +3658,7 @@ function renderPkgTree() {
         if (pkgState.activeCategory && (p.group || "SMD") !== pkgState.activeCategory) return false;
         if (query && !p.name.toLowerCase().includes(query)) return false;
         // Seite: Bibliotheks-Packages ohne Bauteile bleiben sichtbar
-        const f = pkgState.sideFilter || state.side || "top";
+        const f = "both"; // eine Ansicht: Packages beider Seiten
         if (f !== "both" && p.sides && p.sides.top + p.sides.bot > 0 && !p.sides[f]) return false;
         return true;
     });
@@ -3699,14 +3712,14 @@ ${reviewText}` : ""}`;
             <div class="pkg-item-badges">
                 ${p.pitch > 0 ? `<span class="pkg-badge-pitch">${p.pitch}mm</span>` : ''}
                 ${p.component_count > 0 ? `<span class="pkg-badge-count" title="${p.component_count}x auf Platine">${p.component_count}x</span>` : ''}
-                ${pkgState.sideFilter === "both" && p.sides && p.sides.top + p.sides.bot > 0 ? `<span class="pkg-badge-side" title="TOP ${p.sides.top}x · BOT ${p.sides.bot}x">${[p.sides.top ? "T" : "", p.sides.bot ? "B" : ""].filter(Boolean).join("+")}</span>` : ""}
+                ${p.sides && p.sides.bot > 0 ? `<span class="pkg-badge-side" title="TOP ${p.sides.top}× · BOT ${p.sides.bot}×">${p.sides.top}/${p.sides.bot}</span>` : ""}
             </div>
         `;
 
         item.addEventListener("click", async () => {
             // Package nur auf der anderen Seite: dorthin wechseln, damit Pads und Vorschau stimmen
             const s = p.sides;
-            if (s && s.top + s.bot > 0 && !s[state.side || "top"]) await switchSide(s.top ? "top" : "bot");
+            if (s && s.top + s.bot > 0 && !s[state.side || "top"]) await switchSide(s.top ? "top" : "bot", { silent: true });
             selectPackage(p.name);
         });
         item.addEventListener("contextmenu", (e) => showTreeMenu(e, [
@@ -4772,8 +4785,10 @@ function setupPkgEventListeners() {
     document.getElementById("propRotate45")?.addEventListener("change", onRuleParamChanged);
     document.getElementById("propArrayRound")?.addEventListener("change", onRuleParamChanged);
     document.getElementById("propIgnoreMask")?.addEventListener("change", onRuleParamChanged);
-    // Parameter alphabetisch wie im PCB-I-Eigenschaftenfenster, Schalter am Ende
+    // Parameter alphabetisch wie im PCB-I-Eigenschaftenfenster, Schalter am Ende; Infotext darunter
     const grid = document.querySelector(".rule-property-grid");
+    const desc = document.getElementById("ruleDescription");
+    if (grid && desc) grid.after(desc);
     if (grid) {
         const items = [...grid.querySelectorAll(":scope > .prop-item")];
         const box = el => el.classList.contains("checkbox-prop") ? 1 : 0;
@@ -5706,8 +5721,9 @@ async function refreshSides() {
     } catch (e) { /* Web-Version ohne Seitenwechsel */ }
 }
 
-async function switchSide(side) {
-    const res = await fetch("/api/side", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ side }) });
+async function switchSide(side, opts = {}) {
+    if (side === state.side) return;
+    const res = await fetch("/api/side", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ side, keep_layers: true }) });
     if (!res.ok) return;
     setPackageHighlight(null);
     state.selectedApertureId = null;
@@ -5717,7 +5733,7 @@ async function switchSide(side) {
     await loadLayers();
     await reloadAllViews(false);
     await refreshSides();
-    showToast(`Seite ${side.toUpperCase()} aktiv`, 1800);
+    if (opts.silent) return;
     // Seite ohne Kundenpaste: Öffnungen aus dem Kupfer anbieten
     const sd = (await (await fetch("/api/sides")).json()).sides.find(x => x.side === side);
     if (sd && !sd.loaded) await offerMissingPaste(true);
@@ -5783,7 +5799,9 @@ async function openExportDialog() {
         document.getElementById("expDir").value = st.target_dir || "";
         document.getElementById("expDir").placeholder = d.default_dir;
         document.getElementById("expPattern").value = st.pattern;
-        document.getElementById("expSides").value = st.sides;
+        // Eine Ansicht: immer beide Seiten (BOT ungespiegelt, der Hersteller spiegelt)
+        const loadedSides = (d.sides?.sides || []).filter(x => x.loaded).map(x => x.side);
+        document.getElementById("expSides").value = loadedSides.length > 1 ? (st.sides === "top" || st.sides === "bot" ? st.sides : "both") : (loadedSides[0] || "top");
         document.getElementById("expZones").checked = st.zones;
         document.getElementById("expOutline").checked = st.outline;
         document.getElementById("expReport").checked = st.report;
