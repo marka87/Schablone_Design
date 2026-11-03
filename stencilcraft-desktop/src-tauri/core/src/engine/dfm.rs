@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::f64::consts::PI;
 
 /// Fläche, Umfang, kleinste Kantenlänge einer Öffnung.
-fn slice_metrics(s: &Slice) -> (f64, f64, f64) {
+pub(crate) fn slice_metrics(s: &Slice) -> (f64, f64, f64) {
     let min_dim = s.w.min(s.h);
     if s.is_circle() {
         (PI * (s.w / 2.0).powi(2), PI * s.w, s.w)

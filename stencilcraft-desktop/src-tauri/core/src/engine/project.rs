@@ -246,7 +246,8 @@ impl StencilEngine {
     }
 
     /// Vor einer Bearbeitung aufrufen. `key` fasst schnelle Folgeänderungen zusammen (z. B. Spinner).
-    pub fn record_undo(&mut self, label: &str, key: &str) {
+    /// Liefert true, wenn ein neuer Schritt angelegt wurde (für `discard_undo`).
+    pub fn record_undo(&mut self, label: &str, key: &str) -> bool {
         let coalesce = matches!(&self.history.last_edit, Some((k, t)) if k == key && t.elapsed() < COALESCE);
         if !coalesce {
             let snap = self.snapshot(label);
@@ -258,6 +259,22 @@ impl StencilEngine {
         self.history.redo.clear();
         self.history.last_edit = Some((key.to_string(), Instant::now()));
         self.dirty = true;
+        !coalesce
+    }
+
+    /// Fehlgeschlagene Bearbeitung: den eben angelegten Schritt wieder verwerfen.
+    pub fn discard_undo(&mut self) {
+        self.history.undo.pop();
+        self.history.last_edit = None;
+    }
+
+    /// Mehrere Schritte auf einmal zurück (Sprung im Verlauf). Liefert die letzte Bezeichnung.
+    pub fn undo_steps(&mut self, n: usize) -> Option<String> {
+        (0..n.max(1)).map_while(|_| self.undo()).last()
+    }
+
+    pub fn redo_steps(&mut self, n: usize) -> Option<String> {
+        (0..n.max(1)).map_while(|_| self.redo()).last()
     }
 
     pub fn undo(&mut self) -> Option<String> {
@@ -289,6 +306,9 @@ impl StencilEngine {
             "undo_label": self.history.undo.last().map(|s| s.label.clone()),
             "redo_label": self.history.redo.last().map(|s| s.label.clone()),
             "undo_count": self.history.undo.len(),
+            // Verlauf für die Liste, neuester Schritt zuerst
+            "undo_labels": self.history.undo.iter().rev().map(|s| s.label.clone()).collect::<Vec<_>>(),
+            "redo_labels": self.history.redo.iter().rev().map(|s| s.label.clone()).collect::<Vec<_>>(),
             "dirty": self.dirty,
             "project_path": self.project_path.as_ref().map(|p| p.to_string_lossy().to_string()),
             "project_name": self.project_path.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().to_string()),
@@ -574,6 +594,23 @@ pub fn edit_label(method: &str, seg: &[&str], body: &Map<String, Value>) -> Opti
         ("POST", ["api", "reduce"]) => format!("Flächenreduktion Pad {}", id()),
         ("POST", ["api", "elongate"]) => format!("Länglich & Schmal Pad {}", id()),
         ("POST", ["api", "reset_aperture"]) => format!("Zurücksetzen Pad {}", id()),
+        ("POST", ["api", "openings", op]) => {
+            let n = body.get("ids").and_then(Value::as_array).map_or(0, Vec::len);
+            let what = match *op {
+                "move" => "verschoben",
+                "rotate" => "gedreht",
+                "scale" | "resize" => "Größe geändert",
+                "reduce" => "verkleinert",
+                "delete" => "gelöscht",
+                "duplicate" => "dupliziert",
+                "reset" => "zurückgesetzt",
+                "slice" => "Stege",
+                "elongate" => "länglich & schmal",
+                _ => "bearbeitet",
+            };
+            format!("{n} Öffnung(en) {what}")
+        }
+        ("POST", ["api", "opening", "add"]) => "Öffnung hinzugefügt".into(),
         ("POST", ["api", "pip", "apply"]) => format!("Pin-in-Paste Pad {}", id()),
         ("POST", ["api", "pad", p, "override"]) => format!("Pad {p} anpassen"),
         ("POST", ["api", "pad", p, "reset"]) => format!("Pad {p} zurücksetzen"),
@@ -679,6 +716,24 @@ mod tests {
         assert!(f.packages.contains_key("CHIP_0805_KUNDE"));
         assert!(f.apertures[0].custom_slices.as_ref().unwrap()[0].pts.is_some());
         assert_eq!(f.recent_projects().len(), 1);
+    }
+
+    #[test]
+    fn hand_edits_survive_project_reopen() {
+        let (mut e, root) = engine("handedits");
+        e.move_openings(&[0], 0.1, 0.0);
+        e.delete_openings(&[1]);
+        let id = e.add_opening_shape("rectangle", 40.0, 40.0, 0.4, 0.6).unwrap();
+        let pp = root.join("Hand.stencilproj");
+        e.save_project(&pp).unwrap();
+
+        let mut f = StencilEngine::new(0.12, root);
+        assert!(matches!(f.open_project(&pp, None).unwrap(), OpenResult::Opened { .. }));
+        assert_eq!(f.apertures.len(), id + 1);
+        assert!((f.apertures[0].custom_slices.as_ref().unwrap()[0].cx - e.apertures[0].cx - 0.1).abs() < 1e-6);
+        assert!(f.apertures[1].custom_slices.as_ref().unwrap().is_empty());
+        let s = &f.apertures[id].custom_slices.as_ref().unwrap()[0];
+        assert!((s.cx - 40.0).abs() < 1e-6 && (s.w - 0.4).abs() < 1e-6 && (s.h - 0.6).abs() < 1e-6);
     }
 
     #[test]

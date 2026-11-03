@@ -2,7 +2,7 @@
 //! Länglich & Schmal, Array Slicing orthogonal und 45°-diagonal).
 
 use super::geometry::{bounds, centroid, circle_pts, clip_halfplane, convex_hull, fillet_polygon, inset_convex, polygon_area, rect_pts, rounded_rect_pts};
-use super::donut_segments;
+use super::donut_segments_n;
 use super::types::{r4, r5, round_pts, PackageRule, Pt, Slice};
 use serde_json::{Map, Value};
 
@@ -268,7 +268,8 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
     }
 
     // Pin-minus-Mask (Solder Mask Defined Pads)
-    let (eff_pw, eff_ph) = match (rule.pin_minus_mask, mask_w, mask_h) {
+    let use_mask = rule.pin_minus_mask || (matches!(rtype, "pin_mask" | "array_pads") && !rule.ignore_mask);
+    let (eff_pw, eff_ph) = match (use_mask, mask_w, mask_h) {
         (true, Some(mw), Some(mh)) if mw > 0.0 && mh > 0.0 => (pad_w.min(mw), pad_h.min(mh)),
         _ => (pad_w, pad_h),
     };
@@ -289,6 +290,14 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
         cy += out.1 * away;
     }
 
+    // Große Elemente teilen (PCB-I "Max Size of one Element" / "Steg for Big Elements"):
+    // jede Teilöffnung wird mit derselben Regel ohne Undersize/Versatz erzeugt
+    if matches!(rtype, "undersize" | "inverted_house_builder") && !round && rule.max_element_size > 0.0 && w_eff.max(h_eff) > rule.max_element_size {
+        if let Some(out) = split_big(pad, rule, cx, cy, w_eff, h_eff) {
+            return Some(out);
+        }
+    }
+
     // Runde Pads (Stecker, THT, BGA) bleiben rund: Undersize/Offsets wirken auf den Durchmesser.
     // Rechteck-spezifische Formen (House, Chamfer, Länglich) sind für Kreise nicht sinnvoll.
     // Regel "Package-Gruppe": wählt je Pad die passende Form (PCB Investigator "Inherit")
@@ -306,14 +315,15 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
     }
     if rtype == "donut" {
         // Ringöffnung um die Bohrung, segmentiert mit Haltestegen (Bridge Width)
-        let d_out = w_eff.min(h_eff);
-        let d_in = if rule.donut_inner_dia > 0.0 { rule.donut_inner_dia } else { pad.drill.map_or(d_out * 0.5, |d| d + 0.1) };
+        let d_out = w_eff.min(h_eff) * (rule.donut_outer_pct / 100.0).clamp(0.05, 2.0);
+        let d_in = if rule.donut_inner_dia > 0.0 { rule.donut_inner_dia } else { pad.drill.map_or(d_out * (rule.donut_inner_pct / 100.0).clamp(0.0, 0.95), |d| d + 0.1) };
         if d_in >= d_out * 0.95 {
             return Some(vec![circle_slice(cx, cy, d_out, "donut")]);
         }
-        return Some(donut_segments(cx, cy, d_in, d_out, rule.bridge_width.max(0.1)));
+        let n = rule.donut_bridges.max(1) as usize;
+        return Some(donut_segments_n(cx, cy, d_in, d_out, rule.bridge_width.max(0.1), n, rule.donut_rotation));
     }
-    if round && rtype != "array_slicing" && rtype != "array_pads" {
+    if round && !matches!(rtype, "array_slicing" | "array_pads" | "array_fix") {
         let d = w_eff.min(h_eff);
         return Some(vec![Slice {
             cx: r4(cx),
@@ -444,7 +454,9 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
             s.radius = Some(r4(r));
             Some(vec![s])
         }
-        "array_slicing" | "array_pads" => {
+        "array_pads" => Some(auto_array(rule, cx, cy, w_eff, h_eff)),
+        "array_fix" => Some(fix_array(rule, cx, cy, w_eff, h_eff)),
+        "array_slicing" => {
             if rule.rotate_bridges_45 {
                 let slices = diagonal_slices(cx, cy, w_eff, h_eff, rule);
                 if !slices.is_empty() {
@@ -458,6 +470,72 @@ pub fn generate_rule_aperture_geometry(pad: &PadCtx, rule: &PackageRule) -> Opti
         }
         _ => Some(vec![rounded_slice(cx, cy, w_eff, h_eff, rule.corner_radius, "simple_rect")]),
     }
+}
+
+/// Teilt eine zu große Öffnung in nx × ny Teile mit Steg `steg_big_elements` (PCB-I Undersize / Inverted House).
+fn split_big(pad: &PadCtx, rule: &PackageRule, cx: f64, cy: f64, w: f64, h: f64) -> Option<Vec<Slice>> {
+    let (max, steg) = (rule.max_element_size, rule.steg_big_elements.max(0.0));
+    let count = |len: f64| (((len + steg) / (max + steg)).ceil() as usize).max(1);
+    let (nx, ny) = (count(w), count(h));
+    let (sw, sh) = ((w - (nx - 1) as f64 * steg) / nx as f64, (h - (ny - 1) as f64 * steg) / ny as f64);
+    if sw <= 0.04 || sh <= 0.04 {
+        return None;
+    }
+    let mut sub_rule = rule.clone();
+    sub_rule.max_element_size = 0.0;
+    (sub_rule.undersize_w, sub_rule.undersize_h, sub_rule.offset_x, sub_rule.offset_y) = (0.0, 0.0, 0.0, 0.0);
+    (sub_rule.offset_move_away, sub_rule.toe_heel_shift, sub_rule.pin_minus_mask, sub_rule.ignore_mask) = (0.0, 0.0, false, true);
+    let mut out = Vec::new();
+    for ix in 0..nx {
+        for iy in 0..ny {
+            let scx = cx - w / 2.0 + sw / 2.0 + ix as f64 * (sw + steg);
+            let scy = cy - h / 2.0 + sh / 2.0 + iy as f64 * (sh + steg);
+            let sub = PadCtx { w: sw, h: sh, cx: scx, cy: scy, mask: None, ..*pad };
+            out.extend(generate_rule_aperture_geometry(&sub, &sub_rule)?);
+        }
+    }
+    Some(out)
+}
+
+/// Felder rund machen (PCB-I "Use Round Pads").
+fn round_fields(fields: Vec<Slice>, round: bool, kind: &str) -> Vec<Slice> {
+    if !round {
+        return fields;
+    }
+    fields.into_iter().map(|s| circle_slice(s.cx, s.cy, s.w.min(s.h), kind)).collect()
+}
+
+/// PCB-I "Array Pads": Felder aus Mindestfeldgröße, Feldabstand und Ausnutzung oder mit fester Feldgröße.
+fn auto_array(rule: &PackageRule, cx: f64, cy: f64, w: f64, h: f64) -> Vec<Slice> {
+    let gap = rule.distance_array_fields.max(0.0);
+    let fields = if rule.array_size_w > 0.0 && rule.array_size_h > 0.0 {
+        let (fw, fh) = (rule.array_size_w.min(w), rule.array_size_h.min(h));
+        let nx = (((w + gap) / (fw + gap)).floor() as usize).max(1);
+        let ny = (((h + gap) / (fh + gap)).floor() as usize).max(1);
+        let (tw, th) = (nx as f64 * fw + (nx - 1) as f64 * gap, ny as f64 * fh + (ny - 1) as f64 * gap);
+        grid_slices(cx, cy, tw, th, nx, ny, gap, rule.corner_radius, "array_pads").unwrap_or_default()
+    } else {
+        let mut f = array_fields(cx, cy, w, h, rule.min_array_field, gap, rule.utilization_array_pct / 100.0, rule.corner_radius);
+        f.iter_mut().for_each(|s| s.kind = Some("array_pads".into()));
+        f
+    };
+    round_fields(fields, rule.array_round, "array_pads")
+}
+
+/// PCB-I "Array Pads Fix Count": feste Feldzahl X/Y; zu kleine Felder (< Mindestfeldgröße) senken die Zahl.
+// shortcut: "Array Size Width/Height" wird hier nur gespeichert (Bedeutung bei Fix Count unbekannt), nach Abgleich mit PCB-I-Ergebnis nachziehen.
+fn fix_array(rule: &PackageRule, cx: f64, cy: f64, w: f64, h: f64) -> Vec<Slice> {
+    let gap = rule.distance_array_fields.max(0.0);
+    let fit = |len: f64, n: i64| {
+        let mut n = n.max(1) as usize;
+        while n > 1 && (len - (n - 1) as f64 * gap) / (n as f64) < rule.min_array_field {
+            n -= 1;
+        }
+        n
+    };
+    let (nx, ny) = (fit(w, rule.array_count_x), fit(h, rule.array_count_y));
+    let fields = grid_slices(cx, cy, w, h, nx, ny, gap, rule.corner_radius, "array_fix").unwrap_or_else(|| vec![rounded_slice(cx, cy, w, h, rule.corner_radius, "array_fix")]);
+    round_fields(fields, rule.array_round, "array_fix")
 }
 
 /// Erforderliche Öffnungsfläche (mm²) für Pin-in-Paste nach IPC-7525:
@@ -497,7 +575,7 @@ fn pin_in_paste_geometry(pad: &PadCtx, rule: &PackageRule, cx: f64, cy: f64, w_e
             if outer <= inner * 1.05 {
                 vec![circle_slice(cx, cy, outer, "pin_in_paste")]
             } else {
-                donut_segments(cx, cy, inner, outer, rule.bridge_width.max(0.1))
+                donut_segments_n(cx, cy, inner, outer, rule.bridge_width.max(0.1), 4, 0.0)
             }
         }
         _ => {
@@ -811,5 +889,66 @@ mod tests {
         assert_eq!(r.rule_type, "simple_rect");
         assert_eq!(r.undersize_w, 0.1);
         assert_eq!(r.offset_move_away, 0.05);
+    }
+
+    fn rule0(t: &str) -> PackageRule {
+        PackageRule { rule_type: t.into(), undersize_w: 0.0, undersize_h: 0.0, corner_radius: 0.0, ..Default::default() }
+    }
+
+    #[test]
+    fn array_pads_auto_fixed_and_round() {
+        // 4 × 4 mm, Mindestfeld 0,75, Abstand 0,3 → 4 × 4 Felder
+        let mut r = PackageRule { distance_array_fields: 0.3, ..rule0("array_pads") };
+        let pad = PadCtx::new(4.0, 4.0, 0.0, 0.0, "center");
+        assert_eq!(generate_rule_aperture_geometry(&pad, &r).unwrap().len(), 16);
+        // feste Feldgröße 1,5 mm → 2 × 2, mittig
+        (r.array_size_w, r.array_size_h) = (1.5, 1.5);
+        let s = generate_rule_aperture_geometry(&pad, &r).unwrap();
+        assert_eq!(s.len(), 4);
+        assert!((s.iter().map(|x| x.cx).sum::<f64>()).abs() < 1e-6 && (s[0].w - 1.5).abs() < 1e-6);
+        r.array_round = true;
+        assert!(generate_rule_aperture_geometry(&pad, &r).unwrap().iter().all(|x| x.shape.as_deref() == Some("circle")));
+    }
+
+    #[test]
+    fn array_fix_count_and_min_field() {
+        let r = PackageRule { array_count_x: 3, array_count_y: 2, distance_array_fields: 0.3, min_array_field: 0.5, ..rule0("array_fix") };
+        assert_eq!(generate_rule_aperture_geometry(&PadCtx::new(3.0, 2.0, 0.0, 0.0, "center"), &r).unwrap().len(), 6);
+        // 1,2 mm breit: 3 Felder wären 0,2 mm < 0,5 → nur 1 Feld in X
+        assert_eq!(generate_rule_aperture_geometry(&PadCtx::new(1.2, 2.0, 0.0, 0.0, "center"), &r).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn donut_bridge_count_and_outer_pct() {
+        let r = PackageRule { donut_bridges: 3, donut_outer_pct: 80.0, bridge_width: 0.2, ..rule0("donut") };
+        let s = generate_rule_aperture_geometry(&PadCtx::new(2.0, 2.0, 0.0, 0.0, "center"), &r).unwrap();
+        assert_eq!(s.len(), 3);
+        let max = s.iter().flat_map(|x| x.pts.clone().unwrap()).map(|(x, y)| (x * x + y * y).sqrt()).fold(0.0, f64::max);
+        assert!((max - 0.8).abs() < 0.01, "Außenradius {max}");
+    }
+
+    #[test]
+    fn big_elements_split_with_steg() {
+        // 11 mm lang, max 5, Steg 0,75 → 3 Teile, Lücken 0,75
+        let r = PackageRule { max_element_size: 5.0, steg_big_elements: 0.75, ..rule0("undersize") };
+        let mut s = generate_rule_aperture_geometry(&PadCtx::new(11.0, 2.0, 0.0, 0.0, "center"), &r).unwrap();
+        assert_eq!(s.len(), 3);
+        s.sort_by(|a, b| a.cx.partial_cmp(&b.cx).unwrap());
+        let gap = (s[1].cx - s[1].w / 2.0) - (s[0].cx + s[0].w / 2.0);
+        assert!((gap - 0.75).abs() < 1e-3 && s.iter().all(|x| x.w <= 5.0), "Steg {gap}");
+        // kleine Pads und andere Regeln bleiben ungeteilt
+        assert_eq!(generate_rule_aperture_geometry(&PadCtx::new(4.0, 2.0, 0.0, 0.0, "center"), &r).unwrap().len(), 1);
+        assert_eq!(generate_rule_aperture_geometry(&PadCtx::new(11.0, 2.0, 0.0, 0.0, "center"), &rule0("simple_rect")).unwrap().len(), 1);
+        let inv = PackageRule { max_element_size: 4.0, ..rule0("inverted_house_builder") };
+        assert_eq!(generate_rule_aperture_geometry(&PadCtx::new(9.0, 1.0, 0.0, 0.0, "right"), &inv).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn pin_mask_rule_clips_to_mask() {
+        let pad = PadCtx { mask: Some((0.6, 0.6)), ..PadCtx::new(1.0, 1.0, 0.0, 0.0, "center") };
+        let s = generate_rule_aperture_geometry(&pad, &rule0("pin_mask")).unwrap();
+        assert!((s[0].w - 0.6).abs() < 1e-6);
+        let ign = PackageRule { ignore_mask: true, ..rule0("pin_mask") };
+        assert!((generate_rule_aperture_geometry(&pad, &ign).unwrap()[0].w - 1.0).abs() < 1e-6);
     }
 }

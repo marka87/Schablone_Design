@@ -39,7 +39,7 @@ pub fn merge_rects(mut rects: Vec<(Rect, Vec<String>)>, gap: f64) -> Vec<(Rect, 
 
 impl StencilEngine {
     /// Rakel- (in Rakelrichtung) und Querabstand als Rand um die Öffnungen.
-    fn zone_margins(&self) -> (f64, f64) {
+    pub fn zone_margins(&self) -> (f64, f64) {
         let (along, across) = (self.squeegee_clearance + 0.05, self.transverse_clearance + 0.05);
         if self.squeegee_dir == "Y" { (across, along) } else { (along, across) }
     }

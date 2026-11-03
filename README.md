@@ -93,7 +93,19 @@ Eigenständige Windows-Anwendung ohne Python-Laufzeit. Die Oberfläche (`static/
 
 **Bedienung (Auszug):**
 - Projekt: `Strg+S` speichern, `Strg+Umschalt+S` speichern unter, Menü „📁 Projekt“ mit „Zuletzt geöffnet“. Projektdateien (`*.stencilproj`) enthalten Datensatzpfad, Parameter, Regeln, Pin-Anpassungen, Zonen und alle Öffnungen; verschobene Datensätze können beim Öffnen neu ausgewählt werden.
-- Rückgängig/Wiederholen: `Strg+Z` / `Strg+Y` (schnelle Folgeänderungen an derselben Stelle zählen als ein Schritt).
+- Rückgängig/Wiederholen: `Strg+Z` / `Strg+Y` (schnelle Folgeänderungen an derselben Stelle zählen als ein Schritt). „☰“ neben den Pfeilen zeigt den Verlauf; ein Klick springt mehrere Schritte zurück oder vor. Fehlgeschlagene Bearbeitungen erzeugen keinen Schritt.
+- Markieren im Board: Klick wählt ein Pad, `Strg`+Klick oder `Umschalt`+Klick fügt hinzu oder entfernt, `Umschalt`+Ziehen zieht einen Rahmen auf, `Strg+A` wählt alles, `Esc` hebt die Auswahl auf. Die Auswahlleiste ergänzt per „Gleiche: Größe / Package / Bauteil“.
+- Bearbeiten der Auswahl:
+  - Pfeiltasten verschieben um 0,01 mm (mit `Umschalt` 0,1 mm), `R` dreht um 90°, `Strg+D` dupliziert, `Entf` löscht die Öffnung.
+  - In der Leiste: „Verkleinern %“ (die Form bleibt erhalten, auch bei Haus und Stegen), „Größe setzen“ (B × H), „Zurücksetzen“ und „▣ Zone“ (Stufen- oder Regelzone um die Auswahl).
+  - „＋ Öffnung“ legt mit einem Klick ins Board eine neue Öffnung an.
+  - Alle Änderungen gelten als Handarbeit: Regeln überschreiben sie nicht, sie werden im Projekt gespeichert und lassen sich rückgängig machen.
+- „Analyse“ (Werkzeugleiste) zeigt eine Tabelle aller Öffnungen:
+  - Spalten: Area Ratio, Aspect Ratio, kleinste Breite, Fläche, Volumen, Abdeckung Paste/Pad (Kupfer, sonst Maske; Grenzen einstellbar, Standard 30–150 %) und Befunde (Ball-Regel, Bohrung in Paste, quer zur Rakel, Stufenkante).
+  - Filtern und sortieren; ein Klick auf eine Zeile springt zum Pad.
+  - „Gefilterte auf dem Board wählen“ übernimmt die gefilterten Öffnungen als Auswahl, damit du sie gemeinsam bearbeiten kannst.
+  - CSV-Export nach `Export/` (Semikolon, Dezimalkomma).
+- Oberfläche ohne Tauri-Build testen: `cargo run -p stencil_core --example dev_server`, dann http://127.0.0.1:8765. Datensätze lädt man dort über `/api/import_paths`, weil es dort keine Dateidialoge gibt.
 - Autospeichern jede Minute nach `Autosave/`; nach einem Absturz wird die Wiederherstellung angeboten.
 - „⧉ Eigenes Fenster“ öffnet den Stencil Generator separat (z. B. zweiter Monitor); Auswahl und Änderungen werden zwischen beiden Fenstern synchronisiert, das gewählte Package wird im Board orange hervorgehoben.
 - TOP/BOT: ODB++ und Gerber-Archive mit beiden Pastenlagen laden beide Seiten; Umschalter in der Werkzeugleiste. Öffnungen, Zonen und Blechdicke gelten je Seite, Package-Regeln für beide.

@@ -261,16 +261,27 @@ fn stats(e: &StencilEngine) -> Value {
 }
 
 pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String, Value>, query: &Map<String, Value>) -> Response {
-    let b = Body(body);
     let seg: Vec<String> = path.trim_start_matches('/').split('/').map(url_decode).collect();
     let seg: Vec<&str> = seg.iter().map(String::as_str).collect();
 
     // Bearbeitungen für Undo/Redo aufzeichnen (Schlüssel = Route, fasst schnelle Folgeänderungen zusammen)
-    if let Some(label) = project::edit_label(method, &seg, body) {
-        e.record_undo(&label, &format!("{method} {path}"));
+    let recorded = project::edit_label(method, &seg, body).is_some_and(|label| e.record_undo(&label, &format!("{method} {path}")));
+    let r = route(e, method, &seg, body, query);
+    let failed = r.0 != 200 || r.1.get("status").and_then(Value::as_str) == Some("error");
+    if recorded && failed {
+        // Nichts geändert: kein leerer Schritt im Verlauf
+        e.discard_undo();
     }
+    r
+}
 
-    match (method, seg.as_slice()) {
+fn ids_of(body: &Map<String, Value>) -> Vec<i64> {
+    body.get("ids").and_then(Value::as_array).map(|a| a.iter().filter_map(val_f64).map(|v| v as i64).collect()).unwrap_or_default()
+}
+
+fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, Value>, query: &Map<String, Value>) -> Response {
+    let b = Body(body);
+    match (method, seg) {
         ("GET", ["api", "history"]) => ok(e.history_json()),
         ("GET", ["api", "sides"]) => ok(e.sides_json()),
         // Gruppen-, Bauteil- und Zonenregeln
@@ -316,11 +327,11 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             ok(json!({"status": "ok", "sides": e.sides_json(), "stats": stats(e)}))
         }
         ("POST", ["api", "undo"]) => {
-            let l = e.undo();
+            let l = e.undo_steps(b.i("steps", 1).max(1) as usize);
             ok(json!({"status": if l.is_some() { "ok" } else { "error" }, "label": l, "stats": stats(e)}))
         }
         ("POST", ["api", "redo"]) => {
-            let l = e.redo();
+            let l = e.redo_steps(b.i("steps", 1).max(1) as usize);
             ok(json!({"status": if l.is_some() { "ok" } else { "error" }, "label": l, "stats": stats(e)}))
         }
         ("GET", ["api", "project", "recent"]) => ok(json!({"projects": e.recent_projects()})),
@@ -391,6 +402,52 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
         ("POST", ["api", "reduce"]) => {
             let n = e.apply_reduction(b.i("id", -1), b.f("percent", 10.0), b.b("apply_all", false));
             ok(json!({"status": "ok", "modified_count": n, "stats": stats(e)}))
+        }
+        // Board-Mehrfachauswahl: dieselben Werkzeuge für eine Liste von Öffnungen
+        ("POST", ["api", "openings", op]) => {
+            let ids = ids_of(body);
+            let n = match *op {
+                "move" => e.move_openings(&ids, b.f("dx", 0.0), b.f("dy", 0.0)),
+                "rotate" => e.rotate_openings(&ids, b.f("deg", 90.0)),
+                "scale" => e.scale_openings(&ids, b.f("sx", 1.0), b.f("sy", b.f("sx", 1.0))),
+                "resize" => e.resize_openings(&ids, body.get("w").and_then(val_f64), body.get("h").and_then(val_f64)),
+                "reduce" => e.reduce_openings(&ids, b.f("percent", 10.0).clamp(0.0, 90.0)),
+                "delete" => e.delete_openings(&ids),
+                "duplicate" => e.duplicate_openings(&ids, b.f("dx", 0.0), b.f("dy", 0.0)).len(),
+                "reset" => {
+                    let valid: Vec<i64> = ids.iter().copied().filter(|&i| i >= 0 && (i as usize) < e.apertures.len()).collect();
+                    valid.iter().for_each(|&i| e.reset_aperture_modification(i, false));
+                    valid.len()
+                }
+                "slice" => ids.iter().map(|&i| e.apply_thermal_slicing(i, b.i("grid_x", 2), b.i("grid_y", 2), b.f("web_width", 0.25), b.f("edge_reduction", 0.05), false)).sum(),
+                "elongate" => ids.iter().map(|&i| e.apply_elongated_narrowing(i, b.f("width_reduction", 20.0), b.f("length_usage", 95.0), b.f("corner_radius", 0.08), false)).sum(),
+                _ => return err(404, format!("Unbekannte Bearbeitung: {op}")),
+            };
+            if n == 0 {
+                return ok(json!({"status": "error", "message": "Keine gültige Öffnung gewählt", "modified_count": 0}));
+            }
+            let new_ids: Vec<usize> = if *op == "duplicate" { ((e.apertures.len() - n)..e.apertures.len()).collect() } else { Vec::new() };
+            ok(json!({"status": "ok", "modified_count": n, "new_ids": new_ids, "stats": stats(e)}))
+        }
+        ("POST", ["api", "opening", "add"]) => match e.add_opening_shape(&b.s("shape").unwrap_or_else(|| "rectangle".into()), b.f("cx", 0.0), b.f("cy", 0.0), b.f("w", 0.0), b.f("h", b.f("w", 0.0))) {
+            Some(id) => ok(json!({"status": "ok", "id": id, "stats": stats(e)})),
+            None => ok(json!({"status": "error", "message": "Breite und Höhe müssen größer als 0 sein"})),
+        },
+        // Stencil-Analyse: Tabelle aller Öffnungen und CSV-Export
+        ("GET" | "POST", ["api", "analysis"]) | ("POST", ["api", "analysis", "csv"]) => {
+            let src = if method == "GET" { Body(query) } else { b };
+            let d = crate::engine::analysis::CoverageLimits::default();
+            let lim = crate::engine::analysis::CoverageLimits { min_pct: src.f("cov_min", d.min_pct), max_pct: src.f("cov_max", d.max_pct) };
+            let rows = e.analysis_rows(lim);
+            if seg.len() == 2 {
+                return ok(json!({"status": "ok", "rows": rows, "cov_min": lim.min_pct, "cov_max": lim.max_pct}));
+            }
+            let path = src.s("path").filter(|p| !p.is_empty()).map(PathBuf::from).unwrap_or_else(|| e.export_dir().join(format!("{}_{}_analyse.csv", e.job_name(), e.current_side)));
+            // BOM, damit Excel die Umlaute erkennt
+            match project::write_atomic(&path, &format!("\u{feff}{}", crate::engine::analysis::analysis_csv(&rows))) {
+                Ok(()) => ok(json!({"status": "ok", "path": path.to_string_lossy(), "count": rows.len()})),
+                Err(m) => err(500, m),
+            }
         }
         ("POST", ["api", "reset_aperture"]) => {
             e.reset_aperture_modification(b.i("id", -1), b.b("apply_all", false));
@@ -781,7 +838,7 @@ pub fn handle(e: &mut StencilEngine, method: &str, path: &str, body: &Map<String
             }
             ok(json!({"status": "ok", "base_thickness": e.base_thickness, "stats": stats(e)}))
         }
-        _ => err(404, format!("Unbekannte API-Route: {method} {path}")),
+        _ => err(404, format!("Unbekannte API-Route: {method} /{}", seg.join("/"))),
     }
 }
 
@@ -843,6 +900,7 @@ fn apertures_payload(e: &StencilEngine) -> Value {
         "profile": profile,
         "paste_type": e.paste_type,
         "min_bridge": e.min_bridge_width,
+        "zone_margins": e.zone_margins(),
         "bridge_violations": &e.bridge_violations[..e.bridge_violations.len().min(100)],
         "side": e.current_side,
         "base_thickness": e.base_thickness,
@@ -866,6 +924,38 @@ mod tests {
         std::fs::write(&path, g).unwrap();
         e.import_files_or_zip(&[path.to_string_lossy().to_string()], "top", true).unwrap();
         e
+    }
+
+    #[test]
+    fn multi_select_edits_are_undoable_and_failures_leave_no_step() {
+        let mut e = engine_with_chips();
+        let empty = Map::new();
+        let post = |e: &mut StencilEngine, p: &str, v: Value| handle(e, "POST", p, v.as_object().unwrap(), &empty).1;
+
+        let v = post(&mut e, "/api/openings/move", json!({"ids": [0, 1, 2], "dx": 0.05}));
+        assert_eq!(v["modified_count"], 3);
+        let v = post(&mut e, "/api/openings/rotate", json!({"ids": [3], "deg": 90}));
+        assert_eq!(v["modified_count"], 1);
+        assert_eq!(e.history_json()["undo_labels"][0], "1 Öffnung(en) gedreht");
+
+        // Ungültige Auswahl und leere Größe: Fehler, kein neuer Schritt
+        let before = e.history_json()["undo_count"].clone();
+        assert_eq!(post(&mut e, "/api/openings/delete", json!({"ids": [999]}))["status"], "error");
+        assert_eq!(post(&mut e, "/api/opening/add", json!({"cx": 1, "cy": 1, "w": 0}))["status"], "error");
+        assert_eq!(e.history_json()["undo_count"], before);
+
+        let v = post(&mut e, "/api/openings/duplicate", json!({"ids": [10], "dx": 10}));
+        assert_eq!(v["new_ids"], json!([11]));
+        assert_eq!(e.apertures.len(), 12);
+
+        // Zwei Schritte auf einmal zurück: Duplikat und Drehung weg, Verschiebung bleibt
+        post(&mut e, "/api/undo", json!({"steps": 2}));
+        assert_eq!(e.apertures.len(), 11);
+        assert!(e.apertures[3].custom_slices.is_none());
+        assert!(e.apertures[0].custom_slices.is_some());
+        assert_eq!(e.history_json()["redo_labels"].as_array().unwrap().len(), 2);
+        post(&mut e, "/api/redo", json!({"steps": 2}));
+        assert_eq!(e.apertures.len(), 12);
     }
 
     #[test]

@@ -431,6 +431,7 @@ async function refreshApertureData() {
         state.pads = data.pads || [];
         state.components = data.components || [];
         state.zones = data.zones;
+        state.zoneMargins = data.zone_margins || [1, 1];
         state.fiducials = data.fiducials;
         state.profile = data.profile;
 
@@ -1107,6 +1108,7 @@ function renderFrame(rect) {
     if (state.selectedAperture) {
         renderSelectionHighlight();
     }
+    renderMultiSelection();
     renderFocusComponent();
 
     // 9b. DFM Bridge Violations Overlay (Kollisionswarnung für Laserschnitt)
@@ -2234,6 +2236,13 @@ function setupEventListeners() {
                     return;
                 }
             }
+            if (e.button === 0 && !state.isDrawingZone && (selState.addMode || e.shiftKey)) {
+                const rect = container.getBoundingClientRect();
+                const w = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+                if (selState.addMode) { placeNewOpening(w); return; }
+                selState.box = { start: w, cur: w };
+                return;
+            }
             if (state.isDrawingZone) {
                 const rect = container.getBoundingClientRect();
                 state.drawStartWorld = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
@@ -2262,6 +2271,11 @@ function setupEventListeners() {
                 if (ze.mode.includes("s")) z.y0 = Math.min(o.y0 + dy, o.y1 - 0.2);
             }
             ze.moved = true;
+            render();
+            return;
+        }
+        if (selState.box) {
+            selState.box.cur = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
             render();
             return;
         }
@@ -2398,6 +2412,10 @@ function setupEventListeners() {
             if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); doRedo(); return; }
             if (k === "s") { e.preventDefault(); saveProject(e.shiftKey); return; }
         }
+        if (currentWorkspaceMode === "board" && handleSelectionKey(e)) {
+            e.preventDefault();
+            return;
+        }
         if (e.key === "m" || e.key === "M") {
             e.preventDefault();
             toggleMeasureTool();
@@ -2426,6 +2444,20 @@ function setupEventListeners() {
             if (ze.moved) saveZoneGeometry(ze.z);
             return;
         }
+        if (selState.box) {
+            const b = selState.box;
+            selState.box = null;
+            const tiny = Math.abs(b.cur.x - b.start.x) * state.zoom < 4 && Math.abs(b.cur.y - b.start.y) * state.zoom < 4;
+            if (tiny) {
+                // Umschalt-Klick = einzelnes Pad zur Auswahl hinzufügen/entfernen
+                const rect = container.getBoundingClientRect();
+                handleCanvasClick(e.clientX - rect.left, e.clientY - rect.top, { toggle: true });
+            } else {
+                selectInBox(b.start, b.cur);
+            }
+            render();
+            return;
+        }
         if (state.isDragging) {
             const dist = Math.hypot(e.clientX - state.dragStartX, e.clientY - state.dragStartY);
             state.isDragging = false;
@@ -2433,7 +2465,7 @@ function setupEventListeners() {
                 const rect = container.getBoundingClientRect();
                 // Klick außerhalb der gewählten Zone hebt die Zonenauswahl auf
                 if (state.selectedZoneId) { state.selectedZoneId = null; renderZonesList(); }
-                handleCanvasClick(e.clientX - rect.left, e.clientY - rect.top);
+                handleCanvasClick(e.clientX - rect.left, e.clientY - rect.top, { toggle: e.ctrlKey || e.metaKey });
             }
         } else if (state.isDrawingZone && state.drawStartWorld) {
             const w0 = state.drawStartWorld;
@@ -2450,7 +2482,7 @@ function setupEventListeners() {
         }
     });
 
-    function handleCanvasClick(sx, sy) {
+    function handleCanvasClick(sx, sy, opts = {}) {
         const w = screenToWorld(sx, sy);
         let bestItem = null;
         let minDist = 1.0;
@@ -2467,9 +2499,17 @@ function setupEventListeners() {
             }
         }
 
-        if (bestItem) {
-            selectAperture(bestItem.id);
+        if (!bestItem) {
+            // Klick ins Leere hebt die Mehrfachauswahl auf
+            if (!opts.toggle) setSelection([]);
+            return;
         }
+        if (opts.toggle) {
+            toggleSelection(bestItem.id);
+        } else {
+            setSelection([bestItem.id]);
+        }
+        if (selState.ids.has(bestItem.id)) selectAperture(bestItem.id);
     }
 
     // Header Controls
@@ -3836,6 +3876,19 @@ function populateRuleInputs(rule) {
     setv("propPipClearance", rule.pip_pin_clearance ?? 0.25);
     setv("propPipShape", rule.pip_shape || "circle");
     setv("propPipMax", rule.pip_max_size ?? 0);
+    setv("propArraySizeW", rule.array_size_w ?? 0);
+    setv("propArraySizeH", rule.array_size_h ?? 0);
+    setv("propArrayCountX", rule.array_count_x ?? 2);
+    setv("propArrayCountY", rule.array_count_y ?? 2);
+    setv("propDonutBridges", rule.donut_bridges ?? 4);
+    setv("propDonutRotation", rule.donut_rotation ?? 0);
+    setv("propDonutInnerPct", rule.donut_inner_pct ?? 50);
+    setv("propDonutOuterPct", rule.donut_outer_pct ?? 100);
+    setv("propMaxElement", rule.max_element_size ?? 5);
+    setv("propStegBig", rule.steg_big_elements ?? 0.75);
+    const chk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = Boolean(v); };
+    chk("propArrayRound", rule.array_round);
+    chk("propIgnoreMask", rule.ignore_mask);
     updateRuleFieldVisibility();
 }
 
@@ -3844,10 +3897,14 @@ const RULE_DESCRIPTIONS = {
     package_group: "Wählt die Öffnung je Pad automatisch: BGA-Pads 1:1, große Flächen als Array-Felder (Mindestfeldgröße, Feldabstand, Flächennutzung), 2-Pin-Chips als HouseBuilder (kleine als Inverted House), sonst Rechteck mit Undersize und Eckradius.",
     simple_rect: "Create one surface with fix size and offset away from the center. Optional mit Stegen (Bridge Count) und fester Größe.",
     house_builder: "Hausform: Spitze zum Bauteilkörper, verhindert Tombstoning und Lotperlen bei Chip-Bauteilen.",
-    inverted_house_builder: "Hausform mit Spitze nach außen (weg vom Bauteilkörper) – z. B. Grabstein-Schutz bei ungleicher Kupferanbindung.",
+    inverted_house_builder: "Create pads in form of small inverted houses. Spitze nach außen; Öffnungen über Max Size of one Element werden geteilt.",
     elongated_pitch: "Länglich & Schmal: verschmälert quer zum Pitch (Pastenabstand = Faktor × Öffnungsbreite), verlängert im Verhältnis zur Verschmälerung und versetzt die Öffnung nach außen.",
     array_slicing: "Teilt die Fläche in Felder mit Stegen (Bridge Count / Width), optional 45° gedreht.",
-    donut: "Ringöffnung um die Bohrung (THT / Pin-in-Paste), segmentiert mit Haltestegen (Bridge Width).",
+    donut: "Create donut for each pin pad. Ring mit Count Bridges Stegen (Bridge Width = Size Bridge), Außen-Ø in % der Padgröße, Innen-Ø in % (oder fest / Bohrung + 0,1 mm), drehbar.",
+    array_pads: "Create array pads, they are cutted by mask opening. Felder aus Mindestfeldgröße, Feldabstand und Ausnutzung oder mit fester Feldgröße.",
+    array_fix: "Create array pads, with fix count in x and y direction. Zu kleine Felder (unter Minimum Array Field Size) senken die Anzahl.",
+    undersize: "Create undersize for each pin pad. Öffnungen über Max Size of one Element werden mit Steg for Big Elements geteilt.",
+    pin_mask: "Use the component pins and mask to create free areas as stencil pads: Pad ∩ Maskenöffnung, dann Undersize.",
     take_existing: "Übernimmt die Pastenöffnungen unverändert aus dem Kundendatensatz.",
     inherit: "Inherit: Das Package übernimmt die Regel seiner Gruppe (SMD/THT/Other/Fiducials). Änderungen an einem Parameter erzeugen eine eigene Package-Regel.",
     pin_in_paste: "Pin-in-Paste: Öffnung je THT-Pin aus Bohrung (ODB++), Leiterplattendicke, Metallanteil und Blechdicke (IPC-7525, +20 % Meniskus); begrenzt durch max. Größe bzw. Pitch − Mindeststeg.",
@@ -3911,7 +3968,19 @@ function collectRuleFromInputs() {
         pip_metal_pct: numInput("propPipMetal", 50),
         pip_pin_clearance: numInput("propPipClearance", 0.25),
         pip_shape: document.getElementById("propPipShape")?.value || "circle",
-        pip_max_size: numInput("propPipMax", 0)
+        pip_max_size: numInput("propPipMax", 0),
+        array_size_w: numInput("propArraySizeW", 0),
+        array_size_h: numInput("propArraySizeH", 0),
+        array_count_x: Math.max(1, Math.round(numInput("propArrayCountX", 2))),
+        array_count_y: Math.max(1, Math.round(numInput("propArrayCountY", 2))),
+        array_round: Boolean(document.getElementById("propArrayRound")?.checked),
+        ignore_mask: Boolean(document.getElementById("propIgnoreMask")?.checked),
+        donut_bridges: Math.max(1, Math.round(numInput("propDonutBridges", 4))),
+        donut_rotation: numInput("propDonutRotation", 0),
+        donut_inner_pct: numInput("propDonutInnerPct", 50),
+        donut_outer_pct: numInput("propDonutOuterPct", 100),
+        max_element_size: numInput("propMaxElement", 5),
+        steg_big_elements: numInput("propStegBig", 0.75)
     };
 }
 
@@ -4598,7 +4667,9 @@ function setupPkgEventListeners() {
         "propToeHeelShift", "propChamferSize", "propSizeW", "propSizeH", "propDonutInner",
         "propBgaThreshold", "propChipThreshold", "propInvertHouse", "propMiniChip",
         "propMinArrayField", "propArrayDistance", "propUtilArray", "propUtilHouse",
-        "propPipPcb", "propPipMetal", "propPipClearance", "propPipMax", "propPipShape"
+        "propPipPcb", "propPipMetal", "propPipClearance", "propPipMax", "propPipShape",
+        "propArraySizeW", "propArraySizeH", "propArrayCountX", "propArrayCountY", "propDonutBridges", "propDonutRotation",
+        "propDonutInnerPct", "propDonutOuterPct", "propMaxElement", "propStegBig"
     ].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -4607,6 +4678,16 @@ function setupPkgEventListeners() {
         }
     });
     document.getElementById("propRotate45")?.addEventListener("change", onRuleParamChanged);
+    document.getElementById("propArrayRound")?.addEventListener("change", onRuleParamChanged);
+    document.getElementById("propIgnoreMask")?.addEventListener("change", onRuleParamChanged);
+    // Parameter alphabetisch wie im PCB-I-Eigenschaftenfenster, Schalter am Ende
+    const grid = document.querySelector(".rule-property-grid");
+    if (grid) {
+        const items = [...grid.querySelectorAll(":scope > .prop-item")];
+        const box = el => el.classList.contains("checkbox-prop") ? 1 : 0;
+        const label = el => (el.querySelector("label")?.textContent || "").trim();
+        items.sort((a, b) => box(a) - box(b) || label(a).localeCompare(label(b), "en", { sensitivity: "base" })).forEach(el => grid.appendChild(el));
+    }
     document.getElementById("propPinMinusMask")?.addEventListener("change", onRuleParamChanged);
     document.getElementById("propChamferMode")?.addEventListener("change", onRuleParamChanged);
     document.getElementById("propTryDirection")?.addEventListener("change", onRuleParamChanged);
@@ -6020,3 +6101,294 @@ function renderPasteInfo(data) {
     }
     pkgCtx.restore();
 }
+
+// -------------------------------------------------------------
+// Board-Mehrfachauswahl und direkte Bearbeitung von Öffnungen
+// -------------------------------------------------------------
+const selState = { ids: new Set(), box: null, addMode: false };
+
+function setSelection(ids) {
+    selState.ids = new Set(ids);
+    updateSelBar();
+    render();
+}
+
+function toggleSelection(id) {
+    if (selState.ids.has(id)) selState.ids.delete(id); else selState.ids.add(id);
+    updateSelBar();
+    render();
+}
+
+function selectedApertures() {
+    return state.apertures.filter(a => selState.ids.has(a.id));
+}
+
+// Pads, deren Mitte im Rahmen liegt, zur Auswahl hinzufügen
+function selectInBox(a, b) {
+    const [x0, x1] = [Math.min(a.x, b.x), Math.max(a.x, b.x)];
+    const [y0, y1] = [Math.min(a.y, b.y), Math.max(a.y, b.y)];
+    for (const ap of state.apertures) {
+        if (ap.cx >= x0 && ap.cx <= x1 && ap.cy >= y0 && ap.cy <= y1) selState.ids.add(ap.id);
+    }
+    updateSelBar();
+}
+
+// "Gleiche" dazu wählen: gleiche Größe/Form, gleiches Package oder Bauteil
+function selectSimilar(kind) {
+    const sel = selectedApertures();
+    if (!sel.length) return;
+    const key = {
+        size: a => `${a.shape}|${a.w.toFixed(3)}|${a.h.toFixed(3)}`,
+        pkg: a => a.pkg_name || "",
+        comp: a => a.comp_id || "",
+    }[kind];
+    const keys = new Set(sel.map(key).filter(k => k));
+    for (const ap of state.apertures) if (keys.has(key(ap))) selState.ids.add(ap.id);
+    updateSelBar();
+    render();
+    showToast(`${selState.ids.size} Öffnungen gewählt`, 1500);
+}
+
+function updateSelBar() {
+    const bar = document.getElementById("selBar");
+    if (!bar) return;
+    const n = selState.ids.size;
+    bar.classList.toggle("hidden", n === 0);
+    document.getElementById("selCount").textContent = n;
+}
+
+async function editSelection(op, extra = {}) {
+    const ids = [...selState.ids];
+    if (!ids.length) return;
+    const res = await fetch(`/api/openings/${op}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, ...extra })
+    });
+    const d = await res.json();
+    if (d.status !== "ok") { showToast(d.message || "Bearbeitung fehlgeschlagen"); return; }
+    if (op === "duplicate" && d.new_ids?.length) selState.ids = new Set(d.new_ids);
+    await refreshApertureData();
+    updateSelBar();
+}
+
+function selectionSizeArgs() {
+    const w = parseFloat(document.getElementById("selW").value);
+    const h = parseFloat(document.getElementById("selH").value);
+    return { w: w > 0 ? w : null, h: h > 0 ? h : null };
+}
+
+// Neue Öffnung an der Klickstelle (Größe aus B × H, sonst 0,5 × 0,5 mm)
+async function placeNewOpening(w) {
+    setAddMode(false);
+    const s = selectionSizeArgs();
+    const res = await fetch("/api/opening/add", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shape: "rectangle", cx: w.x, cy: w.y, w: s.w || 0.5, h: s.h || s.w || 0.5 })
+    });
+    const d = await res.json();
+    if (d.status !== "ok") { showToast(d.message || "Öffnung nicht angelegt"); return; }
+    selState.ids = new Set([d.id]);
+    await refreshApertureData();
+    updateSelBar();
+    selectAperture(d.id);
+}
+
+function setAddMode(on) {
+    selState.addMode = on;
+    document.getElementById("btnAddOpening")?.classList.toggle("active", on);
+    container.style.cursor = on ? "crosshair" : "";
+}
+
+// Tastatur im Board: liefert true, wenn die Taste verbraucht wurde
+function handleSelectionKey(e) {
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (ctrl && e.key.toLowerCase() === "a") { setSelection(state.apertures.map(a => a.id)); return true; }
+    if (selState.addMode && e.key === "Escape") { setAddMode(false); return true; }
+    if (!selState.ids.size) return false;
+    const step = e.shiftKey ? 0.1 : 0.01;
+    const moves = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] };
+    if (moves[e.key]) { editSelection("move", { dx: moves[e.key][0], dy: moves[e.key][1] }); return true; }
+    if (ctrl && e.key.toLowerCase() === "d") { editSelection("duplicate", { dx: 0.5, dy: 0 }); return true; }
+    if (ctrl) return false;
+    if ((e.key === "Delete" || e.key === "Backspace") && !measureState.measurements.length) { editSelection("delete"); return true; }
+    if ((e.key === "r" || e.key === "R") && !measureState.active) { editSelection("rotate", { deg: e.shiftKey ? -90 : 90 }); return true; }
+    if (e.key === "Escape" && !measureState.active && !measureState.measurements.length) { setSelection([]); return true; }
+    return false;
+}
+
+function renderMultiSelection() {
+    // Nach Undo/Neuladen: nicht mehr vorhandene Öffnungen aus der Auswahl nehmen
+    for (const id of selState.ids) if (!state.apertures[id] || state.apertures[id].id !== id) selState.ids.delete(id);
+    if (selState.ids.size) {
+        ctx.save();
+        ctx.strokeStyle = "#facc15";
+        ctx.lineWidth = 1.5;
+        for (const ap of selectedApertures()) {
+            const sp = worldToScreen(ap.cx - ap.w / 2, ap.cy + ap.h / 2);
+            ctx.strokeRect(sp.x - 2, sp.y - 2, Math.max(2, ap.w * state.zoom) + 4, Math.max(2, ap.h * state.zoom) + 4);
+        }
+        ctx.restore();
+    }
+    if (selState.box) {
+        const a = worldToScreen(selState.box.start.x, selState.box.start.y);
+        const b = worldToScreen(selState.box.cur.x, selState.box.cur.y);
+        ctx.save();
+        ctx.fillStyle = "rgba(250, 204, 21, 0.08)";
+        ctx.strokeStyle = "#facc15";
+        ctx.setLineDash([4, 3]);
+        ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+        ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+        ctx.restore();
+    }
+}
+
+// Verlauf: Liste aller Schritte, Klick springt dorthin (mehrere Schritte zurück/vor)
+function renderHistoryMenu() {
+    const menu = document.getElementById("historyMenuList");
+    const h = projectState.history || {};
+    const undo = h.undo_labels || [], redo = h.redo_labels || [];
+    menu.innerHTML = "";
+    const add = (label, cls, fn) => {
+        const b = document.createElement("button");
+        b.textContent = label;
+        if (cls) b.className = cls;
+        if (fn) b.addEventListener("click", fn);
+        menu.appendChild(b);
+    };
+    // Wiederholbare Schritte oben (der späteste ganz oben), dann der aktuelle Stand, dann die Rückgängig-Schritte
+    [...redo].reverse().forEach((l, i) => add(`↷ ${l}`, "redo", () => jumpHistory("redo", redo.length - i)));
+    add("● Aktueller Stand", "current");
+    undo.forEach((l, i) => add(`↶ ${l}`, "", () => jumpHistory("undo", i + 1)));
+}
+
+async function jumpHistory(dir, steps) {
+    document.getElementById("historyMenuList").classList.add("hidden");
+    const d = await (await fetch(`/api/${dir}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ steps }) })).json();
+    if (d.status === "ok") { showToast(`${dir === "undo" ? "↶" : "↷"} ${steps} Schritt(e): ${d.label}`, 2000); await reloadAllViews(); }
+    refreshHistory();
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+    document.querySelectorAll("#selBar [data-similar]").forEach(b => b.addEventListener("click", () => selectSimilar(b.dataset.similar)));
+    document.querySelectorAll("#selBar [data-op]").forEach(b => b.addEventListener("click", () => {
+        const op = b.dataset.op;
+        if (op === "reduce") editSelection("reduce", { percent: parseFloat(document.getElementById("selReducePct").value) || 10 });
+        else if (op === "resize") {
+            const s = selectionSizeArgs();
+            if (!s.w && !s.h) { showToast("Breite und/oder Höhe eingeben"); return; }
+            editSelection("resize", s);
+        }
+        else if (op === "rotate") editSelection("rotate", { deg: 90 });
+        else if (op === "duplicate") editSelection("duplicate", { dx: 0.5, dy: 0 });
+        else editSelection(op);
+    }));
+    document.getElementById("btnSelClear")?.addEventListener("click", () => setSelection([]));
+    // Zone um die Auswahl: Umriss der Öffnungen plus Abstand zur Stufenkante, dann der übliche Zonen-Dialog
+    document.getElementById("btnSelZone")?.addEventListener("click", () => {
+        const aps = selectedApertures();
+        if (!aps.length) return;
+        const [mx, my] = state.zoneMargins || [1, 1];
+        openZoneModal(Math.min(...aps.map(a => a.cx - a.w / 2)) - mx, Math.min(...aps.map(a => a.cy - a.h / 2)) - my,
+                      Math.max(...aps.map(a => a.cx + a.w / 2)) + mx, Math.max(...aps.map(a => a.cy + a.h / 2)) + my);
+    });
+    document.getElementById("btnAddOpening")?.addEventListener("click", () => setAddMode(!selState.addMode));
+    const menu = document.getElementById("historyMenuList");
+    document.getElementById("btnHistory")?.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        await refreshHistory();
+        renderHistoryMenu();
+        menu.classList.toggle("hidden");
+    });
+    document.addEventListener("click", (e) => { if (!e.target.closest("#btnHistory")) menu?.classList.add("hidden"); });
+});
+
+// -------------------------------------------------------------
+// Stencil-Analyse: Tabelle aller Öffnungen (Filter, Sortierung, Sprung, Auswahl, CSV)
+// -------------------------------------------------------------
+const anState = { rows: [], sortKey: "status", sortDir: 1 };
+const AN_STATUS_ORDER = { CRIT: 0, WARN: 1, OK: 2 };
+
+function analysisLimits() {
+    return { cov_min: parseFloat(document.getElementById("anCovMin").value) || 0, cov_max: parseFloat(document.getElementById("anCovMax").value) || 1e9 };
+}
+
+async function loadAnalysis() {
+    const res = await fetch("/api/analysis", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(analysisLimits()) });
+    const d = await res.json();
+    anState.rows = d.rows || [];
+    renderAnalysis();
+}
+
+function filteredAnalysisRows() {
+    const mode = document.getElementById("anStatus").value;
+    const q = document.getElementById("anSearch").value.trim().toLowerCase();
+    let rows = anState.rows.filter(r => mode === "all" || (mode === "CRIT" ? r.status === "CRIT" : r.status !== "OK"));
+    if (q) rows = rows.filter(r => `${r.comp} ${r.pkg} ${r.issues.join(" ")}`.toLowerCase().includes(q));
+    const k = anState.sortKey, dir = anState.sortDir;
+    const val = r => k === "status" ? AN_STATUS_ORDER[r.status] : k === "issues" ? r.issues.join(", ") : r[k];
+    return rows.sort((a, b) => {
+        const x = val(a), y = val(b);
+        if (x == null) return 1;
+        if (y == null) return -1;
+        return (typeof x === "number" ? x - y : String(x).localeCompare(String(y), "de", { numeric: true })) * dir;
+    });
+}
+
+function renderAnalysis() {
+    const rows = filteredAnalysisRows();
+    const counts = anState.rows.reduce((c, r) => (c[r.status]++, c), { OK: 0, WARN: 0, CRIT: 0 });
+    document.getElementById("anSummary").textContent =
+        `${anState.rows.length} Öffnungen · ${counts.CRIT} kritisch · ${counts.WARN} Warnung · ${rows.length} angezeigt`;
+    const f = (v, n) => v == null ? "–" : v.toFixed(n);
+    // shortcut: höchstens 2000 Zeilen im DOM, Filter einschränken; virtuelle Liste, falls das nicht reicht
+    document.getElementById("anBody").innerHTML = rows.slice(0, 2000).map(r => `
+        <tr data-id="${r.id}" class="an-${r.status.toLowerCase()}">
+            <td><span class="badge ${r.status === "CRIT" ? "crit" : r.status === "WARN" ? "warn" : "ok"}">${r.status === "CRIT" ? "Kritisch" : r.status === "WARN" ? "Warnung" : "OK"}</span></td>
+            <td>${escapeHtml(r.comp || "–")}</td><td>${r.pin}</td><td>${escapeHtml(r.pkg || "–")}</td>
+            <td>${f(r.ar, 2)}</td><td>${f(r.aspect, 2)}</td><td>${f(r.min_w, 3)}</td>
+            <td>${f(r.area, 4)}</td><td>${f(r.volume, 4)}</td><td>${r.coverage == null ? "–" : r.coverage.toFixed(0) + " %"}</td>
+            <td>${escapeHtml(r.issues.join(", "))}${r.manual ? ' <span class="an-manual" title="Von Hand bearbeitet">✎</span>' : ""}</td>
+        </tr>`).join("");
+    document.querySelectorAll("#analysisModal th[data-k]").forEach(th => th.classList.toggle("sorted", th.dataset.k === anState.sortKey));
+}
+
+function jumpToAperture(id) {
+    const a = state.apertures[id];
+    if (!a) return;
+    fitToWorldBox(a.cx - 2, a.cy - 2, a.cx + 2, a.cy + 2);
+    setSelection([id]);
+    selectAperture(id);
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+    const modal = document.getElementById("analysisModal");
+    if (!modal) return;
+    const close = () => modal.classList.add("hidden");
+    document.getElementById("btnAnalysis")?.addEventListener("click", async () => { modal.classList.remove("hidden"); await loadAnalysis(); });
+    document.getElementById("btnCloseAnalysis").addEventListener("click", close);
+    document.getElementById("btnCloseAnalysis2").addEventListener("click", close);
+    document.getElementById("anStatus").addEventListener("change", renderAnalysis);
+    document.getElementById("anSearch").addEventListener("input", renderAnalysis);
+    ["anCovMin", "anCovMax"].forEach(i => document.getElementById(i).addEventListener("change", loadAnalysis));
+    document.querySelectorAll("#analysisModal th[data-k]").forEach(th => th.addEventListener("click", () => {
+        anState.sortDir = anState.sortKey === th.dataset.k ? -anState.sortDir : 1;
+        anState.sortKey = th.dataset.k;
+        renderAnalysis();
+    }));
+    document.getElementById("anBody").addEventListener("click", (e) => {
+        const tr = e.target.closest("tr[data-id]");
+        if (!tr) return;
+        close();
+        jumpToAperture(+tr.dataset.id);
+    });
+    document.getElementById("btnAnSelect").addEventListener("click", () => {
+        const ids = filteredAnalysisRows().map(r => r.id);
+        close();
+        setSelection(ids);
+        showToast(`${ids.length} Öffnungen gewählt – jetzt gemeinsam bearbeiten`, 2500);
+    });
+    document.getElementById("btnAnCsv").addEventListener("click", async () => {
+        const d = await (await fetch("/api/analysis/csv", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(analysisLimits()) })).json();
+        showToast(d.status === "ok" ? `CSV gespeichert: ${d.path}` : `CSV-Export fehlgeschlagen: ${d.message}`, 5000);
+    });
+});

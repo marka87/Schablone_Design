@@ -2292,3 +2292,45 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: none; outli
 .pkg-tree-item.review-open { border-left: 3px solid #f87171; }
 .pkg-tree-item.review-auto { border-left: 3px solid #facc15; }
 .pkg-tree-item.review-done { border-left: 3px solid #4ade80; }
+
+/* Board-Mehrfachauswahl */
+.sel-bar {
+    position: absolute; top: 58px; left: 50%; transform: translateX(-50%); z-index: 13;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: calc(100% - 40px);
+    padding: 6px 12px; border-radius: 10px; font-size: 0.8rem; color: var(--text-primary);
+    background: rgba(15, 23, 42, 0.94); border: 1px solid #facc15; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+.sel-bar.hidden { display: none; }
+.sel-bar strong { color: #facc15; font-family: var(--font-mono); }
+.sel-bar label { display: flex; align-items: center; gap: 3px; color: var(--text-secondary); }
+.sel-bar input { width: 4.2em; padding: 1px 3px; }
+.sel-bar .sel-sep { width: 1px; height: 16px; background: var(--border-color); }
+.sel-bar .sel-lbl { color: var(--text-secondary); }
+.sel-bar .sel-hint { flex-basis: 100%; font-size: 0.7rem; color: var(--text-muted); }
+.add-opening-btn { position: absolute; top: 10px; right: 10px; z-index: 12; }
+.add-opening-btn.active { outline: 2px solid #facc15; }
+.history-menu { max-height: 60vh; overflow-y: auto; }
+.history-menu button.redo { color: var(--text-muted); font-style: italic; }
+.history-menu button.current { color: #facc15; cursor: default; }
+
+/* Stencil-Analyse */
+.analysis-modal { width: min(96vw, 1180px); max-width: 96vw; display: flex; flex-direction: column; max-height: 90vh; }
+.analysis-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; font-size: 0.85rem; }
+.analysis-filters input[type=search] { flex: 1; min-width: 14em; }
+.analysis-filters input[type=number] { width: 4.5em; }
+.analysis-summary { color: var(--text-secondary); margin-left: auto; }
+.analysis-table-wrap { overflow: auto; min-height: 200px; flex: 1; border: 1px solid var(--border-color); border-radius: 6px; }
+.analysis-table { width: 100%; font-size: 0.8rem; }
+.analysis-table th { position: sticky; top: 0; background: var(--bg-surface-elevated); cursor: pointer; white-space: nowrap; padding: 6px 8px; }
+.analysis-table th.sorted { color: #facc15; }
+.analysis-table td { padding: 4px 8px; white-space: nowrap; font-family: var(--font-mono); }
+.analysis-table tbody tr { cursor: pointer; }
+.analysis-table tbody tr:hover { background: var(--bg-hover); }
+.analysis-hint { margin-right: auto; font-size: 0.75rem; color: var(--text-muted); }
+.an-manual { color: #facc15; }
+
+/* Regelparameter als Eigenschaftenliste wie im PCB-I-Eigenschaftenfenster: Zeilen mit Trennlinie, Name links, Wert rechts */
+.rule-property-grid { gap: 0 18px; padding-top: 6px; }
+.prop-item { border-bottom: 1px solid var(--border-color); padding: 3px 4px; min-height: 26px; }
+.prop-item:hover { background: var(--bg-hover, rgba(127, 127, 127, 0.08)); }
+.prop-item.checkbox-prop { border-top: none; padding-top: 3px; }

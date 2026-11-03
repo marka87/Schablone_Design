@@ -168,6 +168,12 @@ pub const RULE_GROUP: &str = "Handle Stencil Creation by Package Group";
 pub const RULE_HOUSE: &str = "HouseBuilder";
 pub const RULE_TAKE: &str = "Take Existing Paste Elements";
 pub const RULE_IGNORE: &str = "Ignore";
+pub const RULE_ARRAY: &str = "Array Pads";
+pub const RULE_FIX_ARRAY: &str = "Array Pads Fix Count";
+pub const RULE_DONUT: &str = "Donut Creation";
+pub const RULE_INV_HOUSE: &str = "InvertedHouseBuilder";
+pub const RULE_UNDERSIZE: &str = "UndersizeStencilCreationScript";
+pub const RULE_PIN_MASK: &str = "Use Pin intersecting with Mask";
 
 /// PCB-I-Gruppenname → StencilCraft-Gruppenschlüssel
 pub fn group_key(pcbi: &str) -> Option<&'static str> {
@@ -203,10 +209,10 @@ pub fn rule_from_pcbi(used: &str, settings_xml: &str, inherit_if_empty: bool) ->
     match used.trim() {
         RULE_SIMPLE => {
             r = PackageRule::with("simple_rect", RULE_SIMPLE);
-            // PCB-I kennt hier kein Undersize; "OffsetMM" vergrößert die Öffnung allseitig
-            let off = f("OffsetMM").unwrap_or(0.0);
-            r.undersize_w = -off;
-            r.undersize_h = -off;
+            // PCB-I kennt hier kein Undersize; "OffsetMM" ist "Offset move away distance" (Export 2026-11-03)
+            r.undersize_w = 0.0;
+            r.undersize_h = 0.0;
+            r.offset_move_away = f("OffsetMM").unwrap_or(0.0);
             r.corner_radius = f("CornerRadiusMM").unwrap_or(r.corner_radius);
             r.try_find_direction = b("TryFindDirection").unwrap_or(true);
             r.rotate_bridges_45 = b("RotateSurfaceBridges45Degree").unwrap_or(false);
@@ -258,7 +264,77 @@ pub fn rule_from_pcbi(used: &str, settings_xml: &str, inherit_if_empty: bool) ->
                 r.extra.insert("SideOffsetMM".into(), fmt_num(v));
             }
         }
-        RULE_TAKE => r = PackageRule::with("take_existing", RULE_TAKE),
+        RULE_INV_HOUSE => {
+            // Eigene PCB-I-Regel; "Invert Direction" kehrt das umgekehrte Haus wieder um
+            let invert = b("InvertDirection").unwrap_or(false);
+            r = PackageRule::with(if invert { "house_builder" } else { "inverted_house_builder" }, RULE_INV_HOUSE);
+            r.corner_radius = f("CornerRadiusMM").unwrap_or(r.corner_radius);
+            r.offset_move_away = f("OffsetToCenterMM").unwrap_or(0.0);
+            let us = f("UndersizeValueMM").unwrap_or(r.undersize_w);
+            (r.undersize_w, r.undersize_h) = (us, us);
+            r.house_cut_pct = f("CutSizeValuePercent").unwrap_or(30.0);
+            r.max_element_size = f("MaxElementSize").unwrap_or(r.max_element_size);
+            r.steg_big_elements = f("StegForBigElements").unwrap_or(r.steg_big_elements);
+        }
+        RULE_ARRAY | RULE_FIX_ARRAY => {
+            let fix = used.trim() == RULE_FIX_ARRAY;
+            r = PackageRule::with(if fix { "array_fix" } else { "array_pads" }, used.trim());
+            // PCB-I-Vorgaben einer neuen Regel (Fenster 2026-11-03)
+            r.distance_array_fields = 0.3;
+            if fix {
+                r.min_array_field = 0.5;
+                (r.array_size_w, r.array_size_h) = (2.0, 2.0);
+            }
+            r.corner_radius = f("CornerRadiusMM").unwrap_or(r.corner_radius);
+            r.utilization_array_pct = f("UtilizationPercent").unwrap_or(r.utilization_array_pct);
+            r.min_array_field = f("MinArrayFieldSize").unwrap_or(r.min_array_field);
+            r.distance_array_fields = f("DistanceArrayFieldSize").unwrap_or(r.distance_array_fields);
+            let us = f("UndersizeValueMM").unwrap_or(r.undersize_w);
+            (r.undersize_w, r.undersize_h) = (us, us);
+            r.offset_x = f("OffsetToCenterXMM").unwrap_or(0.0);
+            r.offset_y = f("OffsetToCenterYMM").unwrap_or(0.0);
+            r.offset_move_away = f("OffsetMM").unwrap_or(0.0);
+            r.array_size_w = f("ArraySizeWidthMM").unwrap_or(r.array_size_w).max(0.0);
+            r.array_size_h = f("ArraySizeHeightMM").unwrap_or(r.array_size_h).max(0.0);
+            r.array_count_x = f("DirectionXCount").map_or(r.array_count_x, |v| v.round().max(1.0) as i64);
+            r.array_count_y = f("DirectionYCount").map_or(r.array_count_y, |v| v.round().max(1.0) as i64);
+            r.array_round = b("UseRoundPads").unwrap_or(false);
+            r.ignore_mask = b("IgnoreMaskIntersecting").unwrap_or(false);
+        }
+        RULE_DONUT => {
+            r = PackageRule::with("donut", RULE_DONUT);
+            // Außen-Ø als Faktor der Padgröße; die mm-Werte im PCB-I-Fenster sind nur Anzeige je Pad
+            r.donut_outer_pct = f("percentOuterDiameter").map_or(r.donut_outer_pct, |v| v * 100.0);
+            r.donut_inner_pct = f("InnerCircleDiameterPercent").unwrap_or(r.donut_inner_pct);
+            r.donut_rotation = f("Rotation").unwrap_or(0.0);
+            r.donut_bridges = f("CountBridges").map_or(r.donut_bridges, |v| v.round().max(1.0) as i64);
+            r.offset_x = f("OffsetToCenterXMM").unwrap_or(0.0);
+            r.offset_y = f("OffsetToCenterYMM").unwrap_or(0.0);
+            r.bridge_width = f("SizeBridgeMM").unwrap_or(0.5);
+            let us = f("UndersizeValueMM").unwrap_or(r.undersize_w);
+            (r.undersize_w, r.undersize_h) = (us, us);
+            r.corner_radius = f("CornerRadiusMM").unwrap_or(r.corner_radius);
+        }
+        RULE_UNDERSIZE | RULE_PIN_MASK => {
+            let mask = used.trim() == RULE_PIN_MASK;
+            r = PackageRule::with(if mask { "pin_mask" } else { "undersize" }, used.trim());
+            // mm ist der gespeicherte Wert; % rechnet PCB-I im Fenster je Pad daraus (Export 2026-11-03)
+            let us = f("UndersizeValueMM").unwrap_or(if mask { 0.05 } else { 0.025 });
+            (r.undersize_w, r.undersize_h) = (us, us);
+            r.corner_radius = f("CornerRadiusMM").unwrap_or(r.corner_radius);
+            r.max_element_size = f("MaxElementSize").unwrap_or(r.max_element_size);
+            r.steg_big_elements = f("StegForBigElements").unwrap_or(r.steg_big_elements);
+            r.ignore_mask = b("IgnoreMaskLayer").unwrap_or(false);
+            for k in ["UndersizeValuePercent", "UsePadRotationCorrection", "OverwriteAllPins"] {
+                if let Some(v) = s.and_then(|n| n.text_of(k)) {
+                    r.extra.insert(k.into(), v.to_string());
+                }
+            }
+        }
+        RULE_TAKE => {
+            r = PackageRule::with("take_existing", RULE_TAKE);
+            r.corner_radius = f("CornerRadiusMM").unwrap_or(r.corner_radius);
+        }
         RULE_IGNORE => r = PackageRule::with("ignore", RULE_IGNORE),
         other => {
             known = false;
@@ -291,7 +367,7 @@ pub fn rule_to_pcbi(r: &PackageRule) -> Option<(&'static str, String)> {
     let n = fmt_num;
     let bl = |b: bool| if b { "true".to_string() } else { "false".to_string() };
     match r.rule_type.as_str() {
-        "simple_rect" | "array_slicing" | "array_pads" => Some((
+        "simple_rect" | "array_slicing" => Some((
             RULE_SIMPLE,
             settings_doc(
                 "StencilScriptSimpleSurface",
@@ -304,7 +380,7 @@ pub fn rule_to_pcbi(r: &PackageRule) -> Option<(&'static str, String)> {
                     ("BridgeWidthMM", n(r.bridge_width)),
                     ("BridgeCountX", r.bridge_count_x.to_string()),
                     ("BridgeCountY", r.bridge_count_y.to_string()),
-                    ("OffsetMM", n(-r.undersize_w)),
+                    ("OffsetMM", n(r.offset_move_away)),
                     ("SizeWidthMM", n(r.size_w)),
                     ("SizeHeightMM", n(r.size_h)),
                 ],
@@ -330,6 +406,91 @@ pub fn rule_to_pcbi(r: &PackageRule) -> Option<(&'static str, String)> {
                 ],
             ),
         )),
+        "house_builder" | "inverted_house_builder" if r.name == RULE_INV_HOUSE => Some((
+            RULE_INV_HOUSE,
+            settings_doc(
+                "StencilScriptInvertedHouseBuilder",
+                &[
+                    ("CornerRadiusMM", n(r.corner_radius)),
+                    ("OffsetToCenterMM", n(r.offset_move_away)),
+                    ("InvertDirection", bl(r.rule_type == "house_builder")),
+                    ("MaxElementSize", n(r.max_element_size)),
+                    ("StegForBigElements", n(r.steg_big_elements)),
+                    ("UndersizeValueMM", n(r.undersize_w)),
+                    ("CutSizeValuePercent", n(r.house_cut_pct)),
+                ],
+            ),
+        )),
+        "array_pads" | "array_fix" => {
+            let fix = r.rule_type == "array_fix";
+            let mut fields = vec![("CornerRadiusMM", n(r.corner_radius))];
+            if !fix {
+                fields.push(("UtilizationPercent", n(r.utilization_array_pct)));
+            }
+            fields.extend([
+                ("MinArrayFieldSize", n(r.min_array_field)),
+                ("DistanceArrayFieldSize", n(r.distance_array_fields)),
+                ("UndersizeValueMM", n(r.undersize_w)),
+                ("OffsetToCenterXMM", n(r.offset_x)),
+                ("OffsetToCenterYMM", n(r.offset_y)),
+                ("OffsetMM", n(r.offset_move_away)),
+                ("ArraySizeWidthMM", n(r.array_size_w)),
+                ("ArraySizeHeightMM", n(r.array_size_h)),
+            ]);
+            if fix {
+                fields.push(("DirectionXCount", r.array_count_x.to_string()));
+                fields.push(("DirectionYCount", r.array_count_y.to_string()));
+            } else {
+                fields.push(("IgnoreMaskIntersecting", bl(r.ignore_mask)));
+            }
+            fields.push(("UseRoundPads", bl(r.array_round)));
+            Some(if fix { (RULE_FIX_ARRAY, settings_doc("StencilScriptFixArray", &fields)) } else { (RULE_ARRAY, settings_doc("StencilScriptArray", &fields)) })
+        }
+        "donut" => Some((
+            RULE_DONUT,
+            settings_doc(
+                "StencilScriptDonut",
+                &[
+                    ("percentOuterDiameter", n(r.donut_outer_pct / 100.0)),
+                    ("InnerCircleDiameterPercent", n(r.donut_inner_pct)),
+                    ("Rotation", n(r.donut_rotation)),
+                    ("InnerCircleDiameterMM", n(r.donut_inner_dia)),
+                    ("CountBridges", r.donut_bridges.to_string()),
+                    ("OffsetToCenterXMM", n(r.offset_x)),
+                    ("OffsetToCenterYMM", n(r.offset_y)),
+                    ("SizeBridgeMM", n(r.bridge_width)),
+                    ("UndersizeValueMM", n(r.undersize_w)),
+                    ("CornerRadiusMM", n(r.corner_radius)),
+                ],
+            ),
+        )),
+        "undersize" => Some((
+            RULE_UNDERSIZE,
+            settings_doc(
+                "StencilScriptUndersize",
+                &[
+                    ("UndersizeValuePercent", r.extra.get("UndersizeValuePercent").cloned().unwrap_or_else(|| "0".into())),
+                    ("UndersizeValueMM", n(r.undersize_w)),
+                    ("UsePadRotationCorrection", r.extra.get("UsePadRotationCorrection").cloned().unwrap_or_else(|| "false".into())),
+                    ("CornerRadiusMM", n(r.corner_radius)),
+                    ("MaxElementSize", n(r.max_element_size)),
+                    ("StegForBigElements", n(r.steg_big_elements)),
+                ],
+            ),
+        )),
+        "pin_mask" => Some((
+            RULE_PIN_MASK,
+            settings_doc(
+                "StencilScriptUsePinMinusMask",
+                &[
+                    ("UndersizeValuePercent", r.extra.get("UndersizeValuePercent").cloned().unwrap_or_else(|| "0".into())),
+                    ("UndersizeValueMM", n(r.undersize_w)),
+                    ("OverwriteAllPins", r.extra.get("OverwriteAllPins").cloned().unwrap_or_else(|| "true".into())),
+                    ("IgnoreMaskLayer", bl(r.ignore_mask)),
+                    ("CornerRadiusMM", n(r.corner_radius)),
+                ],
+            ),
+        )),
         "house_builder" | "inverted_house_builder" => Some((
             RULE_HOUSE,
             settings_doc(
@@ -347,7 +508,7 @@ pub fn rule_to_pcbi(r: &PackageRule) -> Option<(&'static str, String)> {
                 ],
             ),
         )),
-        "take_existing" => Some((RULE_TAKE, String::new())),
+        "take_existing" => Some((RULE_TAKE, settings_doc("StencilScriptTakeExisting", &[("CornerRadiusMM", n(r.corner_radius))]))),
         "ignore" => Some((RULE_IGNORE, settings_doc("StencilScriptIgnore", &[]).replace(&format!(">\r\n</StencilScriptIgnore>"), " />"))),
         _ => None,
     }
@@ -818,6 +979,46 @@ mod tests {
         assert_eq!(t2.pins["CON_A"][&1].size_w, 0.2);
         assert_eq!(t2.groups["THT"].rule_type, "ignore");
         assert_eq!(t2.area_ratio, Some(0.7));
+    }
+
+    /// Felder wie im PCB-I-Export "Export Rules" (designodb_rigidflex, 2026-11-03)
+    #[test]
+    fn all_pcbi_rule_types_import_and_roundtrip() {
+        let doc = |root: &str, body: &str| format!("<{root}>{body}</{root}>");
+        let cases = [
+            (RULE_FIX_ARRAY, doc("StencilScriptFixArray", "<CornerRadiusMM>0.075</CornerRadiusMM><MinArrayFieldSize>0.5</MinArrayFieldSize><DistanceArrayFieldSize>0.3</DistanceArrayFieldSize><UndersizeValueMM>0.025</UndersizeValueMM><OffsetToCenterXMM>0</OffsetToCenterXMM><OffsetToCenterYMM>0</OffsetToCenterYMM><OffsetMM>0</OffsetMM><ArraySizeWidthMM>2</ArraySizeWidthMM><ArraySizeHeightMM>2</ArraySizeHeightMM><DirectionXCount>3</DirectionXCount><DirectionYCount>2</DirectionYCount><UseRoundPads>false</UseRoundPads>")),
+            (RULE_UNDERSIZE, doc("StencilScriptUndersize", "<UndersizeValuePercent>7</UndersizeValuePercent><UndersizeValueMM>0.063</UndersizeValueMM><UsePadRotationCorrection>false</UsePadRotationCorrection><CornerRadiusMM>0.05</CornerRadiusMM><MaxElementSize>5</MaxElementSize><StegForBigElements>0.75</StegForBigElements>")),
+            (RULE_SIMPLE, doc("StencilScriptSimpleSurface", "<CornerRadiusMM>0.075</CornerRadiusMM><TryFindDirection>true</TryFindDirection><RotateSurfaceBridges45Degree>false</RotateSurfaceBridges45Degree><OffsetToCenterXMM>0</OffsetToCenterXMM><OffsetToCenterYMM>0</OffsetToCenterYMM><BridgeWidthMM>0.3</BridgeWidthMM><BridgeCountX>0</BridgeCountX><BridgeCountY>0</BridgeCountY><OffsetMM>0.1</OffsetMM><SizeWidthMM>1.2</SizeWidthMM><SizeHeightMM>1.2</SizeHeightMM>")),
+            (RULE_INV_HOUSE, doc("StencilScriptInvertedHouseBuilder", "<CornerRadiusMM>0.075</CornerRadiusMM><OffsetToCenterMM>0</OffsetToCenterMM><InvertDirection>false</InvertDirection><MaxElementSize>4</MaxElementSize><StegForBigElements>0.75</StegForBigElements><UndersizeValueMM>0.025</UndersizeValueMM><CutSizeValuePercent>30</CutSizeValuePercent>")),
+            (RULE_ARRAY, doc("StencilScriptArray", "<CornerRadiusMM>0.075</CornerRadiusMM><UtilizationPercent>40</UtilizationPercent><MinArrayFieldSize>0.75</MinArrayFieldSize><DistanceArrayFieldSize>0.3</DistanceArrayFieldSize><UndersizeValueMM>0.025</UndersizeValueMM><OffsetToCenterXMM>0</OffsetToCenterXMM><OffsetToCenterYMM>0</OffsetToCenterYMM><OffsetMM>0</OffsetMM><ArraySizeWidthMM>0</ArraySizeWidthMM><ArraySizeHeightMM>0</ArraySizeHeightMM><IgnoreMaskIntersecting>false</IgnoreMaskIntersecting><UseRoundPads>true</UseRoundPads>")),
+            (RULE_DONUT, doc("StencilScriptDonut", "<percentOuterDiameter>1</percentOuterDiameter><InnerCircleDiameterPercent>50</InnerCircleDiameterPercent><Rotation>0</Rotation><InnerCircleDiameterMM>0</InnerCircleDiameterMM><CountBridges>3</CountBridges><OffsetToCenterXMM>0</OffsetToCenterXMM><OffsetToCenterYMM>0</OffsetToCenterYMM><SizeBridgeMM>0.5</SizeBridgeMM><UndersizeValueMM>0.025</UndersizeValueMM><CornerRadiusMM>0.075</CornerRadiusMM>")),
+            (RULE_PIN_MASK, doc("StencilScriptUsePinMinusMask", "<UndersizeValuePercent>12</UndersizeValuePercent><UndersizeValueMM>0.107</UndersizeValueMM><OverwriteAllPins>true</OverwriteAllPins><IgnoreMaskLayer>false</IgnoreMaskLayer><CornerRadiusMM>0.075</CornerRadiusMM>")),
+            (RULE_TAKE, doc("StencilScriptTakeExisting", "<CornerRadiusMM>0</CornerRadiusMM>")),
+        ];
+        for (used, xml) in &cases {
+            let (r, known) = rule_from_pcbi(used, xml, false);
+            assert!(known, "{used} unbekannt");
+            let (used2, xml2) = rule_to_pcbi(&r).unwrap_or_else(|| panic!("{used} ohne Export"));
+            assert_eq!(used2, *used);
+            let (r2, _) = rule_from_pcbi(used2, &xml2, false);
+            assert_eq!(r.to_json(), r2.to_json(), "{used} Rundreise");
+        }
+        let get = |i: usize| rule_from_pcbi(cases[i].0, &cases[i].1, false).0;
+        let fix = get(0);
+        assert_eq!((fix.rule_type.as_str(), fix.array_count_x, fix.array_count_y, fix.min_array_field), ("array_fix", 3, 2, 0.5));
+        let us = get(1);
+        assert_eq!((us.rule_type.as_str(), us.undersize_w, us.max_element_size), ("undersize", 0.063, 5.0));
+        let sr = get(2);
+        assert_eq!((sr.offset_move_away, sr.undersize_w, sr.size_w), (0.1, 0.0, 1.2), "OffsetMM ist move away");
+        let inv = get(3);
+        assert_eq!((inv.rule_type.as_str(), inv.max_element_size, inv.house_cut_pct), ("inverted_house_builder", 4.0, 30.0));
+        let arr = get(4);
+        assert!(arr.rule_type == "array_pads" && arr.array_round && !arr.ignore_mask);
+        let dn = get(5);
+        assert_eq!((dn.donut_bridges, dn.donut_outer_pct, dn.donut_inner_pct, dn.bridge_width), (3, 100.0, 50.0, 0.5));
+        let pm = get(6);
+        assert_eq!((pm.rule_type.as_str(), pm.undersize_w), ("pin_mask", 0.107));
+        assert_eq!(get(7).corner_radius, 0.0);
     }
 
     #[test]

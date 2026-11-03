@@ -51,6 +51,10 @@
                     </div>
                     <button id="btnUndo" class="btn btn-sm btn-ghost icon-btn" title="Rückgängig (Strg+Z)" disabled>↶</button>
                     <button id="btnRedo" class="btn btn-sm btn-ghost icon-btn" title="Wiederholen (Strg+Y)" disabled>↷</button>
+                    <div class="dropdown">
+                        <button id="btnHistory" class="btn btn-sm btn-ghost icon-btn" title="Verlauf: zu einem früheren Stand springen">☰</button>
+                        <div class="dropdown-menu hidden history-menu" id="historyMenuList"></div>
+                    </div>
                     <span id="lblProjectName" class="project-name" title="Kein Projekt">–</span>
                 </div>
                 <span class="rb-cap">Projekt</span>
@@ -162,6 +166,9 @@
                     <button id="btnCheckBridges" class="btn btn-sm btn-secondary" title="Schablonenstegbreite prüfen (Web Check)">
                         <span id="bridgeWarnIcon" class="ico"><i class="ic ic-microscope"></i></span><span class="lbl">Stegprüfung</span> <span class="mono-small">(<span id="lblMinBridge">0.10</span> mm)</span>
                         <span id="badgeBridgeViolations" class="badge-count badge-danger hidden">0</span>
+                    </button>
+                    <button id="btnAnalysis" class="btn btn-sm btn-secondary" title="Stencil-Analyse: alle Öffnungen mit Area/Aspect Ratio, Volumen, Pad-Abdeckung und Befunden">
+                        <span class="ico"><i class="ic ic-search"></i></span><span class="lbl">Analyse</span>
                     </button>
                     <button id="btnNewZone" class="btn btn-sm btn-secondary" title="Stufenzone im Board aufziehen">
                         <span class="ico"><i class="ic ic-plus"></i></span><span class="lbl">Zone</span>
@@ -300,6 +307,29 @@
                     </div>
                 </div>
                 <canvas id="cadCanvas"></canvas>
+
+                <!-- Board-Mehrfachauswahl: Strg/Umschalt-Klick, Umschalt+Ziehen = Rahmen -->
+                <div id="selBar" class="sel-bar hidden">
+                    <strong id="selCount">0</strong> gewählt
+                    <span class="sel-sep"></span>
+                    <span class="sel-lbl">Gleiche:</span>
+                    <button class="btn btn-xs btn-ghost" data-similar="size" title="Alle Öffnungen mit gleicher Größe und Form dazu wählen">Größe</button>
+                    <button class="btn btn-xs btn-ghost" data-similar="pkg" title="Alle Öffnungen desselben Packages dazu wählen">Package</button>
+                    <button class="btn btn-xs btn-ghost" data-similar="comp" title="Alle Öffnungen desselben Bauteils dazu wählen">Bauteil</button>
+                    <span class="sel-sep"></span>
+                    <button class="btn btn-xs btn-ghost" data-op="rotate" title="Um 90° drehen (R)">↻ 90°</button>
+                    <label title="Fläche verkleinern, Form bleibt">−<input type="number" id="selReducePct" value="10" min="1" max="90" step="1">%</label>
+                    <button class="btn btn-xs btn-ghost" data-op="reduce">Verkleinern</button>
+                    <label title="Breite × Höhe in mm (leer = unverändert)">B <input type="number" id="selW" step="0.01" min="0.01"> H <input type="number" id="selH" step="0.01" min="0.01"></label>
+                    <button class="btn btn-xs btn-ghost" data-op="resize">Größe setzen</button>
+                    <button class="btn btn-xs btn-ghost" data-op="duplicate" title="Duplizieren, 0,5 mm versetzt (Strg+D)">Duplizieren</button>
+                    <button class="btn btn-xs btn-ghost" data-op="reset" title="Kundenöffnung bzw. Regelergebnis wiederherstellen">Zurücksetzen</button>
+                    <button class="btn btn-xs btn-ghost" id="btnSelZone" title="Stufen- oder Regelzone um die gewählten Öffnungen (mit Abstand zur Stufenkante)">▣ Zone</button>
+                    <button class="btn btn-xs btn-danger" data-op="delete" title="Keine Öffnung an diesen Pads (Entf)">Löschen</button>
+                    <button class="btn btn-xs btn-ghost" id="btnSelClear" title="Auswahl aufheben (Esc)">×</button>
+                    <div class="sel-hint">Pfeiltasten verschieben 0,01 mm (Umschalt: 0,1 mm) · Strg+A alle · Doppelklick öffnet Package</div>
+                </div>
+                <button id="btnAddOpening" class="btn btn-xs btn-secondary add-opening-btn" title="Neue Öffnung: danach auf das Board klicken (Größe aus B × H der Auswahlleiste, sonst 0,5 × 0,5 mm)">＋ Öffnung</button>
 
                 <!-- Floating Controls (Oben links im Canvas) -->
                 <div class="canvas-overlay top-left">
@@ -696,15 +726,22 @@
                             <select id="selectPkgRule">
                                 <option value="inherit">Inherit – Regel der Gruppe übernehmen</option>
                                 <option value="package_group">Handle Stencil Creation by Package Group</option>
-                                <option value="simple_rect">Simple Rectangle Surface</option>
-                                <option value="house_builder">Haus – Spitze zum Bauteil (HouseBuilder)</option>
-                                <option value="inverted_house_builder">Haus – Spitze nach außen (Inverted)</option>
-                                <option value="elongated_pitch">Länglich & Schmal (Pitch-Schutz)</option>
-                                <option value="array_slicing">Thermal-Pad Slicing (Fensterung, Stege)</option>
+                                <!-- Namen und Reihenfolge wie in PCB Investigator "Select Rule" -->
+                                <option value="array_pads">Array Pads</option>
+                                <option value="array_fix">Array Pads Fix Count</option>
                                 <option value="donut">Donut Creation</option>
-                                <option value="pin_in_paste">Pin-in-Paste (THT, automatisch)</option>
-                                <option value="take_existing">Take Existing Paste Elements</option>
+                                <option value="house_builder">HouseBuilder</option>
                                 <option value="ignore">Ignore</option>
+                                <option value="inverted_house_builder">InvertedHouseBuilder</option>
+                                <option value="simple_rect">Simple Rectangle Surface</option>
+                                <option value="take_existing">Take Existing Paste Elements</option>
+                                <option value="undersize">UndersizeStencilCreationScript</option>
+                                <option value="pin_mask">Use Pin intersecting with Mask</option>
+                                <optgroup label="Nur StencilCraft">
+                                    <option value="elongated_pitch">Länglich & Schmal (Pitch-Schutz)</option>
+                                    <option value="array_slicing">Thermal-Pad Slicing (Fensterung, Stege)</option>
+                                    <option value="pin_in_paste">Pin-in-Paste (THT, automatisch)</option>
+                                </optgroup>
                             </select>
                         </div>
 
@@ -742,16 +779,16 @@
                     </div>
                     <div id="ruleDescription" class="rule-description"></div>
                     <div class="rule-property-grid">
-                        <div class="prop-item" data-rules="package_group simple_rect house_builder inverted_house_builder elongated_pitch array_slicing pin_in_paste take_existing">
+                        <div class="prop-item" data-rules="package_group simple_rect house_builder inverted_house_builder elongated_pitch array_slicing pin_in_paste take_existing array_pads array_fix donut undersize pin_mask">
                             <label>Corner Radius (MM):</label>
                             <input type="number" id="propCornerRadius" value="0.0" step="0.005" min="0" max="1.0">
                         </div>
-                        <div class="prop-item" data-rules="package_group simple_rect house_builder inverted_house_builder array_slicing donut">
+                        <div class="prop-item" data-rules="package_group simple_rect house_builder inverted_house_builder array_slicing donut array_pads array_fix undersize pin_mask">
                             <label>Undersize Value (MM):</label>
                             <input type="number" id="propUndersize" value="0.025" step="0.005" min="-0.2" max="0.5">
                         </div>
                         <div class="prop-item" data-rules="package_group house_builder inverted_house_builder">
-                            <label>House distance cut size (%):</label>
+                            <label>House distance cut size in Percent:</label>
                             <input type="number" id="propHouseCut" value="35" step="5" min="5" max="75">
                         </div>
                         <div class="prop-item" data-rules="elongated_pitch">
@@ -774,11 +811,11 @@
                             <label title="Verschiebt die Öffnung vom Bauteilzentrum weg nach außen (negativ = nach innen).">Versatz nach außen (MM):</label>
                             <input type="number" id="propOutwardShift" value="0.025" step="0.005" min="-0.5" max="0.5">
                         </div>
-                        <div class="prop-item" data-rules="simple_rect house_builder inverted_house_builder elongated_pitch">
+                        <div class="prop-item" data-rules="simple_rect house_builder inverted_house_builder elongated_pitch array_pads array_fix">
                             <label>Offset move away distance (MM):</label>
                             <input type="number" id="propOffsetMoveAway" value="0.0" step="0.02" min="0" max="1.0">
                         </div>
-                        <div class="prop-item" data-rules="simple_rect house_builder inverted_house_builder elongated_pitch">
+                        <div class="prop-item" data-rules="simple_rect house_builder inverted_house_builder elongated_pitch array_pads array_fix">
                             <label title="Richtung für Move away, Versatz nach außen und Toe-/Heel-Shift. X/Y beziehen sich auf das Package (drehen mit dem Bauteil).">Richtung nach außen:</label>
                             <select id="propMoveAxis">
                                 <option value="long">Pad-Längsachse</option>
@@ -787,7 +824,7 @@
                                 <option value="y">Nur Y (Package)</option>
                             </select>
                         </div>
-                        <div class="prop-item" data-rules="package_group simple_rect house_builder inverted_house_builder elongated_pitch array_slicing donut">
+                        <div class="prop-item" data-rules="package_group simple_rect house_builder inverted_house_builder elongated_pitch array_slicing donut array_pads array_fix">
                             <label title="Verschiebung im Package-Rahmen; dreht auf der Platine mit dem Bauteil.">Offset to Center X / Y (MM):</label>
                             <div class="dual-row">
                                 <input type="number" id="propOffsetX" value="0.0" step="0.01" placeholder="X">
@@ -802,7 +839,7 @@
                             </div>
                         </div>
                         <div class="prop-item" data-rules="simple_rect array_slicing donut pin_in_paste">
-                            <label>Bridge Width (MM):</label>
+                            <label title="Donut Creation: Size Bridge (MM)">Bridge Width (MM):</label>
                             <input type="number" id="propBridgeWidth" value="0.30" step="0.05" min="0.1" max="1.5">
                         </div>
                         <div class="prop-item" data-rules="simple_rect house_builder inverted_house_builder elongated_pitch">
@@ -833,7 +870,7 @@
                             <input type="number" id="propDonutInner" value="0" step="0.05" min="0" title="0 = Bohrung + 0.1 mm">
                         </div>
                         <div class="prop-item" data-rules="package_group">
-                            <label>BGA Threshold Square (MM):</label>
+                            <label>BGA Threashold Square (MM):</label>
                             <input type="number" id="propBgaThreshold" value="0.41" step="0.01" min="0">
                         </div>
                         <div class="prop-item" data-rules="package_group">
@@ -841,22 +878,22 @@
                             <input type="number" id="propChipThreshold" value="2.49" step="0.05" min="0">
                         </div>
                         <div class="prop-item" data-rules="package_group">
-                            <label>Invert House Pad smaller than (MM):</label>
+                            <label>Invert House Pad Direction smaller than (MM):</label>
                             <input type="number" id="propInvertHouse" value="0.75" step="0.05" min="0">
                         </div>
                         <div class="prop-item" data-rules="package_group">
                             <label>Mini Chip Size (MM):</label>
                             <input type="number" id="propMiniChip" value="0.075" step="0.005" min="0" title="Zusätzliche Reduktion für Mini-Chips (Inverted House)">
                         </div>
-                        <div class="prop-item" data-rules="package_group">
+                        <div class="prop-item" data-rules="package_group array_pads array_fix">
                             <label>Minimum Array Field Size (MM):</label>
                             <input type="number" id="propMinArrayField" value="0.75" step="0.05" min="0">
                         </div>
-                        <div class="prop-item" data-rules="package_group">
+                        <div class="prop-item" data-rules="package_group array_pads array_fix">
                             <label>Distance Array Fields (MM):</label>
                             <input type="number" id="propArrayDistance" value="0.25" step="0.05" min="0">
                         </div>
-                        <div class="prop-item" data-rules="package_group">
+                        <div class="prop-item" data-rules="package_group array_pads">
                             <label>Utilization Array Area (%):</label>
                             <input type="number" id="propUtilArray" value="40" step="5" min="5" max="100">
                         </div>
@@ -886,6 +923,50 @@
                                 </select>
                                 <input type="number" id="propPipMax" value="0" step="0.1" min="0" title="0 = Pitch − Mindeststeg">
                             </div>
+                        </div>
+                        <div class="prop-item" data-rules="array_pads array_fix">
+                            <label title="Array Pads: feste Feldgröße (0 = aus Mindestfeldgröße und Ausnutzung)">Array Size Width / Height in MM:</label>
+                            <div class="dual-row">
+                                <input type="number" id="propArraySizeW" value="0" step="0.05" min="0" placeholder="B">
+                                <input type="number" id="propArraySizeH" value="0" step="0.05" min="0" placeholder="H">
+                            </div>
+                        </div>
+                        <div class="prop-item" data-rules="array_fix">
+                            <label>Array Field Count in X / Y direction:</label>
+                            <div class="dual-row">
+                                <input type="number" id="propArrayCountX" value="2" step="1" min="1" max="20" placeholder="X">
+                                <input type="number" id="propArrayCountY" value="2" step="1" min="1" max="20" placeholder="Y">
+                            </div>
+                        </div>
+                        <div class="prop-item" data-rules="donut">
+                            <label>Count Bridges:</label>
+                            <input type="number" id="propDonutBridges" value="4" step="1" min="1" max="16">
+                        </div>
+                        <div class="prop-item" data-rules="donut">
+                            <label>Rotation:</label>
+                            <input type="number" id="propDonutRotation" value="0" step="5">
+                        </div>
+                        <div class="prop-item" data-rules="donut">
+                            <label title="Gilt ohne festen Innen-Ø und ohne Bohrung">Value for inner donut circle in percent:</label>
+                            <input type="number" id="propDonutInnerPct" value="50" step="5" min="0" max="95">
+                        </div>
+                        <div class="prop-item" data-rules="donut">
+                            <label title="PCB-I: percentOuterDiameter, 100 % = kleinere Padseite">Value for outer donut circle in percent:</label>
+                            <input type="number" id="propDonutOuterPct" value="100" step="5" min="5" max="200">
+                        </div>
+                        <div class="prop-item" data-rules="undersize inverted_house_builder">
+                            <label title="Größere Öffnungen werden geteilt (0 = nie teilen)">Max Size of one Element (MM):</label>
+                            <input type="number" id="propMaxElement" value="5" step="0.5" min="0">
+                        </div>
+                        <div class="prop-item" data-rules="undersize inverted_house_builder">
+                            <label>Steg for Big Elements (MM):</label>
+                            <input type="number" id="propStegBig" value="0.75" step="0.05" min="0">
+                        </div>
+                        <div class="prop-item checkbox-prop" data-rules="array_pads array_fix">
+                            <label><input type="checkbox" id="propArrayRound"> Use Round Pads</label>
+                        </div>
+                        <div class="prop-item checkbox-prop" data-rules="array_pads pin_mask">
+                            <label title="Array Pads: Ignore Mask Intersecting · Use Pin intersecting with Mask: Ignore Mask Layer"><input type="checkbox" id="propIgnoreMask"> Ignore Mask</label>
                         </div>
                         <div class="prop-item checkbox-prop" data-rules="package_group simple_rect house_builder inverted_house_builder elongated_pitch array_slicing donut">
                             <label><input type="checkbox" id="propRotate45"> Rotate Bridges 45°</label>
@@ -917,15 +998,19 @@
                                 <select id="selectPinRule" title="Regel für diesen Pin" style="font-size: 0.75rem; padding: 3px 6px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border); border-radius: 4px;">
                                     <option value="inherit">Regel: Vom Package erben</option>
                                     <option value="manual">Manuell (feste Öffnung)</option>
-                                    <option value="package_group">Package-Gruppe</option>
-                                    <option value="simple_rect">Simple Rect</option>
-                                    <option value="house_builder">Haus – Spitze zum Bauteil (HouseBuilder)</option>
-                                    <option value="inverted_house_builder">Haus – Spitze nach außen</option>
+                                    <option value="package_group">Handle Stencil Creation by Package Group</option>
+                                    <option value="array_pads">Array Pads</option>
+                                    <option value="array_fix">Array Pads Fix Count</option>
+                                    <option value="donut">Donut Creation</option>
+                                    <option value="house_builder">HouseBuilder</option>
+                                    <option value="ignore">Ignore</option>
+                                    <option value="inverted_house_builder">InvertedHouseBuilder</option>
+                                    <option value="simple_rect">Simple Rectangle Surface</option>
+                                    <option value="take_existing">Take Existing Paste Elements</option>
+                                    <option value="undersize">UndersizeStencilCreationScript</option>
+                                    <option value="pin_mask">Use Pin intersecting with Mask</option>
                                     <option value="elongated_pitch">Länglich & Schmal</option>
                                     <option value="array_slicing">Thermal-Pad Slicing (Fensterung)</option>
-                                    <option value="donut">Donut</option>
-                                    <option value="take_existing">Original übernehmen</option>
-                                    <option value="ignore">Ignore</option>
                                 </select>
                                 <input type="number" id="inputPadCustomW" placeholder="B (mm)" step="0.05" style="width: 70px;">
                                 <input type="number" id="inputPadCustomH" placeholder="H (mm)" step="0.05" style="width: 70px;">
@@ -1188,6 +1273,44 @@
                     <button id="btnCancelPip" class="btn btn-ghost">Schließen</button>
                     <button id="btnApplyPipAperture" class="btn btn-primary"><i class="ic ic-zap"></i> PiP-Apertur auf Schablone erzeugen</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stencil-Analyse: Tabelle aller Öffnungen -->
+    <div id="analysisModal" class="modal hidden">
+        <div class="modal-box analysis-modal">
+            <div class="modal-header">
+                <h3><i class="ic ic-search"></i> Stencil-Analyse</h3>
+                <button id="btnCloseAnalysis" class="btn-close">&times;</button>
+            </div>
+            <div class="analysis-filters">
+                <select id="anStatus">
+                    <option value="issues">Nur Befunde</option>
+                    <option value="CRIT">Nur kritisch</option>
+                    <option value="all">Alle Öffnungen</option>
+                </select>
+                <input type="search" id="anSearch" placeholder="Bauteil, Package oder Befund…">
+                <label title="Paste-zu-Pad-Abdeckung außerhalb dieser Grenzen wird gemeldet">Abdeckung
+                    <input type="number" id="anCovMin" value="30" step="5" min="0">–<input type="number" id="anCovMax" value="150" step="5" min="0"> %</label>
+                <span id="anSummary" class="analysis-summary"></span>
+            </div>
+            <div class="analysis-table-wrap">
+                <table class="layer-table analysis-table">
+                    <thead><tr>
+                        <th data-k="status">Status</th><th data-k="comp">Bauteil</th><th data-k="pin">Pin</th><th data-k="pkg">Package</th>
+                        <th data-k="ar" title="Area Ratio = Öffnungsfläche / Wandfläche">AR</th><th data-k="aspect" title="Aspect Ratio = kleinste Breite / Blechdicke">AsR</th>
+                        <th data-k="min_w">Min. Breite</th><th data-k="area">Fläche mm²</th><th data-k="volume">Volumen mm³</th>
+                        <th data-k="coverage" title="Öffnungsfläche / Padfläche (Kupfer, sonst Maske)">Abdeckung</th><th data-k="issues">Befunde</th>
+                    </tr></thead>
+                    <tbody id="anBody"></tbody>
+                </table>
+            </div>
+            <div class="modal-actions">
+                <span class="analysis-hint">Zeile anklicken: zum Pad springen · Spaltenkopf: sortieren</span>
+                <button id="btnAnSelect" class="btn btn-secondary" title="Alle gefilterten Öffnungen auf dem Board wählen und gemeinsam bearbeiten">Gefilterte auf dem Board wählen</button>
+                <button id="btnAnCsv" class="btn btn-secondary">CSV exportieren</button>
+                <button id="btnCloseAnalysis2" class="btn btn-ghost">Schließen</button>
             </div>
         </div>
     </div>

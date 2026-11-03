@@ -3,8 +3,10 @@
 //! Arbeitsweise strikt non-destruktiv: `original_apertures` bleibt unverändert (Kundenlage),
 //! alle Modifikationen landen als `custom_slices` auf den Arbeits-Aperturen (Zwischenspeicher).
 
+pub mod analysis;
 pub mod copper_paste;
 pub mod dfm;
+pub mod edit;
 pub mod export;
 pub mod geometry;
 pub mod gerber;
@@ -539,18 +541,9 @@ impl StencilEngine {
     }
 
     pub fn apply_reduction(&mut self, target_id: i64, percent: f64, all_identical: bool) -> usize {
-        let scale = (1.0 - percent / 100.0).max(0.1).sqrt();
-        let ids = self.target_ids(target_id, all_identical);
-        for &id in &ids {
-            let ap = &mut self.apertures[id];
-            let mut s = Slice::rect(ap.cx, ap.cy, r4(ap.width * scale), r4(ap.height * scale));
-            if ap.shape_type == "circle" {
-                s.shape = Some("circle".into());
-            }
-            ap.custom_slices = Some(vec![s]);
-            ap.is_manually_overridden = true;
-        }
-        ids.len()
+        // Verkleinert die aktuelle Öffnung (Haus, Polygon, Stege bleiben erhalten)
+        let ids: Vec<i64> = self.target_ids(target_id, all_identical).into_iter().map(|i| i as i64).collect();
+        self.reduce_openings(&ids, percent.min(90.0))
     }
 
     pub fn reset_aperture_modification(&mut self, target_id: i64, all_identical: bool) {
@@ -1360,19 +1353,24 @@ pub fn neighbor_pitch(pads: &[(f64, f64, f64, f64)], i: usize) -> Option<f64> {
 
 /// Segmentierte PiP-Ringöffnung (4 Kreisringsegmente mit radialen Haltestegen der Breite `web`).
 pub fn donut_segments(cx: f64, cy: f64, d_in: f64, d_out: f64, web: f64) -> Vec<Slice> {
+    donut_segments_n(cx, cy, d_in, d_out, web, 4, 0.0)
+}
+
+/// Ring in `seg` Segmente (1…16) mit Stegen, um `rot_deg` gedreht (Donut Creation: Count Bridges, Rotation).
+pub fn donut_segments_n(cx: f64, cy: f64, d_in: f64, d_out: f64, web: f64, seg: usize, rot_deg: f64) -> Vec<Slice> {
     let (ri, ro) = (d_in / 2.0, d_out / 2.0);
     if ro - ri < 0.02 {
         let pts = circle_pts(cx, cy, ro, 48);
         return vec![Slice { cx, cy, w: r4(d_out), h: r4(d_out), pts: Some(round_pts(&pts)), shape: Some("polygon".into()), kind: Some("pip_donut".into()), manual: Some(true), ..Default::default() }];
     }
-    let seg = 4;
+    let seg = seg.clamp(1, 16);
     let quarter = std::f64::consts::TAU / seg as f64;
     let mut out = Vec::with_capacity(seg);
     for k in 0..seg {
         // Steg parallel: halber Winkel des Spalts je Radius
         let ga_o = (web / 2.0 / ro).min(quarter / 3.0);
         let ga_i = (web / 2.0 / ri.max(1e-3)).min(quarter / 3.0);
-        let base = std::f64::consts::FRAC_PI_4 + k as f64 * quarter;
+        let base = std::f64::consts::FRAC_PI_4 + rot_deg.to_radians() + k as f64 * quarter;
         let (o0, o1) = (base + ga_o, base + quarter - ga_o);
         let (i0, i1) = (base + ga_i, base + quarter - ga_i);
         let n = 12;

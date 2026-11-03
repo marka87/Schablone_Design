@@ -339,6 +339,26 @@ pub struct PackageRule {
     pub distance_array_fields: f64,
     pub utilization_array_pct: f64,
     pub utilization_house_pct: f64,
+    // Array Pads / Array Pads Fix Count (PCB Investigator)
+    /// Feste Feldgröße bei "Array Pads" (0 = aus Mindestfeldgröße und Ausnutzung)
+    pub array_size_w: f64,
+    pub array_size_h: f64,
+    /// Feldzahl X/Y bei "Array Pads Fix Count"
+    pub array_count_x: i64,
+    pub array_count_y: i64,
+    pub array_round: bool,
+    /// Maske nicht beachten (Array Pads: Ignore Mask Intersecting, Pin ∩ Maske: Ignore Mask Layer)
+    pub ignore_mask: bool,
+    // Donut Creation
+    pub donut_bridges: i64,
+    pub donut_rotation: f64,
+    /// Innen-Ø in % des Außen-Ø (wenn kein fester Innen-Ø und keine Bohrung)
+    pub donut_inner_pct: f64,
+    /// Außen-Ø in % der kleineren Padseite
+    pub donut_outer_pct: f64,
+    /// Große Elemente teilen (Undersize, Inverted House): größte Teilöffnung und Steg dazwischen (0 = aus)
+    pub max_element_size: f64,
+    pub steg_big_elements: f64,
     // Pin-in-Paste (THT-Reflow)
     pub pip_pcb_thickness: f64,
     pub pip_metal_pct: f64,
@@ -400,6 +420,18 @@ impl Default for PackageRule {
             distance_array_fields: 0.25,
             utilization_array_pct: 40.0,
             utilization_house_pct: 0.0,
+            array_size_w: 0.0,
+            array_size_h: 0.0,
+            array_count_x: 2,
+            array_count_y: 2,
+            array_round: false,
+            ignore_mask: false,
+            donut_bridges: 4,
+            donut_rotation: 0.0,
+            donut_inner_pct: 50.0,
+            donut_outer_pct: 100.0,
+            max_element_size: 5.0,
+            steg_big_elements: 0.75,
             pip_pcb_thickness: 1.6,
             pip_metal_pct: 50.0,
             pip_pin_clearance: 0.25,
