@@ -2334,3 +2334,68 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: none; outli
 .prop-item { border-bottom: 1px solid var(--border-color); padding: 3px 4px; min-height: 26px; }
 .prop-item:hover { background: var(--bg-hover, rgba(127, 127, 127, 0.08)); }
 .prop-item.checkbox-prop { border-top: none; padding-top: 3px; }
+
+/* ===== Stencil Generator wie PCB-I: kompakter Baum, Eigenschaftenliste einspaltig ===== */
+.pkg-tree-list { padding: 2px 0; gap: 0; }
+.pkg-tree-item { padding: 1px 8px 1px 26px; border-radius: 0; border: none; border-left: 2px solid transparent; font-size: 0.78rem; min-height: 20px; }
+.pkg-tree-item .pkg-item-icon { display: none; }
+.pkg-tree-item .pkg-item-name { font-family: var(--font-ui); }
+.pkg-tree-item.active { background-color: #1e40af !important; border-color: transparent; }
+.pkg-tree-item.review-open, .pkg-tree-item.review-auto, .pkg-tree-item.review-done { border-left-width: 2px; }
+.pkg-badge-count { background: none; padding: 0; font-weight: 500; color: var(--text-muted); }
+.pkg-group-header { padding: 2px 8px 2px 10px; font-size: 0.78rem; }
+.pkg-pin-list { padding-left: 40px; }
+.pkg-pin-item { padding: 0 6px; border-radius: 0; }
+.pkg-category-bar { padding: 4px 6px; gap: 4px; }
+.cat-pill { padding: 1px 8px; font-size: 0.72rem; }
+.pkg-search-box input { padding: 4px 8px; font-size: 0.8rem; }
+
+/* Eigenschaftenliste: eine Spalte, Name links (55 %) / Wert rechts wie das PCB-I-PropertyGrid */
+.rule-property-grid,
+.pkg-main-content.rules-right .rule-property-grid,
+.pkg-main-content.rules-left .rule-property-grid { grid-template-columns: 1fr; align-content: start; gap: 0; padding: 0 0 6px; }
+.prop-item { display: grid; grid-template-columns: 55% 1fr; align-items: center; padding: 1px 8px; min-height: 22px; border-bottom: 1px solid var(--border-color); }
+.prop-item label { border-right: 1px solid var(--border-color); padding-right: 6px; font-weight: 400; }
+.prop-item input[type="number"], .prop-item select { justify-self: start; text-align: left; }
+.prop-item.checkbox-prop { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.prop-item.checkbox-prop label { border-right: none; }
+.rule-source-banner, .rule-source-banner.inherited, .rule-source-banner.own { background: transparent; color: var(--text-secondary); border-bottom: 1px solid var(--border-color); padding: 2px 10px; font-size: 0.72rem; }
+.rule-source-banner.inherited { display: none; } /* Vererbung steht wie in PCB-I in "Select Rule" */
+.rule-source-banner.pin-target.inherited { display: flex; }
+
+.tree-ctx-menu { position: fixed; z-index: 9999; min-width: 200px; background: var(--bg-surface-elevated); border: 1px solid var(--border-color); box-shadow: 0 6px 20px rgba(0,0,0,0.35); padding: 3px 0; }
+.tree-ctx-menu button { display: block; width: 100%; text-align: left; padding: 5px 14px; background: none; border: none; color: var(--text-primary); font-size: 0.8rem; cursor: pointer; }
+.tree-ctx-menu button:hover { background: var(--accent); color: #fff; }
+
+/* ===== Helles Design (PCB-I-ähnlich); Zeichenflächen bleiben schwarz ===== */
+html[data-theme="light"] {
+    --bg-base: #eef0f4;
+    --bg-surface: #ffffff;
+    --bg-surface-elevated: #f3f5f9;
+    --bg-hover: #e3e8f0;
+    --border-color: #cfd6e2;
+    --text-primary: #111827;
+    --text-secondary: #374151;
+    --text-muted: #6b7280;
+    --text-main: #111827;
+    --bg-card: #ffffff;
+    --border: #cfd6e2;
+    --surface-0: #eef0f4;
+    --surface-1: #ffffff;
+    --surface-2: #f3f5f9;
+    --surface-3: #dfe4ec;
+    --border-strong: #b8c1cf;
+    --list-active: #cce4ff;
+    color-scheme: light;
+}
+html[data-theme="light"] .tab-btn.active, html[data-theme="light"] .gen-tabs button.active { color: #111827; }
+html[data-theme="light"] .pkg-title, html[data-theme="light"] #lblActivePkgName { color: #b45309; }
+html[data-theme="light"] .prop-item label { color: #1f2937; }
+html[data-theme="light"] body { background: var(--bg-base); color: var(--text-primary); }
+html[data-theme="light"] .pkg-main-content { background-color: #f3f5f9; }
+html[data-theme="light"] .pkg-tree-item.active { background-color: #0a64d8 !important; color: #fff; }
+html[data-theme="light"] .pkg-group-header, html[data-theme="light"] .pkg-pin-item { color: #111827; }
+html[data-theme="light"] .pkg-tree-item.review-auto .pkg-item-name { color: #a16207; }
+html[data-theme="light"] .pkg-tree-item.review-done .pkg-item-name { color: #15803d; }
+html[data-theme="light"] .pkg-tree-item.review-open .pkg-item-name { color: #b91c1c; }
+html[data-theme="light"] input, html[data-theme="light"] select { background: #fff; color: #111827; border-color: #cfd6e2; }

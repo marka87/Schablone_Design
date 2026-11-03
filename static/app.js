@@ -1978,7 +1978,7 @@ function layerRow(layer) {
             </td>
             <td class="layer-name-cell" title="${layer.name} (${layer.filename || ''})">
                 <div style="font-weight:600;">${escapeHtml(layer.name)}</div>
-                <div class="layer-subname">${escapeHtml(layer.filename || '')}</div>
+                <div class="layer-subname">${escapeHtml(layer.info ? `${layer.info} · ${layer.filename || ''}` : (layer.filename || ''))}</div>
             </td>
             <td class="col-type">
                 <span class="badge-layer ${typeBadge}">${layer.type || 'LAYER'}</span>
@@ -3665,6 +3665,7 @@ function renderPkgTree() {
             pkgState.collapsedGroups[g.key] = !pkgState.collapsedGroups[g.key];
             renderPkgTree();
         });
+        header.addEventListener("contextmenu", (e) => showTreeMenu(e, [[`Nur ${g.label} generieren`, () => generateTarget("group", g.key)]]));
         header.querySelector(".grp-label").addEventListener("click", (e) => {
             e.stopPropagation();
             selectGroupRule(g.key);
@@ -3708,6 +3709,10 @@ ${reviewText}` : ""}`;
             if (s && s.top + s.bot > 0 && !s[state.side || "top"]) await switchSide(s.top ? "top" : "bot");
             selectPackage(p.name);
         });
+        item.addEventListener("contextmenu", (e) => showTreeMenu(e, [
+            [`Nur ${p.name} generieren`, () => generateTarget("package", p.name)],
+            [`Ganze Gruppe ${(PKG_GROUPS.find(g => g.key === (p.group || "SMD")) || {}).label || p.group} generieren`, () => generateTarget("group", p.group || "SMD")]
+        ]));
         item.querySelector(".pkg-pin-toggle")?.addEventListener("click", (e) => {
             e.stopPropagation();
             pkgState.pinsExpanded = !pkgState.pinsExpanded;
@@ -3745,6 +3750,89 @@ ${reviewText}` : ""}`;
     }
 }
 
+// Helles Design (wie PCB-I) / dunkles Design, gespeichert im Browser
+(function initTheme() {
+    const apply = t => document.documentElement.setAttribute("data-theme", t);
+    apply(localStorage.getItem("sc.theme") || "dark");
+    document.addEventListener("DOMContentLoaded", () => document.getElementById("btnTheme")?.addEventListener("click", () => {
+        const t = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+        localStorage.setItem("sc.theme", t);
+        apply(t);
+    }));
+})();
+
+// Nach Generate: Platine, Lagen, Baum, Vorschau und Verlauf auffrischen
+async function afterGenerate() {
+    await refreshApertureData();
+    await loadPackagesList();
+    if (pkgState.activePkgName) await selectPackage(pkgState.activePkgName);
+    refreshHistory();
+}
+
+// Nur ein Ziel generieren (Rechtsklick im Baum): Package oder Gruppe
+async function generateTarget(kind, id) {
+    const isActive = kind === "package" && id === pkgState.activePkgName && pkgState.ruleTarget?.kind === "package";
+    const res = await fetch(`/api/${kind}/${encodeURIComponent(id)}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: isActive ? JSON.stringify(collectRuleFromInputs()) : "{}" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.status === "error") { showToast(`Generate fehlgeschlagen (${id})`, 5000); return; }
+    await afterGenerate();
+    showToast(`${data.modified_count ?? 0} Pads erzeugt: ${id}`);
+}
+
+function showTreeMenu(e, items) {
+    e.preventDefault();
+    document.getElementById("treeCtxMenu")?.remove();
+    const m = document.createElement("div");
+    m.id = "treeCtxMenu";
+    m.className = "tree-ctx-menu";
+    for (const [label, fn] of items) {
+        const btn = document.createElement("button");
+        btn.textContent = label;
+        btn.addEventListener("click", () => { m.remove(); fn(); });
+        m.appendChild(btn);
+    }
+    m.style.left = `${e.clientX}px`;
+    m.style.top = `${e.clientY}px`;
+    document.body.appendChild(m);
+    setTimeout(() => document.addEventListener("click", () => m.remove(), { once: true }), 0);
+}
+
+// Platinenumgebung der ersten Instanz (Kupfer + Schablone der Nachbarn) für die Vorschau
+async function loadPkgBoardContext() {
+    const name = pkgState.activePkgName;
+    pkgState.boardContext = null;
+    if (!name || !document.getElementById("chkPrevBoard")?.checked) { renderPkgPreview(); return; }
+    const r = document.getElementById("selPrevBoardRadius")?.value || 4;
+    try {
+        const res = await fetch(`/api/package/${encodeURIComponent(name)}/context?radius=${r}`);
+        const data = await res.json();
+        if (name === pkgState.activePkgName) pkgState.boardContext = data;
+    } catch (e) {
+        console.error("Platinenumgebung:", e);
+    }
+    renderPkgPreview();
+}
+
+function drawPkgBoardContext(ctx, zoom) {
+    const items = pkgState.boardContext?.items;
+    if (!items?.length) return;
+    const poly = pts => { ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); };
+    ctx.lineWidth = 1 / zoom;
+    for (const it of items) {
+        if (it.own) continue;
+        if (pkgState.showCopper !== false && it.copper) {
+            ctx.fillStyle = "rgba(0, 168, 140, 0.55)";
+            poly(it.copper);
+            ctx.fill();
+        }
+        if (pkgState.showPaste !== false) {
+            ctx.strokeStyle = "rgba(148, 163, 184, 0.9)";
+            ctx.fillStyle = "rgba(148, 163, 184, 0.25)";
+            for (const st of it.stencil || []) { poly(st); ctx.fill(); ctx.stroke(); }
+        }
+    }
+}
+
 async function selectPackage(pkgName) {
     pkgState.activePkgName = pkgName;
     pkgState.selectedPin = null;
@@ -3778,6 +3866,7 @@ async function selectPackage(pkgName) {
 
         // Pin Dropdown befüllen
         populatePinDropdown(data.pads, data.pad_overrides);
+        loadPkgBoardContext();
 
         // Regeleingaben aktualisieren (bei Inherit: Werte der geerbten Regel zeigen)
         pkgState.ruleTarget = { kind: "package", id: data.name };
@@ -4194,6 +4283,9 @@ function renderPkgPreview() {
     pkgCtx.moveTo(-10, 0); pkgCtx.lineTo(10, 0);
     pkgCtx.moveTo(0, -10); pkgCtx.lineTo(0, 10);
     pkgCtx.stroke();
+
+    // 1b. Platinenumgebung (Nachbarn) wie PCB-I
+    drawPkgBoardContext(pkgCtx, pkgState.zoom);
 
     // 2. Component Silkscreen / Body Outline (Gelb / Weiß)
     if (pkgState.showComponent && data.outline) {
@@ -4689,6 +4781,8 @@ function setupPkgEventListeners() {
         items.sort((a, b) => box(a) - box(b) || label(a).localeCompare(label(b), "en", { sensitivity: "base" })).forEach(el => grid.appendChild(el));
     }
     document.getElementById("propPinMinusMask")?.addEventListener("change", onRuleParamChanged);
+    document.getElementById("chkPrevBoard")?.addEventListener("change", loadPkgBoardContext);
+    document.getElementById("selPrevBoardRadius")?.addEventListener("change", loadPkgBoardContext);
     document.getElementById("propChamferMode")?.addEventListener("change", onRuleParamChanged);
     document.getElementById("propTryDirection")?.addEventListener("change", onRuleParamChanged);
 
@@ -4784,64 +4878,23 @@ function setupPkgEventListeners() {
     document.getElementById("chkPrevInfo")?.addEventListener("change", e => { pkgState.showInfo = e.target.checked; renderPkgPreview(); });
     setupRuleTargets();
 
-    // Generate Stencil Pads Button
+    // Generate Stencil Pads: ganze Platine (TOP + BOT) nach dem Regelbaum, wie PCB-I.
+    // Einzelnes Package / Gruppe: Rechtsklick im Baum ("Nur … generieren").
     document.getElementById("btnGenerateStencilPads").addEventListener("click", async () => {
-        const target = pkgState.ruleTarget || { kind: "package", id: pkgState.activePkgName };
-        if (!target.id) return;
         const btn = document.getElementById("btnGenerateStencilPads");
         const originalText = btn.innerHTML;
+        btn.disabled = true;
         btn.innerHTML = `<span></span> Generiere...`;
-        btn.disabled = true;
-
         try {
-            const ruleData = collectRuleFromInputs();
-            // Pin-Auswahl: Pin-Regeln sind schon gespeichert, das ganze Package neu erzeugen (Regel unverändert)
-            const pinTarget = target.kind === "pin" || target.kind === "pins";
-            const url = target.kind === "package" || pinTarget
-                ? `/api/package/${encodeURIComponent(target.id)}/generate`
-                : `/api/${target.kind}/${encodeURIComponent(target.id)}/generate`;
-            const res = await fetch(url, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: target.kind === "package" ? JSON.stringify(ruleData) : "{}"
-            });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-            btn.innerHTML = `<span>✓</span> ${data.modified_count} Pads aktualisiert!`;
-            setTimeout(() => {
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-            }, 2500);
-
-            // Aktualisiere Board-Aperturen und Status-Farben im Hintergrund
-            await refreshApertureData();
-            await loadPackagesList();
-        } catch (e) {
-            console.error("Fehler bei Generate Stencil Pads:", e);
-            showToast(`Generate fehlgeschlagen: ${e.message || e}`, 6000);
-            btn.innerHTML = originalText;
-            btn.disabled = false;
-        }
-    });
-
-    // Alle Packages beider Seiten erzeugen (Status: offen → automatisch)
-    document.getElementById("btnGenerateAll")?.addEventListener("click", async () => {
-        const btn = document.getElementById("btnGenerateAll");
-        const originalText = btn.innerHTML;
-        btn.disabled = true;
-        btn.innerHTML = `<span></span> Generiere alles...`;
-        try {
+            await new Promise(r => setTimeout(r, 80)); // laufende Regel-Speicherung abwarten
             const res = await fetch("/api/generate_all", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
-            await refreshApertureData();
-            await loadPackagesList();
-            if (pkgState.activePkgName) await selectPackage(pkgState.activePkgName);
-            refreshHistory();
-            showToast(`${data.modified_count} Pads auf TOP und BOT erzeugt`);
+            await afterGenerate();
+            showToast(`${data.modified_count} Pads auf TOP und BOT erzeugt (top_stencil / bot_stencil)`);
         } catch (e) {
-            console.error("Fehler bei Alles generieren:", e);
-            showToast("Alles generieren fehlgeschlagen");
+            console.error("Fehler bei Generate Stencil Pads:", e);
+            showToast(`Generate fehlgeschlagen: ${e.message || e}`, 6000);
         } finally {
             btn.innerHTML = originalText;
             btn.disabled = false;
@@ -5808,7 +5861,12 @@ function updateRuleSourceBanner() {
     const inheritOpt = document.querySelector('#selectPkgRule option[value="inherit"]');
     if (inheritOpt) {
         inheritOpt.disabled = t.kind === "group";
-        inheritOpt.textContent = (t.kind === "pin" || t.kind === "pins") ? "Wie Package (keine eigene Pin-Regel)" : "Inherit – Regel der Gruppe übernehmen";
+        // Wie PCB-I: "Inherit    SMD Packages -> Handle Stencil Creation by Package Group"
+        const d = pkgState.activePackageData;
+        const effLabel = document.querySelector(`#selectPkgRule option[value="${d?.effective_rule?.rule_type}"]`)?.textContent;
+        inheritOpt.textContent = (t.kind === "pin" || t.kind === "pins") ? "Wie Package (keine eigene Pin-Regel)"
+            : (t.kind === "package" && d?.rule?.rule_type === "inherit" && effLabel) ? `Inherit    ${GROUP_LABELS[d.group] || d.group || "SMD Packages"} -> ${effLabel}`
+            : "Inherit – Regel der Gruppe übernehmen";
     }
     banner.classList.toggle("pin-target", t.kind === "pin" || t.kind === "pins");
     if (t.kind === "pins") {

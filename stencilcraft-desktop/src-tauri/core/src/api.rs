@@ -670,11 +670,18 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
             ok(json!({"current_customer": e.current_customer, "packages": pkgs}))
         }
         ("GET", ["api", "package", name]) => ok(e.get_package_preview_data(name)),
+        ("GET", ["api", "package", name, "context"]) => {
+            let r = query.get("radius").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(4.0).clamp(0.5, 50.0);
+            let refdes = query.get("refdes").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+            ok(e.package_context(name, r, refdes))
+        }
         ("POST", ["api", "package", name, "rule"]) => {
             let target = e.resolve_alias(name);
             if let Some(p) = e.packages.get_mut(&target) {
                 p.rule.apply_map(body);
             }
+            // Regel geändert = bearbeitet (Farbe im Baum); die Platine ändert erst "Generate Stencil Pads"
+            e.mark_packages([name.to_string()], "done");
             ok(json!({"status": "ok", "preview": e.get_package_preview_data(name)}))
         }
         ("POST", ["api", "package", name, "generate"]) => {
@@ -924,6 +931,35 @@ mod tests {
         std::fs::write(&path, g).unwrap();
         e.import_files_or_zip(&[path.to_string_lossy().to_string()], "top", true).unwrap();
         e
+    }
+
+    #[test]
+    fn stencil_layer_and_board_context() {
+        let mut e = engine_with_chips();
+        let empty = Map::new();
+        // Schablonenlage wie beim ODB++-Import (Gerber-Import legt keine eigene an)
+        e.upsert_layer(crate::engine::types::BoardLayer { id: "stencil_mod_top".into(), name: "x".into(), filename: String::new(), layer_type: "paste".into(), side: "top".into(), color: String::new(), visible: true, opacity: 1.0, file_path: String::new(), primitives: vec![] });
+        let stencil = |e: &StencilEngine| e.layers_summary().into_iter().find(|l| l["id"] == "stencil_mod_top").unwrap();
+        assert_eq!((stencil(&e)["name"].clone(), stencil(&e)["count"].clone()), (json!("top_stencil"), json!(0)));
+        handle(&mut e, "POST", "/api/generate_all", &empty, &empty);
+        assert_eq!(stencil(&e)["info"], "120 µm");
+        assert!(stencil(&e)["count"].as_u64().unwrap() >= 11);
+
+        // Bauteil C1 (Pads 0, 1 um x = 10) um 90° gedreht: Nachbar bei x = 15 liegt im Package-Rahmen auf der y-Achse
+        for a in e.apertures.iter_mut().filter(|a| (a.cx - 10.0).abs() < 1.0 && (a.cy - 10.0).abs() < 1.0) {
+            a.component_id = "C1".into();
+        }
+        e.components.push(crate::engine::types::ComponentItem { refdes: "C1".into(), package: "CHIP".into(), cx: 10.0, cy: 10.0, width: 2.0, height: 1.0, rotation: 90.0, side: "TOP".into(), outline: vec![], pin1: None, pins: vec![] });
+        let v = e.package_context("CHIP", 6.0, None);
+        assert_eq!(v["refdes"], "C1");
+        let items = v["items"].as_array().unwrap();
+        assert_eq!(items.iter().filter(|i| i["own"] == true).count(), 2);
+        let n = items.iter().find(|i| i["own"] == false).unwrap();
+        let p = &n["stencil"][0];
+        let pts = p.as_array().unwrap();
+        let cx: f64 = pts.iter().map(|q| q[0].as_f64().unwrap()).sum::<f64>() / pts.len() as f64;
+        let cy: f64 = pts.iter().map(|q| q[1].as_f64().unwrap()).sum::<f64>() / pts.len() as f64;
+        assert!(cx.abs() < 0.2 && (cy.abs() - 4.149).abs() < 0.2, "Nachbar bei ({cx}, {cy})");
     }
 
     #[test]

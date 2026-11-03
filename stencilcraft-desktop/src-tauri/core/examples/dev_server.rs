@@ -18,6 +18,8 @@ fn main() {
     let listener = TcpListener::bind(format!("127.0.0.1:{port}")).expect("Port belegt");
     println!("StencilCraft dev server: http://127.0.0.1:{port}");
     for stream in listener.incoming().flatten() {
+        // Ein Thread: leere Vorab-Verbindungen des Browsers dürfen den Server nicht blockieren
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(3)));
         let mut reader = BufReader::new(&stream);
         let mut line = String::new();
         if reader.read_line(&mut line).is_err() {

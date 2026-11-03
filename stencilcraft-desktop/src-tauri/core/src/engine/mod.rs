@@ -359,7 +359,29 @@ impl StencilEngine {
     // Lagen-Manager
     // -------------------------------------------------------------
     pub fn layers_summary(&self) -> Vec<Value> {
-        self.layers.iter().map(BoardLayer::summary).collect()
+        self.layers
+            .iter()
+            .map(|l| {
+                let mut v = l.summary();
+                // Schablonenlage wie PCB-I "top_stencil": eigene Lage, Kundenpaste und Zonen bleiben unberührt
+                if let Some(s) = l.id.strip_prefix("stencil_mod_") {
+                    let (aps, t) = if s == self.current_side {
+                        (&self.apertures, self.base_thickness)
+                    } else {
+                        match self.sides.get(s) {
+                            Some(d) => (&d.apertures, d.base_thickness),
+                            None => return v,
+                        }
+                    };
+                    let generated = aps.iter().any(|a| a.custom_slices.is_some());
+                    let count: usize = if generated { aps.iter().map(|a| a.custom_slices.as_ref().map_or(1, Vec::len)).sum() } else { 0 };
+                    v["name"] = json!(format!("{s}_stencil"));
+                    v["count"] = json!(count);
+                    v["info"] = json!(if generated { format!("{:.0} µm", t * 1000.0) } else { "noch nicht generiert".into() });
+                }
+                v
+            })
+            .collect()
     }
 
     pub fn layer_mut(&mut self, id: &str) -> Option<&mut BoardLayer> {
@@ -967,6 +989,43 @@ impl StencilEngine {
             }
         }
         true
+    }
+
+    /// Platinenumgebung der ersten Instanz eines Packages (aktive Seite) im Package-Rahmen:
+    /// Kupfer und Schablonenöffnungen der Nachbarn im Umkreis `radius` (mm) – für die Vorschau wie PCB-I.
+    pub fn package_context(&self, pkg_name: &str, radius: f64, refdes: Option<&str>) -> Value {
+        let target = self.resolve_alias(pkg_name);
+        let side = &self.current_side;
+        let Some(c) = self.components.iter().find(|c| {
+            c.side.eq_ignore_ascii_case(side) && refdes.map_or(self.resolve_alias(&c.package) == target, |r| c.refdes == r)
+        }) else {
+            return json!({"refdes": null, "items": []});
+        };
+        let mirror = c.side.eq_ignore_ascii_case("BOT");
+        let tf = |x: f64, y: f64| {
+            let p = frame_to_pkg((x - c.cx, y - c.cy), c.rotation, mirror);
+            [r4(p.0), r4(p.1)]
+        };
+        let rect = |cx: f64, cy: f64, w: f64, h: f64| vec![(cx - w / 2.0, cy - h / 2.0), (cx + w / 2.0, cy - h / 2.0), (cx + w / 2.0, cy + h / 2.0), (cx - w / 2.0, cy + h / 2.0)];
+        let mut items = Vec::new();
+        for a in &self.apertures {
+            if (a.cx - c.cx).hypot(a.cy - c.cy) > radius + a.width.max(a.height) {
+                continue;
+            }
+            let own = a.component_id == c.refdes;
+            let copper = a.copper_ref.as_ref().map(|k| {
+                let pts = if k.round { circle_pts((k.x0 + k.x1) / 2.0, (k.y0 + k.y1) / 2.0, (k.x1 - k.x0) / 2.0, 24) } else { vec![(k.x0, k.y0), (k.x1, k.y0), (k.x1, k.y1), (k.x0, k.y1)] };
+                pts.iter().map(|p| tf(p.0, p.1)).collect::<Vec<_>>()
+            });
+            let stencil: Vec<Vec<[f64; 2]>> = match &a.custom_slices {
+                Some(v) => v.iter().map(|s| s.pts.clone().unwrap_or_else(|| rect(s.cx, s.cy, s.w, s.h)).iter().map(|p| tf(p.0, p.1)).collect()).collect(),
+                None if a.shape_type == "circle" => vec![circle_pts(a.cx, a.cy, a.width / 2.0, 24).iter().map(|p| tf(p.0, p.1)).collect()],
+                None if a.points.len() >= 3 => vec![a.points.iter().map(|p| tf(p.0, p.1)).collect()],
+                None => vec![rect(a.cx, a.cy, a.width, a.height).iter().map(|p| tf(p.0, p.1)).collect()],
+            };
+            items.push(json!({"own": own, "copper": copper, "stencil": stencil}));
+        }
+        json!({"refdes": c.refdes, "rot": c.rotation, "mirror": mirror, "items": items})
     }
 
     pub fn get_package_preview_data(&self, pkg_name: &str) -> Value {

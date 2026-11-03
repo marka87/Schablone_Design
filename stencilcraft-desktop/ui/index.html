@@ -203,6 +203,7 @@
                         <option value="1.25">125 %</option>
                         <option value="1.4">140 %</option>
                     </select>
+                    <button id="btnTheme" class="btn btn-sm btn-secondary" title="Helles / dunkles Design umschalten">◐</button>
                 </div>
                 <span class="rb-cap">Darstellung</span>
             </div>
@@ -1056,6 +1057,13 @@
                             <label><input type="checkbox" id="chkPrevPinLabels"> Show Pin Labels</label>
                             <label><input type="checkbox" id="chkPrevDrills" checked> Show Drills</label>
                             <label title="Area Ratio, Fläche und Pastenvolumen je Öffnung"><input type="checkbox" id="chkPrevInfo"> Show Info Layer</label>
+                            <label title="Nachbarn auf der Platine um die erste Instanz zeigen (Kupfer und Schablone)"><input type="checkbox" id="chkPrevBoard" checked> Show Board</label>
+                            <select id="selPrevBoardRadius" title="Umkreis der Platinenansicht" style="font-size:0.72rem;">
+                                <option value="2">2 mm</option>
+                                <option value="4" selected>4 mm</option>
+                                <option value="8">8 mm</option>
+                                <option value="15">15 mm</option>
+                            </select>
                         </div>
 
                         <div class="preview-cta">
@@ -1068,10 +1076,7 @@
                             <button id="btnClearMeasurePkg" class="btn btn-sm btn-tool-del hidden" title="Messungen löschen (Taste: Entf / C)">
                                 <span><i class="ic ic-trash"></i></span> Messung löschen
                             </button>
-                            <button id="btnGenerateAll" class="btn btn-secondary btn-generate" title="Alle Packages auf TOP und BOT nach ihren Regeln erzeugen. Bearbeitete (grüne) bleiben grün, von Hand geänderte Pads bleiben unverändert. Rückgängig mit Strg+Z.">
-                                <span><i class="ic ic-zap"></i></span> Alles generieren
-                            </button>
-                            <button id="btnGenerateStencilPads" class="btn btn-primary btn-generate">
+                            <button id="btnGenerateStencilPads" class="btn btn-primary btn-generate" title="Ganze Platine (TOP und BOT) nach dem Regelbaum in top_stencil / bot_stencil erzeugen. Kundenpaste und Zonen bleiben unberührt, von Hand geänderte Öffnungen auch. Nur ein Package / eine Gruppe: Rechtsklick im Baum. Rückgängig mit Strg+Z.">
                                 <span><i class="ic ic-zap"></i></span> Generate Stencil Pads
                             </button>
                         </div>
