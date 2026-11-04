@@ -84,6 +84,10 @@ pub trait Dialogs {
     fn pick_save_rule_tree(&self, _default_name: &str) -> Option<PathBuf> {
         None
     }
+    /// StencilCraft-Bibliothek (JSON) vom PC wählen
+    fn pick_library(&self) -> Option<PathBuf> {
+        None
+    }
 }
 
 /// Ohne GUI (Tests/Headless): Dialoge gelten als abgebrochen.
@@ -195,6 +199,14 @@ pub fn dispatch(engine: &Mutex<StencilEngine>, method: &str, url: &str, body: &V
                 Ok(p) => ok(json!({"status": "ok", "path": p, "history": e.history_json()})),
                 Err(m) => err(500, m),
             }
+        }
+        // Bibliothek vom PC: Datei per Dialog wählen, dann regulär vergleichen bzw. laden
+        ("POST", "/api/library/diff") | ("POST", "/api/library/load") if Body(body_map).b("pick", false) => {
+            let Some(p) = dialogs.pick_library() else { return ok(json!({"status": "cancelled"})) };
+            let mut m = body_map.clone();
+            m.remove("pick");
+            m.insert("path".into(), json!(p.to_string_lossy()));
+            dispatch(engine, method, path, &Value::Object(m), dialogs)
         }
         // PCB-I-Kundenbibliothek: Datei per Dialog wählen, dann regulär (mit Undo) verarbeiten
         ("POST", "/api/pcbi/import") | ("POST", "/api/pcbi/export") if Body(body_map).s("path").filter(|p| !p.is_empty()).is_none() => {
@@ -821,10 +833,20 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
             }
         }
         ("GET", ["api", "libraries"]) => ok(json!({"libraries": e.list_customer_libraries(), "current_customer": e.current_customer})),
-        ("POST", ["api", "library", "load"]) => {
+        ("POST", ["api", "library", op @ ("load" | "diff")]) => {
+            // Quelle: Kundenname aus dem Bibliotheksordner oder Datei vom PC ("path")
             let c = b.s("customer").unwrap_or_else(|| "Standard".into());
-            let s = e.load_customer_library(&c);
-            ok(json!({"status": if s { "ok" } else { "error" }, "customer": e.current_customer, "packages": e.packages.values().map(|p| p.to_json()).collect::<Vec<_>>()}))
+            let path = b.s("path").filter(|p| !p.is_empty()).map(PathBuf::from);
+            let (data, name) = match e.read_library(&c, path.as_deref()) {
+                Ok(v) => v,
+                Err(m) => return err(400, m),
+            };
+            if *op == "diff" {
+                return ok(json!({"status": "ok", "customer": name, "path": b.s("path"), "changes": e.library_diff(&data, &name)}));
+            }
+            let keep: Vec<String> = b.0.get("keep").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+            e.apply_library_keep(&data, &name, &keep);
+            ok(json!({"status": "ok", "customer": e.current_customer, "packages": e.packages.values().map(|p| p.to_json()).collect::<Vec<_>>()}))
         }
         ("POST", ["api", "library", "save"]) => {
             let c = b.s("customer").unwrap_or_else(|| e.current_customer.clone());
@@ -969,6 +991,29 @@ mod tests {
         std::fs::write(&path, g).unwrap();
         e.import_files_or_zip(&[path.to_string_lossy().to_string()], "top", true).unwrap();
         e
+    }
+
+    #[test]
+    fn library_diff_and_load_keeps_chosen() {
+        let mut e = engine_with_chips();
+        let empty = Map::new();
+        let name = e.packages.iter().find(|(_, p)| p.group != "Library").map(|(k, _)| k.clone()).unwrap();
+        // eigene Bearbeitung vor dem Laden
+        e.packages.get_mut(&name).unwrap().rule = crate::engine::types::PackageRule::with("ignore", "Ignore");
+        let lib = json!({"customer": e.current_customer, "packages": {name.clone(): {"rule_type": "house_builder"}}});
+        let file = std::env::temp_dir().join("stencilcraft_test_lib.json");
+        std::fs::write(&file, lib.to_string()).unwrap();
+        let path = file.to_string_lossy().to_string();
+        let post = |e: &mut StencilEngine, p: &str, v: Value| handle(e, "POST", p, v.as_object().unwrap(), &empty).1;
+        let d = post(&mut e, "/api/library/diff", json!({"path": path}));
+        assert!(d["changes"].as_array().unwrap().iter().any(|c| c["key"] == json!(name)), "Änderung nicht erkannt: {d}");
+        assert_eq!(e.packages[&name].rule.rule_type, "ignore", "Vorschau darf nichts ändern");
+        // "Meine behalten"
+        post(&mut e, "/api/library/load", json!({"path": path, "keep": [name.clone()]}));
+        assert_eq!(e.packages[&name].rule.rule_type, "ignore");
+        // Bibliothek übernehmen
+        post(&mut e, "/api/library/load", json!({"path": path}));
+        assert_eq!(e.packages[&name].rule.rule_type, "house_builder");
     }
 
     #[test]

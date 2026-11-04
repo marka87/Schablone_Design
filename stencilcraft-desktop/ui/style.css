@@ -2434,3 +2434,64 @@ html[data-theme="light"] input, html[data-theme="light"] select { background: #f
 
 /* Kopfleiste: Status-Zahlen kleiner */
 .app-header .pill, .ribbon .pill { font-size: 0.72rem; padding: 1px 6px; }
+
+
+/* Bibliothek: eine Zeile Name, eine Zeile Aktionen; Dialoge für Nachfrage und Abgleich */
+.library-header .lib-selector-row { display: flex; align-items: center; gap: 6px; }
+.library-header .lib-caption { color: var(--text-muted); font-size: 0.75rem; }
+.library-header .lib-current { font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.library-header .lib-dirty { color: #d29922; font-size: 0.72rem; white-space: nowrap; }
+.library-header .lib-tools-row { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+#libLoadList button { display: block; width: 100%; text-align: left; white-space: pre; }
+.lib-ask-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.lib-diff-box { width: min(92vw, 860px); }
+.lib-diff-actions { display: flex; gap: 6px; margin-bottom: 6px; }
+.lib-diff-table-wrap { max-height: 55vh; overflow: auto; border: 1px solid var(--border-color); }
+.lib-diff-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.lib-diff-table th, .lib-diff-table td { padding: 3px 8px; border-bottom: 1px solid var(--border-color); text-align: left; vertical-align: top; }
+.lib-diff-table th { position: sticky; top: 0; background: var(--bg-surface); }
+
+
+/* ===== Menüleiste (Datei / Bearbeiten / Ansicht / Extras / Hilfe) ===== */
+.app-menubar { display: flex; align-items: stretch; gap: 0; height: 26px; padding: 0 6px; background: var(--bg-surface); border-bottom: 1px solid var(--border-color); font-size: 13px; position: relative; z-index: 200; user-select: none; }
+.app-menu { position: relative; }
+.app-menu-head { height: 100%; padding: 0 10px; background: none; border: none; color: var(--text-primary); font: inherit; cursor: default; }
+.app-menu-head:hover, .app-menu.open .app-menu-head { background: var(--bg-hover); }
+.app-menu-list { display: none; position: absolute; top: 100%; left: 0; min-width: 250px; padding: 4px 0; background: var(--bg-surface); border: 1px solid var(--border-strong, var(--border-color)); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); }
+.app-menu.open .app-menu-list { display: block; }
+.app-menu-list button { display: flex; justify-content: space-between; gap: 24px; width: 100%; padding: 5px 16px 5px 22px; background: none; border: none; color: var(--text-primary); font: inherit; text-align: left; cursor: default; }
+.app-menu-list button:hover { background: var(--accent); color: #fff; }
+.app-menu-list kbd { font: inherit; opacity: 0.6; background: none; border: none; }
+.app-menu-sep { height: 1px; margin: 4px 8px; background: var(--border-color); }
+
+/* ===== Schmale Werkzeugleiste: Gruppen, die jetzt im Menü stehen, ausblenden ===== */
+.app-header.ribbon .rb-cap { display: none; }
+.app-header.ribbon #btnCloseDataset,
+.app-header.ribbon #btnDetachGenerator,
+.app-header.ribbon .rb-group:has(#btnCheckBridges),
+.app-header.ribbon .rb-group:has(#btnOpenPipModal),
+.app-header.ribbon .rb-group:has(#btnTheme) { display: none !important; }
+.app-header.ribbon .rb-group { padding-top: 2px; padding-bottom: 2px; }
+
+/* ===== Helles Design (Standard): ruhige helle Flächen, Farbe nur für Status und Auswahl; Zeichenflächen bleiben dunkel ===== */
+html[data-theme="light"] .app-header.ribbon,
+html[data-theme="light"] .app-header.ribbon .header-main,
+html[data-theme="light"] .app-header.ribbon .header-tools { background: #f6f7f9; }
+html[data-theme="light"] .layer-toggles, html[data-theme="light"] .view-mode, html[data-theme="light"] .coords-display,
+html[data-theme="light"] .zoom-toolbar { background-color: rgba(255, 255, 255, 0.92); color: var(--text-primary); }
+html[data-theme="light"] .app-toast, html[data-theme="light"] .step-panel { background: #ffffff; border-color: var(--border-color); color: var(--text-primary); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15); }
+html[data-theme="light"] .single-pad-bar { background: #ffffff; color: var(--text-primary); }
+html[data-theme="light"] .modal-box, html[data-theme="light"] .dropdown-menu, html[data-theme="light"] .tree-ctx-menu { background: #ffffff; color: var(--text-primary); border-color: var(--border-color); }
+html[data-theme="light"] .btn-secondary, html[data-theme="light"] .btn-ghost { background: #ffffff; color: var(--text-primary); border-color: var(--border-color); }
+html[data-theme="light"] .btn-secondary:hover, html[data-theme="light"] .btn-ghost:hover { background: var(--bg-hover); }
+html[data-theme="light"] .layer-table td, html[data-theme="light"] .layer-table th, html[data-theme="light"] .prop-item label,
+html[data-theme="light"] .preview-toggles label, html[data-theme="light"] .section-title { color: var(--text-primary); }
+html[data-theme="light"] .pkg-badge-pitch, html[data-theme="light"] .pkg-badge-count, html[data-theme="light"] .layer-table .col-info { color: #6b7280; }
+html[data-theme="light"] .pkg-preview-toolbar, html[data-theme="light"] .rule-config-card, html[data-theme="light"] .pkg-sidebar,
+html[data-theme="light"] .library-header, html[data-theme="light"] aside { background: #ffffff; color: var(--text-primary); }
+html[data-theme="light"] .canvas-title, html[data-theme="light"] .canvas-pitch { color: #e5e7eb; }
+html[data-theme="light"] ::-webkit-scrollbar-thumb { background: #c4cad4; }
+
+html[data-theme="light"] .mode-tab-btn, html[data-theme="light"] .mode-tab-btn.active { color: var(--text-primary); }
+html[data-theme="light"] .mode-tab-btn.active { background: #ffffff; border-color: var(--accent); }
+html[data-theme="light"] .pkg-tree-item.active .pkg-item-name, html[data-theme="light"] .pkg-tree-item.active .pkg-badge-pitch, html[data-theme="light"] .pkg-tree-item.active .pkg-badge-count, html[data-theme="light"] .pkg-tree-item.active .pkg-badge-side { color: #ffffff; }

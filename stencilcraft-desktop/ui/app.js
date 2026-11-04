@@ -506,6 +506,7 @@ async function openIpcProfiles() {
 
 // Regel nur für einen Pin speichern ("Wie Package" = Pin-Anpassung entfernen)
 async function savePinRule(target, ruleData) {
+    noteRuleEdit();
     const cur = pkgState.ruleTarget;
     if (!cur || cur.kind !== "pin" || cur.id !== target.id || cur.pin !== target.pin) return;
     const url = `/api/package/${encodeURIComponent(target.id)}/pin/${target.pin}/override`;
@@ -2447,6 +2448,18 @@ function setupEventListeners() {
             e.preventDefault();
             return;
         }
+        // Stencil Generator: Pfeil hoch/runter geht in der Package-Liste zum vorigen/nächsten Package
+        if (currentWorkspaceMode !== "board" && (e.key === "ArrowUp" || e.key === "ArrowDown") && !e.defaultPrevented) {
+            const items = [...document.querySelectorAll("#pkgTreeList .pkg-tree-item")];
+            const i = items.findIndex(el => el.classList.contains("active"));
+            const next = items[Math.min(items.length - 1, Math.max(0, i + (e.key === "ArrowDown" ? 1 : -1)))];
+            if (next && next !== items[i]) {
+                e.preventDefault();
+                next.click();
+                next.scrollIntoView({ block: "nearest" });
+            }
+            return;
+        }
         if (e.key === "m" || e.key === "M") {
             e.preventDefault();
             toggleMeasureTool();
@@ -3659,9 +3672,114 @@ async function loadLibraries() {
             select.appendChild(opt);
         }
         pkgState.currentCustomer = data.current_customer;
+        pkgState.libraries = data.libraries;
+        renderLibHeader();
     } catch (e) {
         console.error("Fehler beim Laden der Bibliotheken:", e);
     }
+}
+
+// Kopf der Bibliothek: Name, Änderungsmarke und Laden-Menü (Bibliotheken, vom PC, neu)
+function renderLibHeader() {
+    const lbl = document.getElementById("lblCurrentLib");
+    if (lbl) lbl.textContent = pkgState.currentCustomer === "Standard" ? "Standard (Inhouse)" : (pkgState.currentCustomer || "–");
+    document.getElementById("lblLibDirty")?.classList.toggle("hidden", !pkgState.libEdited);
+    const list = document.getElementById("libLoadList");
+    if (!list) return;
+    list.innerHTML = "";
+    for (const lib of pkgState.libraries || []) {
+        const b = document.createElement("button");
+        b.textContent = (lib === pkgState.currentCustomer ? "✓ " : "  ") + (lib === "Standard" ? "Standard (Inhouse)" : lib);
+        b.addEventListener("click", () => loadLibraryFlow({ customer: lib }));
+        list.appendChild(b);
+    }
+    list.insertAdjacentHTML("beforeend", '<div class="dropdown-sep"></div>');
+    const pc = document.createElement("button");
+    pc.textContent = "Vom PC laden…";
+    pc.className = "desktop-only";
+    pc.addEventListener("click", () => loadLibraryFlow({ pick: true }));
+    if (window.__TAURI__) list.appendChild(pc);
+    const nb = document.createElement("button");
+    nb.textContent = "＋ Neue Bibliothek…";
+    nb.addEventListener("click", () => document.getElementById("newLibModal").classList.remove("hidden"));
+    list.appendChild(nb);
+}
+
+// Bearbeitung merken: beim ersten Mal nach der Bibliothek fragen, später beim Laden abgleichen
+function noteRuleEdit() {
+    pkgState.libEdited = true;
+    renderLibHeader();
+    if (!pkgState.libAsked) {
+        pkgState.libAsked = true;
+        openLibAsk();
+    }
+}
+
+function openLibAsk() {
+    const m = document.getElementById("libAskModal");
+    const list = document.getElementById("libAskList");
+    list.innerHTML = "";
+    for (const lib of pkgState.libraries || []) {
+        const b = document.createElement("button");
+        b.className = "btn btn-secondary";
+        b.textContent = lib === "Standard" ? "Standard (Inhouse)" : lib;
+        if (lib === pkgState.currentCustomer) b.textContent += " (aktiv)";
+        b.addEventListener("click", () => { m.classList.add("hidden"); loadLibraryFlow({ customer: lib }); });
+        list.appendChild(b);
+    }
+    document.getElementById("btnLibAskPc").classList.toggle("hidden", !window.__TAURI__);
+    m.classList.remove("hidden");
+}
+
+// Laden mit Abgleich: hat der Nutzer schon bearbeitet, zeigt ein Dialog die Unterschiede und fragt je Zeile
+async function loadLibraryFlow(src) {
+    const post = (url, body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json());
+    let keep = [];
+    let source = src;
+    if (pkgState.libEdited) {
+        const d = await post("/api/library/diff", src);
+        if (d.status === "cancelled") return;
+        if (d.status !== "ok") { showToast(d.error || d.message || "Bibliothek nicht lesbar", 5000); return; }
+        source = d.path ? { path: d.path } : { customer: d.customer };
+        if (d.changes.length) {
+            keep = await chooseLibDiff(d.customer, d.changes);
+            if (keep === null) return;
+        }
+    }
+    const r = await post("/api/library/load", { ...source, keep });
+    if (r.status === "cancelled") return;
+    if (r.status !== "ok") { showToast(r.error || r.message || "Laden fehlgeschlagen", 5000); return; }
+    pkgState.libEdited = keep.length > 0;
+    pkgState.libAsked = true;
+    await loadLibraries();
+    await loadPackagesList();
+    if (pkgState.activePkgName) selectPackage(pkgState.activePkgName);
+    refreshHistory();
+    showToast(`Bibliothek „${r.customer}“ geladen${keep.length ? ` – ${keep.length} eigene Stände behalten` : ""}`);
+}
+
+// Dialog: je Änderung "mein Stand" oder "Bibliothek"; liefert die Liste "behalten" oder null (Abbrechen)
+function chooseLibDiff(lib, changes) {
+    return new Promise(resolve => {
+        const m = document.getElementById("libDiffModal");
+        document.getElementById("lblDiffLib").textContent = lib;
+        const body = document.getElementById("libDiffBody");
+        body.innerHTML = "";
+        changes.forEach((c, i) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td>${escapeHtml(c.label)}</td>
+                <td><label><input type="radio" name="libd${i}" value="mine" checked> ${escapeHtml(c.current)}</label></td>
+                <td><label><input type="radio" name="libd${i}" value="lib"> ${escapeHtml(c.library)}</label></td>`;
+            body.appendChild(tr);
+        });
+        const all = v => body.querySelectorAll(`input[value="${v}"]`).forEach(r => { r.checked = true; });
+        const done = res => { m.classList.add("hidden"); ["btnDiffAllMine", "btnDiffAllLib", "btnDiffCancel", "btnDiffApply"].forEach(id => { const el = document.getElementById(id); el.replaceWith(el.cloneNode(true)); }); resolve(res); };
+        document.getElementById("btnDiffAllMine").addEventListener("click", () => all("mine"));
+        document.getElementById("btnDiffAllLib").addEventListener("click", () => all("lib"));
+        document.getElementById("btnDiffCancel").addEventListener("click", () => done(null));
+        document.getElementById("btnDiffApply").addEventListener("click", () => done(changes.filter((c, i) => body.querySelector(`input[name="libd${i}"]:checked`)?.value === "mine").map(c => c.key)));
+        m.classList.remove("hidden");
+    });
 }
 
 async function loadPackagesList() {
@@ -3798,10 +3916,10 @@ ${reviewText}` : ""}`;
     }
 }
 
-// Helles Design (wie PCB-I) / dunkles Design, gespeichert im Browser
+// Helles Design (Standard, wie PCB-I) / dunkles Design, gespeichert im Browser
 (function initTheme() {
     const apply = t => document.documentElement.setAttribute("data-theme", t);
-    apply(localStorage.getItem("sc.theme") || "dark");
+    apply(localStorage.getItem("sc.theme") || "light");
     document.addEventListener("DOMContentLoaded", () => document.getElementById("btnTheme")?.addEventListener("click", () => {
         const t = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
         localStorage.setItem("sc.theme", t);
@@ -3819,6 +3937,120 @@ async function checkPreviewAgainstBoard() {
     alert(text);
 }
 document.addEventListener("DOMContentLoaded", () => document.getElementById("btnCheckPreview")?.addEventListener("click", checkPreviewAgainstBoard));
+
+// -------------------------------------------------------------
+// Menüleiste: jeder Eintrag löst den vorhandenen Knopf aus (id) oder ruft eine Funktion auf (fn).
+// Einträge ohne Ziel in diesem Fenster entfallen.
+// -------------------------------------------------------------
+const clickEl = sel => () => document.querySelector(sel)?.click();
+const inGenerator = fn => async () => {
+    if (currentWorkspaceMode === "board" && !document.body.classList.contains("view-package-only")) document.getElementById("btnViewPackage")?.click();
+    await new Promise(r => setTimeout(r, 150));
+    fn();
+};
+const APP_MENUS = [
+    ["Datei", [
+        ["Datensatz öffnen…", "#btnOpenDataset", "Strg+O"],
+        ["Projekt öffnen…", '#projectMenuList [data-act="open"]'],
+        ["Projekt speichern", '#projectMenuList [data-act="save"]', "Strg+S"],
+        ["Projekt speichern unter…", '#projectMenuList [data-act="saveas"]', "Strg+⇧+S"],
+        "-",
+        ["Bibliothek laden…", null, null, inGenerator(() => { document.getElementById("btnLibLoad")?.click(); })],
+        ["Bibliothek speichern", "#btnSaveCurrentLib"],
+        ["PCB-I-Regeln importieren…", "#btnPcbiImport"],
+        ["PCB-I-Regeln exportieren…", "#btnPcbiExport"],
+        "-",
+        ["Gerber-Export…", "#btnExport", "Strg+E"],
+        "-",
+        ["Datensatz schließen", "#btnCloseDataset"],
+    ]],
+    ["Bearbeiten", [
+        ["Rückgängig", "#btnUndo", "Strg+Z"],
+        ["Wiederholen", "#btnRedo", "Strg+Y"],
+        ["Verlauf…", "#btnHistory"],
+        "-",
+        ["Öffnung hinzufügen", "#btnAddOpening"],
+        ["Stufenzone aufziehen", "#btnNewZone"],
+        ["Messen", null, "M", () => toggleMeasureTool()],
+    ]],
+    ["Ansicht", [
+        ["Board View", "#btnViewBoard"],
+        ["Stencil Generator", "#btnViewPackage"],
+        ["Stencil Generator in eigenem Fenster", "#btnDetachGenerator"],
+        "-",
+        ["Hell / Dunkel umschalten", "#btnTheme"],
+        ["Schrift kleiner", null, null, () => stepUiScale(-1)],
+        ["Schrift größer", null, null, () => stepUiScale(1)],
+    ]],
+    ["Extras", [
+        ["Auto-Klassifizierung", null, null, inGenerator(clickEl("#btnAutoClassify"))],
+        ["Fehlende Paste aus Kupfer…", null, null, inGenerator(clickEl("#btnAddMissingPaste"))],
+        ["Vorschau ↔ Platine prüfen", "#btnCheckPreview"],
+        "-",
+        ["Stegprüfung", "#btnCheckBridges"],
+        ["Stencil-Analyse", "#btnAnalysis"],
+        ["IPC-Grenzwerte…", "#btnIpcProfiles"],
+        "-",
+        ["Pin-in-Paste…", "#btnOpenPipModal"],
+        ["Auslösekalkulator…", "#btnOpenCalculator"],
+    ]],
+    ["Hilfe", [
+        ["Tastenkürzel", null, null, () => alert("Strg+O  Datensatz öffnen\nStrg+S  Projekt speichern\nStrg+E  Gerber-Export\nStrg+Z / Strg+Y  Rückgängig / Wiederholen\nM  Messen\nPfeil hoch/runter  Package wechseln (Stencil Generator)\nRechte Maus ziehen  Ansicht verschieben\nStrg+A, Entf, R, Strg+D  Öffnungen im Board")],
+    ]],
+];
+
+function stepUiScale(dir) {
+    const sel = document.getElementById("selectUiScale");
+    if (!sel) return;
+    const i = Math.min(sel.options.length - 1, Math.max(1, sel.selectedIndex + dir));
+    sel.selectedIndex = i;
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function buildMenuBar() {
+    const bar = document.getElementById("appMenuBar");
+    if (!bar) return;
+    bar.innerHTML = "";
+    const closeAll = () => bar.querySelectorAll(".app-menu.open").forEach(m => m.classList.remove("open"));
+    for (const [title, items] of APP_MENUS) {
+        const menu = document.createElement("div");
+        menu.className = "app-menu";
+        const head = document.createElement("button");
+        head.className = "app-menu-head";
+        head.textContent = title;
+        const list = document.createElement("div");
+        list.className = "app-menu-list";
+        for (const it of items) {
+            if (it === "-") { list.insertAdjacentHTML("beforeend", '<div class="app-menu-sep"></div>'); continue; }
+            const [label, sel, key, fn] = it;
+            if (sel && !document.querySelector(sel)) continue;
+            const b = document.createElement("button");
+            b.innerHTML = `<span>${escapeHtml(label)}</span>${key ? `<kbd>${escapeHtml(key)}</kbd>` : ""}`;
+            b.addEventListener("click", (e) => {
+                e.stopPropagation();
+                closeAll();
+                const target = sel && document.querySelector(sel);
+                if (target?.disabled) return;
+                fn ? fn() : target?.click();
+            });
+            list.appendChild(b);
+        }
+        list.querySelectorAll(".app-menu-sep + .app-menu-sep").forEach(s => s.remove());
+        head.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const was = menu.classList.contains("open");
+            closeAll();
+            if (!was) menu.classList.add("open");
+        });
+        // Bei offenem Menü wechselt Überfahren das Menü (wie in Windows)
+        head.addEventListener("mouseenter", () => { if (bar.querySelector(".app-menu.open") && !menu.classList.contains("open")) { closeAll(); menu.classList.add("open"); } });
+        menu.append(head, list);
+        bar.appendChild(menu);
+    }
+    document.addEventListener("click", closeAll);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAll(); });
+}
+document.addEventListener("DOMContentLoaded", buildMenuBar);
 
 // Nach Generate: Platine, Lagen, Baum, Vorschau und Verlauf auffrischen
 async function afterGenerate() {
@@ -3906,6 +4138,10 @@ function drawPkgBoardContext(ctx, zoom) {
 }
 
 async function selectPackage(pkgName) {
+    // Eine Ansicht für beide Seiten: liegt das Package nur auf der anderen Seite, still dorthin wechseln
+    // (sonst fehlen Lage, BOT-Spiegelung und Umgebung im Editor)
+    const sd = (pkgState.packages || []).find(x => x.name === pkgName)?.sides;
+    if (sd && sd.top + sd.bot > 0 && !sd[state.side || "top"]) await switchSide(sd.top ? "top" : "bot", { silent: true });
     pkgState.activePkgName = pkgName;
     pkgState.selectedPin = null;
     document.getElementById("singlePadBar").classList.add("hidden");
@@ -4148,6 +4384,7 @@ function collectRuleFromInputs() {
 
 let ruleUpdateTimeout = null;
 function onRuleParamChanged(e) {
+    noteRuleEdit();
     const select = document.getElementById("selectPkgRule");
     // Parameter an einer geerbten Regel geändert → eigene Regel mit dem geerbten Typ
     if (e && e.target && e.target.id !== "selectPkgRule" && select.value === "inherit") {
@@ -4630,6 +4867,7 @@ function isPinSelected(pin) {
 
 // Regel für die Mausauswahl speichern ("Wie Package" = Anpassungen der Auswahl entfernen)
 async function savePinsRule(target, ruleData) {
+    noteRuleEdit();
     const cur = pkgState.ruleTarget;
     if (!cur || cur.kind !== "pins" || cur.id !== target.id) return;
     let data;
@@ -4983,24 +5221,22 @@ function setupPkgEventListeners() {
     });
 
     // Customer Library Actions
-    document.getElementById("selectCustomerLib").addEventListener("change", async (e) => {
-        const cust = e.target.value;
-        const res = await fetch("/api/library/load", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ customer: cust })
-        });
-        const data = await res.json();
-        if (data.status === "ok") {
-            await loadPackagesList();
-            selectPackage(pkgState.activePkgName);
+    document.getElementById("btnSaveCurrentLib").addEventListener("click", async () => {
+        const cust = pkgState.currentCustomer;
+        if (await saveLibrary(cust)) {
+            pkgState.libEdited = false;
+            renderLibHeader();
+            showToast(`Kunden-Bibliothek „${cust}“ gespeichert`);
         }
     });
 
-    document.getElementById("btnSaveCurrentLib").addEventListener("click", async () => {
-        const cust = pkgState.currentCustomer;
-        if (await saveLibrary(cust)) showToast(`Kunden-Bibliothek „${cust}“ gespeichert`);
-    });
+    // Laden-Menü und Nachfrage-Dialog
+    const loadMenu = document.getElementById("libLoadList");
+    document.getElementById("btnLibLoad")?.addEventListener("click", (e) => { e.stopPropagation(); loadMenu?.classList.toggle("hidden"); });
+    loadMenu?.addEventListener("click", () => loadMenu.classList.add("hidden"));
+    document.addEventListener("click", (e) => { if (!e.target.closest?.("#libLoadMenu")) loadMenu?.classList.add("hidden"); });
+    document.getElementById("btnLibAskSkip")?.addEventListener("click", () => document.getElementById("libAskModal").classList.add("hidden"));
+    document.getElementById("btnLibAskPc")?.addEventListener("click", () => { document.getElementById("libAskModal").classList.add("hidden"); loadLibraryFlow({ pick: true }); });
 
     // Werkzeug-Menü der Bibliothek
     const libMenu = document.getElementById("libToolsList");
@@ -5034,7 +5270,7 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
     document.getElementById("btnAddMissingPaste")?.addEventListener("click", () => offerMissingPaste(true));
 
     const newLibModal = document.getElementById("newLibModal");
-    document.getElementById("btnOpenNewLibModal").addEventListener("click", () => {
+    document.getElementById("btnOpenNewLibModal")?.addEventListener("click", () => {
         newLibModal.classList.remove("hidden");
     });
     document.getElementById("btnCancelNewLib").addEventListener("click", () => {
@@ -5046,9 +5282,10 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
         if (!(await saveLibrary(name))) return;
         newLibModal.classList.add("hidden");
         await loadLibraries();
-        document.getElementById("selectCustomerLib").value = name;
         pkgState.currentCustomer = name;
-        alert(`Neue Bibliothek "${name}" erstellt!`);
+        pkgState.libEdited = false;
+        renderLibHeader();
+        showToast(`Neue Bibliothek „${name}“ angelegt`);
     });
 
     // Pin Selector Dropdown
@@ -5647,7 +5884,7 @@ async function saveProject(saveAs = false) {
 window.saveProject = saveProject;
 
 async function reloadAllViews(full = false) {
-    if (full) await loadLayers();
+    if (full) { await loadLayers(); pkgState.libAsked = false; pkgState.libEdited = false; }
     refreshSides();
     await refreshApertureData();
     if (full) fitToScreen();

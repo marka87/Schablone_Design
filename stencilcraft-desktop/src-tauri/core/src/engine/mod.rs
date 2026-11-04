@@ -1203,12 +1203,90 @@ impl StencilEngine {
     }
 
     pub fn load_customer_library(&mut self, customer: &str) -> bool {
-        let file = self.libraries_dir().join(format!("{}.json", sanitize_file_name(customer)));
-        let Ok(text) = std::fs::read_to_string(&file) else { return false };
-        let Ok(data) = serde_json::from_str::<Value>(&text) else {
-            eprintln!("Fehler beim Laden der Kundenbibliothek {customer}: ungültiges JSON");
-            return false;
-        };
+        match self.read_library(customer, None) {
+            Ok((data, name)) => {
+                self.apply_library(&data, &name);
+                true
+            }
+            Err(m) => {
+                eprintln!("{m}");
+                false
+            }
+        }
+    }
+
+    /// Bibliothek lesen: nach Kundenname aus dem Bibliotheksordner oder aus einer Datei (vom PC).
+    /// Liefert Inhalt und Kundenname (aus der Datei, sonst Dateiname).
+    pub fn read_library(&self, customer: &str, path: Option<&Path>) -> Result<(Value, String), String> {
+        let file = path.map(Path::to_path_buf).unwrap_or_else(|| self.libraries_dir().join(format!("{}.json", sanitize_file_name(customer))));
+        let text = std::fs::read_to_string(&file).map_err(|e| format!("Bibliothek nicht lesbar ({}): {e}", file.display()))?;
+        let data: Value = serde_json::from_str(&text).map_err(|_| format!("Bibliothek {} ist kein gültiges JSON", file.display()))?;
+        let fallback = path.and_then(|p| p.file_stem()).and_then(|s| s.to_str()).unwrap_or(customer);
+        let name = data.get("customer").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).unwrap_or(fallback).to_string();
+        Ok((data, name))
+    }
+
+    /// Was sich beim Laden der Bibliothek ändern würde (Package- und Gruppenregeln, Pin-Regeln) – zum Abwägen
+    /// gegen eigene Bearbeitungen. `key` ist der Package-Name bzw. "group:<Gruppe>".
+    pub fn library_diff(&self, data: &Value, new_customer: &str) -> Vec<Value> {
+        let switching = !self.current_customer.is_empty() && self.current_customer != new_customer;
+        let lib_pkgs = data.get("packages").and_then(Value::as_object);
+        let lib_pins = data.get("pin_overrides").and_then(Value::as_object);
+        let lookup = |m: Option<&Map<String, Value>>, name: &str| m.and_then(|m| m.iter().find(|(k, _)| self.resolve_alias(k) == name).map(|(_, v)| v.clone()));
+        let pins_text = |ov: &BTreeMap<i64, Map<String, Value>>| if ov.is_empty() { String::new() } else { format!(" · {} Pin-Regel(n)", ov.len()) };
+        let mut out = Vec::new();
+        for (name, pkg) in &self.packages {
+            if pkg.group == "Library" {
+                continue;
+            }
+            let mut rule = if switching { PackageRule::with("inherit", "Inherit") } else { pkg.rule.clone() };
+            let mut pins = if switching { BTreeMap::new() } else { pkg.pad_overrides.clone() };
+            if let Some(Value::Object(r)) = lookup(lib_pkgs, name) {
+                rule.apply_map(&r);
+            }
+            if let Some(Value::Object(ov)) = lookup(lib_pins, name) {
+                pins = ov.iter().filter_map(|(k, v)| Some((k.parse::<i64>().ok()?, v.as_object()?.clone()))).collect();
+            }
+            if rule.to_json() != pkg.rule.to_json() || pins != pkg.pad_overrides {
+                let txt = |r: &PackageRule, ov: &BTreeMap<i64, Map<String, Value>>| {
+                    let base = if r.rule_type == "inherit" { "Inherit (Gruppenregel)".to_string() } else { report::rule_summary(r) };
+                    format!("{base}{}", pins_text(ov))
+                };
+                out.push(json!({"key": name, "label": name, "current": txt(&pkg.rule, &pkg.pad_overrides), "library": txt(&rule, &pins)}));
+            }
+        }
+        let defaults = rulesets::default_group_rules();
+        let lib_groups = data.get("groups").and_then(Value::as_object);
+        for (g, cur) in &self.group_rules {
+            let mut next = if switching { defaults.get(g).cloned().unwrap_or_else(|| cur.clone()) } else { cur.clone() };
+            if let Some(Value::Object(r)) = lib_groups.and_then(|m| m.get(g)) {
+                next.apply_map(r);
+            }
+            if next.to_json() != cur.to_json() {
+                out.push(json!({"key": format!("group:{g}"), "label": format!("Gruppe {}", rulesets::group_label(g)), "current": report::rule_summary(cur), "library": report::rule_summary(&next)}));
+            }
+        }
+        out
+    }
+
+    /// Bibliothek anwenden; Einträge in `keep` (Package-Name bzw. "group:<Gruppe>") behalten den jetzigen Stand.
+    pub fn apply_library_keep(&mut self, data: &Value, customer: &str, keep: &[String]) {
+        let saved_pkgs: Vec<(String, PackageRule, BTreeMap<i64, Map<String, Value>>)> =
+            keep.iter().filter_map(|k| self.packages.get(k).map(|p| (k.clone(), p.rule.clone(), p.pad_overrides.clone()))).collect();
+        let saved_groups: Vec<(String, PackageRule)> =
+            keep.iter().filter_map(|k| k.strip_prefix("group:")).filter_map(|g| self.group_rules.get(g).map(|r| (g.to_string(), r.clone()))).collect();
+        self.apply_library(data, customer);
+        for (k, r, ov) in saved_pkgs {
+            if let Some(p) = self.packages.get_mut(&k) {
+                (p.rule, p.pad_overrides) = (r, ov);
+            }
+        }
+        for (g, r) in saved_groups {
+            self.group_rules.insert(g, r);
+        }
+    }
+
+    pub fn apply_library(&mut self, data: &Value, customer: &str) {
         let new_customer = data.get("customer").and_then(|v| v.as_str()).unwrap_or(customer).to_string();
         // Kundenwechsel: Regeln, Aliase und PCB-I-Einstellungen des vorigen Kunden verwerfen,
         // sonst landen sie beim nächsten Speichern in der Bibliothek des neuen Kunden
@@ -1266,7 +1344,6 @@ impl StencilEngine {
                 }
             }
         }
-        true
     }
 
     pub fn save_customer_library(&mut self, customer: &str) -> Result<String, String> {
@@ -1364,6 +1441,13 @@ pub fn drill_in_box_at(drills: &[(f64, f64, f64)], x: f64, y: f64, w: f64, h: f6
         .copied()
 }
 
+/// Liegt das Rechteck (Mitte x, y, Breite, Höhe; Package-Rahmen) ganz im Pad `p` (Kupfer, sonst Bibliotheksmaß)?
+fn pad_contains(p: &PadRel, (x, y, w, h): (f64, f64, f64, f64)) -> bool {
+    let (px, py) = p.copper_c.unwrap_or((p.cx, p.cy));
+    let (pw, ph) = p.copper.map_or((p.w, p.h), |c| (c.0, c.1));
+    (x - px).abs() + w / 2.0 <= pw / 2.0 + 0.01 && (y - py).abs() + h / 2.0 <= ph / 2.0 + 0.01
+}
+
 /// Versatz b − a zweier Padlisten: gleiche Anzahl → Schwerpunktdifferenz, sonst Median der nächsten Paare (a → b).
 pub fn offset_between(a: &[(f64, f64)], b: &[(f64, f64)]) -> (f64, f64) {
     if a.is_empty() || b.is_empty() {
@@ -1404,7 +1488,7 @@ impl StencilEngine {
         }
         // Alle Pads je (Package, Pin) der ersten Instanz: Kupfer (Größe im Package-Rahmen), Kupfermitte relativ, Lage auf der Platine.
         // Ein Pin kann mehrere Pads haben (z. B. Elko-Kreuzpad): dann bekommt jedes Vorlagen-Pad sein eigenes.
-        type PinPad = (Option<(f64, f64, bool)>, Option<(f64, f64)>, (f64, f64, bool));
+        type PinPad = (Option<(f64, f64, bool)>, Option<(f64, f64)>, (f64, f64, bool), (f64, f64));
         let mut pin_pads: std::collections::HashMap<String, Vec<(i64, PinPad)>> = std::collections::HashMap::new();
         let mut first_comp: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let comp_frame: std::collections::HashMap<&str, (f64, f64, f64, bool)> =
@@ -1426,7 +1510,8 @@ impl StencilEngine {
                     let rel = frame_to_pkg(((c.x0 + c.x1) / 2.0 - ccx, (c.y0 + c.y1) / 2.0 - ccy), rot, mirror);
                     Some((r3(rel.0), r3(rel.1)))
                 });
-                pin_pads.entry(pkg.clone()).or_default().push((ap.pin_number, (cu, cen, (ap.cx, ap.cy, rotated))));
+                let paste = if rotated { (ap.height, ap.width) } else { (ap.width, ap.height) };
+                pin_pads.entry(pkg.clone()).or_default().push((ap.pin_number, (cu, cen, (ap.cx, ap.cy, rotated), paste)));
             }
             first.entry((pkg, ap.pin_number)).or_insert((ap.cx, ap.cy, rotated));
         }
@@ -1449,7 +1534,7 @@ impl StencilEngine {
         };
         // Je Vorlagen-Pad (Index): Kupfer, Kupfermitte, Maske, Bohrung
         type PadUpd = (usize, Option<(f64, f64, bool)>, Option<(f64, f64)>, Option<(f64, f64, bool)>, Option<(f64, (f64, f64))>);
-        let mut updates: Vec<(String, Vec<PadUpd>)> = Vec::new();
+        let mut updates: Vec<(String, Vec<PadUpd>, Vec<PadRel>)> = Vec::new();
         for (name, pkg) in &self.packages {
             let mut per_pin = Vec::new();
             let cands: &[(i64, PinPad)] = pin_pads.get(name).map_or(&[], |v| v.as_slice());
@@ -1479,11 +1564,42 @@ impl StencilEngine {
                 });
                 per_pin.push((i, chosen.and_then(|c| c.0), chosen.and_then(|c| c.1), mask, drill));
             }
-            updates.push((name.clone(), per_pin));
+            // Übrige Pastenelemente eines vorhandenen Pins als eigenes Pad aufnehmen, wenn sie über die schon
+            // zugeordneten Elemente dieses Pins hinausragen (Fenster innerhalb eines Thermal-Pads bleiben außen vor)
+            let frame = first_comp.get(name).and_then(|r| comp_frame.get(r.as_str()));
+            let rel = |c: &PinPad| {
+                c.1.unwrap_or_else(|| {
+                    let (x, y, _) = c.2;
+                    frame.map_or((x, y), |&(ccx, ccy, rot, mirror)| frame_to_pkg((x - ccx, y - ccy), rot, mirror))
+                })
+            };
+            let inside = |a: &PinPad, b: &PinPad| {
+                let ((ax, ay), (bx, by)) = (rel(a), rel(b));
+                (ax - bx).abs() + a.3 .0 / 2.0 <= b.3 .0 / 2.0 + 0.01 && (ay - by).abs() + a.3 .1 / 2.0 <= b.3 .1 / 2.0 + 0.01
+            };
+            let mut extra = Vec::new();
+            for k in (0..cands.len()).filter(|&k| !taken[k]) {
+                let (pin, c) = (cands[k].0, &cands[k].1);
+                let Some(tp) = pkg.pads_relative.iter().find(|p| p.pin == pin) else { continue };
+                let same: Vec<&PinPad> = (0..cands.len()).filter(|&j| taken[j] && cands[j].0 == pin).map(|j| &cands[j].1).collect();
+                if same.is_empty() || same.iter().any(|b| inside(c, b)) {
+                    continue;
+                }
+                let (cx, cy) = rel(c);
+                // Liegt das Element im Pad der Vorlage (z. B. Pastenfenster auf einer runden Massefläche), ist es kein eigenes Pad
+                if pad_contains(tp, (cx, cy, c.3 .0, c.3 .1)) {
+                    continue;
+                }
+                let mut np = PadRel::new(pin, r3(cx), r3(cy), r3(c.3 .0), r3(c.3 .1), &tp.facing);
+                (np.copper, np.copper_c) = (Some((r3(c.3 .0), r3(c.3 .1), false)), Some((r3(cx), r3(cy))));
+                extra.push(np);
+            }
+            updates.push((name.clone(), per_pin, extra));
         }
-        for (name, per_pin) in updates {
+        for (name, per_pin, extra) in updates {
             let has_instances = instances.get(&name).copied().unwrap_or(0) > 0;
             let Some(pkg) = self.packages.get_mut(&name) else { continue };
+            pkg.pads_relative.extend(extra);
             let mut drilled = 0usize;
             let pin_total = per_pin.len().max(1);
             for (i, copper, copper_c, mask, drill) in per_pin {
@@ -1504,6 +1620,15 @@ impl StencilEngine {
                     if drill.is_some_and(|d| d.0 >= THT_MIN_DRILL) {
                         drilled += 1;
                     }
+                }
+            }
+            // Früher fälschlich aufgenommene Zusatz-Pads entfernen: ein Pad, das ganz in einem früheren Pad desselben Pins liegt
+            let all = std::mem::take(&mut pkg.pads_relative);
+            for p in all {
+                let r = p.copper_c.map_or((p.cx, p.cy), |c| c);
+                let (w, h) = p.copper.map_or((p.w, p.h), |c| (c.0, c.1));
+                if !pkg.pads_relative.iter().any(|q| q.pin == p.pin && pad_contains(q, (r.0, r.1, w, h))) {
+                    pkg.pads_relative.push(p);
                 }
             }
             let lname = name.to_lowercase();
@@ -1600,6 +1725,17 @@ pub fn donut_segments_n(cx: f64, cy: f64, d_in: f64, d_out: f64, web: f64, seg: 
 #[cfg(test)]
 mod side_tests {
     use super::*;
+
+    #[test]
+    fn extra_paste_only_when_outside_template_pad() {
+        // Runde 4-mm-Massefläche: Pastenfenster 1,744 mm in der Ecke liegt im Pad → kein eigenes Pad
+        let big = PadRel::new(1, 0.0, 0.0, 4.0, 4.0, "center");
+        assert!(pad_contains(&big, (1.022, 1.022, 1.744, 1.744)));
+        // Molex-Haltepad 1,26 × 1,30 mit zweitem Element 1,25 × 1,80 → ragt hinaus → eigenes Pad
+        let mut mp = PadRel::new(3, 2.875, 0.81, 1.0, 1.0, "center");
+        (mp.copper, mp.copper_c) = (Some((1.26, 1.3, false)), Some((2.875, 0.81)));
+        assert!(!pad_contains(&mp, (2.875, 0.81, 1.25, 1.8)));
+    }
 
     #[test]
     fn package_rule_generates_both_sides() {

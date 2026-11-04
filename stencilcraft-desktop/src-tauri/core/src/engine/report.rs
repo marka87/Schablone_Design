@@ -19,7 +19,7 @@ fn status_color(s: &str) -> &'static str {
 }
 
 /// Kurzbeschreibung einer Regel mit den maßgeblichen Parametern.
-fn rule_summary(r: &PackageRule) -> String {
+pub fn rule_summary(r: &PackageRule) -> String {
     let base = format!("Undersize {:.3} · R {:.3}", r.undersize_w, r.corner_radius);
     match r.rule_type.as_str() {
         "package_group" => format!("Package-Gruppe · {base} · Array ≥{:.2} mm / {:.0} %", r.min_array_field, r.utilization_array_pct),

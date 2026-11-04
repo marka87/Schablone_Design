@@ -442,13 +442,14 @@ impl StencilEngine {
             } else if big_center || upper.contains("QFN") || upper.contains("DFN") {
                 qfn += pkg.component_count;
                 for p in &pkg.pads_relative {
-                    if p.is_thermal || (p.w >= 1.5 && p.h >= 1.5) {
-                        let grid = if p.w.max(p.h) >= 3.0 { 3 } else { 2 };
+                    // Thermal-Pad über 3 mm: ein gerader Steg quer zur langen Seite (2 Teile); kleinere bleiben ganz
+                    // (Wunsch Nutzer 04.11.: kein 45°-Gittermuster)
+                    if (p.is_thermal || (p.w >= 1.5 && p.h >= 1.5)) && p.w.max(p.h) > 3.0 {
                         let ov = json!({
                             "rule_type": "array_slicing",
-                            "rotate_bridges_45": true,
-                            "bridge_count_x": grid,
-                            "bridge_count_y": grid,
+                            "rotate_bridges_45": false,
+                            "bridge_count_x": if p.w >= p.h { 1 } else { 0 },
+                            "bridge_count_y": if p.w >= p.h { 0 } else { 1 },
                             "bridge_width": 0.30,
                             "w": p.w,
                             "h": p.h,

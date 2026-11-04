@@ -60,6 +60,9 @@ impl Dialogs for NativeDialogs {
             .set_file_name(format!("{default_name}.stencilproj"))
             .save_file()
     }
+    fn pick_library(&self) -> Option<PathBuf> {
+        rfd::FileDialog::new().set_title("Bibliothek vom PC laden").add_filter("StencilCraft-Bibliothek", &["json"]).pick_file()
+    }
     fn pick_rule_tree(&self) -> Option<PathBuf> {
         rfd::FileDialog::new()
             .set_title("PCB-Investigator-Kundenbibliothek importieren")

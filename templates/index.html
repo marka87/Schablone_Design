@@ -12,6 +12,8 @@
     <!-- Top Header: Zeile 1 = Navigation/Datei/Status, Zeile 2 = Prozessparameter & Werkzeuge -->
     <!-- Kopfzeile als Ribbon: Zeile 1 = Navigation/Projekt/Datei/Status, Zeile 2 = Analyse & Werkzeuge.
          Jede Gruppe ist ein eigener Kasten mit Beschriftung darunter (wie PCB Investigator). -->
+    <!-- Menüleiste wie PCB-I (Datei / Bearbeiten / Ansicht / Extras / Hilfe), Aufbau in app.js -->
+    <nav id="appMenuBar" class="app-menubar" aria-label="Hauptmenü"></nav>
     <header class="app-header ribbon">
         <div class="header-row header-main">
             <div class="logo">
@@ -637,16 +639,20 @@
             <div class="pkg-sidebar" id="pkgSidebar">
                 <!-- Customer Library Toolbar -->
                 <div class="library-header">
+                    <!-- Bibliothek: aktuelle Bibliothek, Laden (Liste / vom PC / neu), Speichern, Werkzeuge -->
                     <div class="lib-selector-row">
                         <span class="lib-icon"><i class="ic ic-library"></i></span>
-                        <select id="selectCustomerLib" title="Kunden-Bibliothek auswählen">
-                            <option value="Standard">Standard (Inhouse)</option>
-                            <option value="Kunde_A">Kunde_A</option>
-                        </select>
-                        <button id="btnOpenNewLibModal" class="btn btn-xs btn-secondary" title="Neue Bibliothek anlegen">+ Neu</button>
-                        <button id="btnSaveCurrentLib" class="btn btn-xs btn-primary" title="Bibliothek speichern"><i class="ic ic-save"></i> Speichern</button>
+                        <span class="lib-caption">Bibliothek</span>
+                        <strong id="lblCurrentLib" class="lib-current" title="Aktuelle Kundenbibliothek">Standard</strong>
+                        <span id="lblLibDirty" class="lib-dirty hidden" title="Regeln geändert, Bibliothek noch nicht gespeichert">● geändert</span>
+                        <select id="selectCustomerLib" class="hidden"></select>
                     </div>
                     <div class="lib-tools-row">
+                        <div class="dropdown" id="libLoadMenu">
+                            <button id="btnLibLoad" class="btn btn-xs btn-secondary" title="Bibliothek laden">Laden ▾</button>
+                            <div class="dropdown-menu hidden" id="libLoadList"></div>
+                        </div>
+                        <button id="btnSaveCurrentLib" class="btn btn-xs btn-primary" title="Bibliothek speichern"><i class="ic ic-save"></i> Speichern</button>
                         <div class="dropdown" id="libToolsMenu">
                             <button id="btnLibTools" class="btn btn-xs btn-secondary" title="Werkzeuge für Bibliothek und Datensatz"><i class="ic ic-tools"></i> Werkzeuge ▾</button>
                             <div class="dropdown-menu hidden" id="libToolsList">
@@ -1104,6 +1110,39 @@
                 <button id="btnIpcReset" class="btn btn-ghost" title="Alle drei Profile auf die Vorschlagswerte zurücksetzen">Vorschlagswerte</button>
                 <button id="btnIpcCancel" class="btn btn-ghost">Abbrechen</button>
                 <button id="btnIpcSave" class="btn btn-primary">Übernehmen</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="libAskModal" class="modal hidden">
+        <div class="modal-box">
+            <h3>Bibliothek laden?</h3>
+            <p class="modal-desc">Du beginnst mit dem Bearbeiten. Mit welcher Kundenbibliothek möchtest du arbeiten?</p>
+            <div id="libAskList" class="lib-ask-list"></div>
+            <div class="modal-actions">
+                <button id="btnLibAskPc" class="btn btn-secondary">Vom PC laden…</button>
+                <button id="btnLibAskSkip" class="btn btn-ghost">Ohne Laden weiter</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="libDiffModal" class="modal hidden">
+        <div class="modal-box lib-diff-box">
+            <h3>Bibliothek „<span id="lblDiffLib"></span>“ laden – deine Änderungen</h3>
+            <p class="modal-desc">Du hast schon bearbeitet. Beim Laden würden sich diese Regeln ändern. Wähle je Zeile, welcher Stand gelten soll.</p>
+            <div class="lib-diff-actions">
+                <button id="btnDiffAllMine" class="btn btn-xs btn-secondary">Alle: mein Stand</button>
+                <button id="btnDiffAllLib" class="btn btn-xs btn-secondary">Alle: Bibliothek</button>
+            </div>
+            <div class="lib-diff-table-wrap">
+                <table class="lib-diff-table">
+                    <thead><tr><th>Package / Gruppe</th><th>Mein Stand</th><th>Bibliothek</th></tr></thead>
+                    <tbody id="libDiffBody"></tbody>
+                </table>
+            </div>
+            <div class="modal-actions">
+                <button id="btnDiffCancel" class="btn btn-ghost">Abbrechen</button>
+                <button id="btnDiffApply" class="btn btn-primary">Laden</button>
             </div>
         </div>
     </div>
