@@ -972,6 +972,19 @@ mod tests {
     }
 
     #[test]
+    fn copper_is_best_matching_pad_not_via_land() {
+        use crate::engine::types::PadBox;
+        let mut e = engine_with_chips();
+        let (cx, cy) = (e.apertures[0].cx, e.apertures[0].cy); // Paste 1,2 × 1,3
+        let pad = PadBox::new(cx - 0.625, cy - 0.675, cx + 0.625, cy + 0.675);
+        let mut via = PadBox::new(cx - 0.75, cy - 0.75, cx + 0.75, cy + 0.75); // runder Restring, größer als das Pad
+        via.round = true;
+        e.correlate_apertures_with_copper(&[via, pad]);
+        let c = e.apertures[0].copper_ref.as_ref().unwrap();
+        assert!(!c.round && (c.w - 1.25).abs() < 1e-9, "Via-Restring statt Pad gewählt");
+    }
+
+    #[test]
     fn drill_only_inside_pad() {
         use crate::engine::drill_in_box;
         // 0,25 × 0,30-Pad: Via 0,2 mm daneben gehört nicht dazu (früher 0,3 mm Mindestradius)

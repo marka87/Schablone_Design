@@ -3882,6 +3882,14 @@ function drawPkgBoardContext(ctx, zoom) {
     if (!items?.length) return;
     const poly = pts => { ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); };
     ctx.lineWidth = 1 / zoom;
+    // Kundenpaste der gezeigten Instanz (rosa Umriss wie in der Hauptansicht)
+    if (document.getElementById("chkPrevCustomer")?.checked !== false) {
+        ctx.strokeStyle = "rgba(236, 72, 153, 0.95)";
+        ctx.fillStyle = "rgba(236, 72, 153, 0.18)";
+        ctx.setLineDash([4 / zoom, 3 / zoom]);
+        for (const it of items) if (it.own && it.customer) { poly(it.customer); ctx.fill(); ctx.stroke(); }
+        ctx.setLineDash([]);
+    }
     for (const it of items) {
         if (it.own) continue;
         if (pkgState.showCopper !== false && it.copper) {
@@ -4429,19 +4437,23 @@ function renderPkgPreview() {
 
     // 4b. Bohrungen (THT)
     if (pkgState.showDrills !== false && data.pads) {
-        pkgCtx.strokeStyle = "#f8fafc";
-        pkgCtx.fillStyle = "rgba(15, 23, 42, 0.85)";
+        // Via/Bohrung als dünner Ring mit Kreuz (Lot kann ablaufen); keine Füllung, damit Pad und Paste sichtbar bleiben
+        pkgCtx.strokeStyle = "rgba(251, 191, 36, 0.95)";
+        pkgCtx.fillStyle = "rgba(0, 0, 0, 0)";
         pkgCtx.lineWidth = 1.2 / pkgState.zoom;
         for (const p of data.pads) {
             if (!p.drill) continue;
             const r = p.drill / 2;
+            // An der echten Lage der Bohrung (Vias sitzen oft am Padrand), nicht in der Padmitte
+            const [ox, oy] = p.drill_off || [0, 0];
+            const x = p.cx + ox, y = p.cy + oy;
             pkgCtx.beginPath();
-            pkgCtx.arc(p.cx, p.cy, r, 0, Math.PI * 2);
+            pkgCtx.arc(x, y, r, 0, Math.PI * 2);
             pkgCtx.fill();
             pkgCtx.stroke();
             pkgCtx.beginPath();
-            pkgCtx.moveTo(p.cx - r * 0.6, p.cy); pkgCtx.lineTo(p.cx + r * 0.6, p.cy);
-            pkgCtx.moveTo(p.cx, p.cy - r * 0.6); pkgCtx.lineTo(p.cx, p.cy + r * 0.6);
+            pkgCtx.moveTo(x - r * 0.6, y); pkgCtx.lineTo(x + r * 0.6, y);
+            pkgCtx.moveTo(x, y - r * 0.6); pkgCtx.lineTo(x, y + r * 0.6);
             pkgCtx.stroke();
         }
     }
@@ -4939,6 +4951,7 @@ function setupPkgEventListeners() {
     document.getElementById("chkPrevMask").addEventListener("change", e => { pkgState.showMask = e.target.checked; renderPkgPreview(); });
     document.getElementById("chkPrevCopper").addEventListener("change", e => { pkgState.showCopper = e.target.checked; renderPkgPreview(); });
     document.getElementById("chkPrevPaste").addEventListener("change", e => { pkgState.showPaste = e.target.checked; renderPkgPreview(); });
+    document.getElementById("chkPrevCustomer")?.addEventListener("change", () => renderPkgPreview());
     document.getElementById("chkPrevComponent").addEventListener("change", e => { pkgState.showComponent = e.target.checked; renderPkgPreview(); });
     document.getElementById("chkPrevRuler").addEventListener("change", e => { pkgState.showRuler = e.target.checked; renderPkgPreview(); });
     document.getElementById("chkPrevPinLabels").addEventListener("change", e => { pkgState.showPinLabels = e.target.checked; renderPkgPreview(); });

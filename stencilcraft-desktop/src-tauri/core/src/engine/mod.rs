@@ -474,7 +474,10 @@ impl StencilEngine {
         use rstar::{primitives::GeomWithData, RTree};
         let tree = RTree::bulk_load(copper.iter().enumerate().map(|(i, p)| GeomWithData::new([(p.x0 + p.x1) / 2.0, (p.y0 + p.y1) / 2.0], i)).collect());
         for ap in self.apertures.iter_mut() {
-            // Größtes Kupferpad, das den Pastenmittelpunkt enthält (nicht die Via-Fläche im Pad)
+            // Kupferpad, das den Pastenmittelpunkt enthält und in Größe und Form am besten zur Paste passt –
+            // nicht das größte: ein runder Via-Restring neben einem schmalen Pad ist oft größer als das Pad selbst
+            let round = ap.shape_type == "circle";
+            let score = |p: &PadBox| (p.w - ap.width).abs() + (p.h - ap.height).abs() + if p.round != round { 0.2 } else { 0.0 };
             let hit = tree
                 .nearest_neighbor_iter(&[ap.cx, ap.cy])
                 .take(8)
@@ -482,7 +485,7 @@ impl StencilEngine {
                 .filter(|p| ap.cx >= p.x0 - 1e-6 && ap.cx <= p.x1 + 1e-6 && ap.cy >= p.y0 - 1e-6 && ap.cy <= p.y1 + 1e-6)
                 // Kupfer gehört zu genau diesem Pad (nicht eine große Massefläche unter mehreren Pastenpads)
                 .filter(|p| p.w >= 0.8 * ap.width && p.h >= 0.8 * ap.height && p.w <= 1.6 * ap.width + 0.3 && p.h <= 1.6 * ap.height + 0.3)
-                .max_by(|a, b| (a.w * a.h).total_cmp(&(b.w * b.h)));
+                .min_by(|a, b| score(a).total_cmp(&score(b)));
             ap.copper_ref = hit.cloned();
         }
     }
@@ -1021,13 +1024,20 @@ impl StencilEngine {
                 let pts = if k.round { circle_pts((k.x0 + k.x1) / 2.0, (k.y0 + k.y1) / 2.0, (k.x1 - k.x0) / 2.0, 24) } else { vec![(k.x0, k.y0), (k.x1, k.y0), (k.x1, k.y1), (k.x0, k.y1)] };
                 pts.iter().map(|p| tf(p.0, p.1)).collect::<Vec<_>>()
             });
+            // Kundenpaste (Original der Öffnung); aus Kupfer ergänzte Öffnungen haben keine
+            let orig: Vec<[f64; 2]> = if a.shape_type == "circle" {
+                circle_pts(a.cx, a.cy, a.width / 2.0, 24).iter().map(|p| tf(p.0, p.1)).collect()
+            } else if a.points.len() >= 3 {
+                a.points.iter().map(|p| tf(p.0, p.1)).collect()
+            } else {
+                rect(a.cx, a.cy, a.width, a.height).iter().map(|p| tf(p.0, p.1)).collect()
+            };
             let stencil: Vec<Vec<[f64; 2]>> = match &a.custom_slices {
                 Some(v) => v.iter().map(|s| s.pts.clone().unwrap_or_else(|| rect(s.cx, s.cy, s.w, s.h)).iter().map(|p| tf(p.0, p.1)).collect()).collect(),
-                None if a.shape_type == "circle" => vec![circle_pts(a.cx, a.cy, a.width / 2.0, 24).iter().map(|p| tf(p.0, p.1)).collect()],
-                None if a.points.len() >= 3 => vec![a.points.iter().map(|p| tf(p.0, p.1)).collect()],
-                None => vec![rect(a.cx, a.cy, a.width, a.height).iter().map(|p| tf(p.0, p.1)).collect()],
+                None => vec![orig.clone()],
             };
-            items.push(json!({"own": own, "copper": copper, "stencil": stencil}));
+            let customer = (!a.from_copper).then_some(orig);
+            items.push(json!({"own": own, "copper": copper, "stencil": stencil, "customer": customer}));
         }
         json!({"refdes": c.refdes, "rot": c.rotation, "mirror": mirror, "offset": [r3(ox), r3(oy)], "items": items})
     }
@@ -1341,12 +1351,17 @@ pub fn is_rotated_instance(tw: f64, th: f64, aw: f64, ah: f64) -> bool {
 
 /// Bohrung, deren Mitte im Rechteck w × h um (x, y) liegt (nächste zur Mitte); Durchmesser.
 pub fn drill_in_box(drills: &[(f64, f64, f64)], x: f64, y: f64, w: f64, h: f64) -> Option<f64> {
+    drill_in_box_at(drills, x, y, w, h).map(|d| d.2)
+}
+
+/// Wie `drill_in_box`, liefert zusätzlich die Lage der Bohrung (x, y, Durchmesser).
+pub fn drill_in_box_at(drills: &[(f64, f64, f64)], x: f64, y: f64, w: f64, h: f64) -> Option<(f64, f64, f64)> {
     let (hw, hh) = (w / 2.0 + 1e-3, h / 2.0 + 1e-3);
     drills
         .iter()
         .filter(|d| (d.0 - x).abs() <= hw && (d.1 - y).abs() <= hh)
         .min_by(|a, b| (a.0 - x).hypot(a.1 - y).total_cmp(&(b.0 - x).hypot(b.1 - y)))
-        .map(|d| d.2)
+        .copied()
 }
 
 /// Versatz b − a zweier Padlisten: gleiche Anzahl → Schwerpunktdifferenz, sonst Median der nächsten Paare (a → b).
@@ -1433,7 +1448,7 @@ impl StencilEngine {
                 .map(|(m, _)| m)
         };
         // Je Vorlagen-Pad (Index): Kupfer, Kupfermitte, Maske, Bohrung
-        type PadUpd = (usize, Option<(f64, f64, bool)>, Option<(f64, f64)>, Option<(f64, f64, bool)>, Option<f64>);
+        type PadUpd = (usize, Option<(f64, f64, bool)>, Option<(f64, f64)>, Option<(f64, f64, bool)>, Option<(f64, (f64, f64))>);
         let mut updates: Vec<(String, Vec<PadUpd>)> = Vec::new();
         for (name, pkg) in &self.packages {
             let mut per_pin = Vec::new();
@@ -1456,7 +1471,12 @@ impl StencilEngine {
                 let mask = nearest_mask(x, y).map(|m| if rotated { (m.h, m.w, m.round) } else { (m.w, m.h, m.round) });
                 // Nur Bohrungen im Pad (gedrehte Instanz: Breite/Höhe getauscht), keine Vias daneben
                 let (bw, bh) = if rotated { (p.h, p.w) } else { (p.w, p.h) };
-                let drill = drill_in_box(&self.drills, x, y, bw, bh);
+                // Lage der Bohrung zur Padmitte, zurück in den Package-Rahmen (Drehung/Spiegelung der ersten Instanz)
+                let frame = first_comp.get(name).and_then(|r| comp_frame.get(r.as_str()));
+                let drill = drill_in_box_at(&self.drills, x, y, bw, bh).map(|(dx, dy, d)| {
+                    let off = frame.map_or((dx - x, dy - y), |&(_, _, rot, mirror)| frame_to_pkg((dx - x, dy - y), rot, mirror));
+                    (d, (r3(off.0), r3(off.1)))
+                });
                 per_pin.push((i, chosen.and_then(|c| c.0), chosen.and_then(|c| c.1), mask, drill));
             }
             updates.push((name.clone(), per_pin));
@@ -1478,9 +1498,10 @@ impl StencilEngine {
                         p.mask_round = Some(round);
                     }
                     // Immer neu setzen: eine früher (z. B. mit altem Fangradius) gespeicherte Bohrung darf nicht stehen bleiben
-                    p.drill = drill.map(r3);
+                    p.drill = drill.map(|d| r3(d.0));
+                    p.drill_off = drill.map(|d| d.1);
                     // Via-in-Pad (kleine Bohrung) ist kein Bauteilanschluss
-                    if drill.is_some_and(|d| d >= THT_MIN_DRILL) {
+                    if drill.is_some_and(|d| d.0 >= THT_MIN_DRILL) {
                         drilled += 1;
                     }
                 }
