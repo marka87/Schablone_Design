@@ -104,15 +104,10 @@ impl StencilEngine {
         }
     }
 
-    /// Bohrdurchmesser an einer Position (THT), falls eine Bohrung in Reichweite liegt.
-    pub fn drill_at(&self, x: f64, y: f64, size: f64) -> Option<f64> {
-        let tol = (size / 2.0).max(0.3);
-        self.drills
-            .iter()
-            .map(|d| (d.2, (d.0 - x).hypot(d.1 - y)))
-            .filter(|(_, dist)| *dist <= tol)
-            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(d, _)| d)
+    /// Bohrdurchmesser eines Pads (THT oder Via im Pad): nur Bohrungen, deren Mitte im Pad (w × h um x, y) liegt.
+    /// Vias neben kleinen Pads zählen nicht (früher 0,3 mm Mindestradius, ordnete Nachbar-Vias falschen Pins zu).
+    pub fn drill_at(&self, x: f64, y: f64, w: f64, h: f64) -> Option<f64> {
+        super::drill_in_box(&self.drills, x, y, w, h)
     }
 
     /// Öffnungen neu berechnen (manuell bearbeitete bleiben unverändert).
@@ -130,7 +125,7 @@ impl StencilEngine {
                         round: ap.shape_type == "circle",
                         min_bridge: self.min_bridge_width,
                         thickness: self.get_effective_thickness(ap.cx, ap.cy).0,
-                        drill: self.drill_at(ap.cx, ap.cy, ap.width.min(ap.height)),
+                        drill: self.drill_at(ap.cx, ap.cy, ap.width, ap.height),
                         ..PadCtx::new(ap.width, ap.height, ap.cx, ap.cy, &ap.facing_dir)
                     };
                     let shaped = if ap.shape_type == "polygon" { shape_true_opening(&ap.points, &rule) } else { None };

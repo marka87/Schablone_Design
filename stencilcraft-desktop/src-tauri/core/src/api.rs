@@ -698,6 +698,16 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
             ok(json!({"current_customer": e.current_customer, "packages": pkgs}))
         }
         ("GET", ["api", "package", name]) => ok(e.get_package_preview_data(name)),
+        ("GET", ["api", "check", "preview"]) => {
+            // Beide Seiten; nur Package-Namen und Abweichungen (für sensible Projekte weitergebbar)
+            let side = e.current_side.clone();
+            let other = if side == "bot" { "top" } else { "bot" };
+            let mut list = e.preview_check(&side);
+            // on_other_side tauscht nur die Daten, nicht den Seitennamen
+            list.extend(e.on_other_side(|o| o.preview_check(other)).unwrap_or_default());
+            list.sort_by(|a, b| b["deviation_mm"].as_f64().partial_cmp(&a["deviation_mm"].as_f64()).unwrap_or(std::cmp::Ordering::Equal));
+            ok(json!({"status": "ok", "items": list}))
+        }
         ("GET", ["api", "package", name, "context"]) => {
             let r = query.get("radius").and_then(|v| v.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(4.0).clamp(0.5, 50.0);
             let refdes = query.get("refdes").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
@@ -959,6 +969,32 @@ mod tests {
         std::fs::write(&path, g).unwrap();
         e.import_files_or_zip(&[path.to_string_lossy().to_string()], "top", true).unwrap();
         e
+    }
+
+    #[test]
+    fn drill_only_inside_pad() {
+        use crate::engine::drill_in_box;
+        // 0,25 × 0,30-Pad: Via 0,2 mm daneben gehört nicht dazu (früher 0,3 mm Mindestradius)
+        assert_eq!(drill_in_box(&[(0.2, 0.0, 0.1)], 0.0, 0.0, 0.25, 0.30), None);
+        // Via im Pad und THT-Bohrung in der Padmitte zählen; die nähere gewinnt
+        assert_eq!(drill_in_box(&[(0.05, 0.0, 0.1)], 0.0, 0.0, 0.25, 0.30), Some(0.1));
+        assert_eq!(drill_in_box(&[(0.4, 0.0, 0.3), (0.0, 0.0, 1.0)], 0.0, 0.0, 1.6, 1.6), Some(1.0));
+        // Rechteck, kein Kreis: Bohrung im langen Pad weit von der Mitte zählt
+        assert_eq!(drill_in_box(&[(0.9, 0.0, 0.2)], 0.0, 0.0, 2.0, 0.4), Some(0.2));
+    }
+
+    #[test]
+    fn offset_between_template_and_instance() {
+        use crate::engine::offset_between;
+        // Ein-Pad-Package: Pad liegt 3 mm neben dem Bauteilursprung
+        assert_eq!(offset_between(&[(0.0, 0.0)], &[(3.0, -1.0)]), (3.0, -1.0));
+        // Zusätzliche Platinenpads (Halte-Pads) verfälschen den Versatz nicht
+        let t = [(-1.0, 0.0), (1.0, 0.0), (0.0, 1.0)];
+        let b = [(-0.9, 0.1), (1.1, 0.1), (0.1, 1.1), (7.0, 7.0), (-7.0, 7.0)];
+        let (dx, dy) = offset_between(&t, &b);
+        assert!((dx - 0.1).abs() < 1e-9 && (dy - 0.1).abs() < 1e-9);
+        // Instanz mit nur einem von zwei Pads (Paste fehlt): kein halber Pitch als Versatz
+        assert_eq!(offset_between(&[(-0.25, 0.0), (0.25, 0.0)], &[(0.25, 0.0)]), (0.0, 0.0));
     }
 
     #[test]

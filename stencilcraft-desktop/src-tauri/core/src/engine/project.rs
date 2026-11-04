@@ -484,6 +484,8 @@ impl StencilEngine {
             let active = if pf.active_side.is_empty() { pf.dataset.side.clone() } else { pf.active_side.clone() };
             self.switch_side(&active);
         }
+        // Maske/Bohrung/Kupfer je Pin aus dem Datensatz neu ableiten; gespeicherte Werte (z. B. alte Bohrungszuordnung) nicht übernehmen
+        self.annotate_packages();
         if unmatched > 0 {
             warnings.push(format!("{unmatched} gespeicherte Öffnungen passen nicht mehr zum Datensatz (wurde er geändert?)"));
         }

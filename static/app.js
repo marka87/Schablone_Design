@@ -626,7 +626,26 @@ function screenToWorld(sx, sy) {
 // -------------------------------------------------------------
 // Package Canvas Transforms & Measurement Tools
 // -------------------------------------------------------------
+// Editor zeigt das Package wie seine erste Instanz auf der Platine: gedreht und auf BOT gespiegelt
+function pkgInstanceTf() {
+    const bc = pkgState.boardContext;
+    if (!bc || bc.refdes == null) return { c: 1, s: 0, m: 1 };
+    const r = ((bc.rot || 0) * Math.PI) / 180;
+    return { c: Math.cos(r), s: Math.sin(r), m: bc.mirror ? -1 : 1 };
+}
+// Package-Rahmen → Platinenlage (wie pkg_to_frame in rules.rs)
+function pkgToInstance(x, y) {
+    const t = pkgInstanceTf();
+    return { x: t.m * (x * t.c + y * t.s), y: -x * t.s + y * t.c };
+}
+function instanceToPkg(x, y) {
+    const t = pkgInstanceTf();
+    const ux = x * t.m;
+    return { x: ux * t.c - y * t.s, y: ux * t.s + y * t.c };
+}
+
 function pkgWorldToScreen(x, y) {
+    ({ x, y } = pkgToInstance(x, y));
     const pCanvas = document.getElementById("pkgPreviewCanvas");
     if (!pCanvas) return { x: 0, y: 0 };
     const rect = pCanvas.getBoundingClientRect();
@@ -649,7 +668,7 @@ function pkgScreenToWorld(clientX, clientY) {
     const vy = (clientY - rect.top - (rect.height / 2 + pkgState.panY)) / pkgState.zoom;
     const rotRad = ((pkgState.rotation || 0) * Math.PI) / 180;
     const c = Math.cos(rotRad), s = Math.sin(rotRad);
-    return { x: vx * c + vy * s, y: vx * s - vy * c };
+    return instanceToPkg(vx * c + vy * s, vx * s - vy * c);
 }
 
 // Fangpunkte eines Elements: Zentrum, Ecken, Kantenmitten bzw. Polygon-Eckpunkte
@@ -2189,6 +2208,14 @@ function setupEventListeners() {
 
     container.addEventListener("mousedown", (e) => {
         if (e.target !== canvas) return; // Klicks auf Buttons/Overlays ignorieren
+        // Rechte Maustaste verschiebt die Ansicht (wie im Stencil Generator)
+        if (e.button === 2) {
+            state.isDragging = true;
+            state.rightPan = true;
+            state.dragStartX = e.clientX;
+            state.dragStartY = e.clientY;
+            return;
+        }
         if (e.button === 0 || e.button === 1) {
             if (measureState.active && e.button === 0) {
                 const rect = container.getBoundingClientRect();
@@ -2391,6 +2418,7 @@ function setupEventListeners() {
 
     // Rechtsklick auf Platine -> Messungen sofort löschen
     container.addEventListener("contextmenu", (e) => {
+        if (state.rightPanMoved) { state.rightPanMoved = false; e.preventDefault(); return; }
         if ((measureState.measurements && measureState.measurements.length > 0) || measureState.active) {
             e.preventDefault();
             clearMeasurements();
@@ -2459,6 +2487,13 @@ function setupEventListeners() {
                 selectInBox(b.start, b.cur);
             }
             render();
+            return;
+        }
+        if (state.isDragging && state.rightPan) {
+            // Rechtes Ziehen: nur verschieben, kein Klick; das Kontextmenü danach unterdrücken
+            state.rightPanMoved = Math.hypot(e.clientX - state.dragStartX, e.clientY - state.dragStartY) >= 4;
+            state.isDragging = false;
+            state.rightPan = false;
             return;
         }
         if (state.isDragging) {
@@ -3774,6 +3809,17 @@ ${reviewText}` : ""}`;
     }));
 })();
 
+// Selbstprüfung: nur Package-Namen und Abweichungen (mm), lokal – für sensible Projekte weitergebbar
+async function checkPreviewAgainstBoard() {
+    const d = await (await fetch("/api/check/preview")).json();
+    const bad = (d.items || []).filter(x => x.deviation_mm > 0.05 || x.origin_offset_mm > 0.05);
+    const lines = bad.slice(0, 30).map(x => `${x.package} (${x.side.toUpperCase()}): Form ${x.deviation_mm.toFixed(3)} mm · Ursprung versetzt ${x.origin_offset_mm.toFixed(3)} mm · Pads Editor/Platine ${x.pads}/${x.board_pads}`);
+    const text = bad.length ? `${bad.length} von ${(d.items || []).length} Packages weichen ab:\n${lines.join("\n")}` : `Alle ${(d.items || []).length} Packages stimmen mit der Platine überein (≤ 0,05 mm).`;
+    console.log(text);
+    alert(text);
+}
+document.addEventListener("DOMContentLoaded", () => document.getElementById("btnCheckPreview")?.addEventListener("click", checkPreviewAgainstBoard));
+
 // Nach Generate: Platine, Lagen, Baum, Vorschau und Verlauf auffrischen
 async function afterGenerate() {
     await refreshApertureData();
@@ -3814,12 +3860,17 @@ function showTreeMenu(e, items) {
 async function loadPkgBoardContext() {
     const name = pkgState.activePkgName;
     pkgState.boardContext = null;
-    if (!name || !document.getElementById("chkPrevBoard")?.checked) { renderPkgPreview(); return; }
-    const r = document.getElementById("selPrevBoardRadius")?.value || 4;
+    if (!name) { renderPkgPreview(); return; }
+    const r = document.getElementById("chkPrevBoard")?.checked ? (document.getElementById("selPrevBoardRadius")?.value || 4) : 0.5;
     try {
         const res = await fetch(`/api/package/${encodeURIComponent(name)}/context?radius=${r}`);
         const data = await res.json();
-        if (name === pkgState.activePkgName) pkgState.boardContext = data;
+        if (name === pkgState.activePkgName) {
+            if (!document.getElementById("chkPrevBoard")?.checked) data.items = [];
+            const turned = Math.abs(pkgInstanceTf().s) > 0.7;
+            pkgState.boardContext = data;
+            if (turned !== Math.abs(pkgInstanceTf().s) > 0.7) autoFitPackagePreview(pkgState.activePackageData);
+        }
     } catch (e) {
         console.error("Platinenumgebung:", e);
     }
@@ -3925,8 +3976,9 @@ function autoFitPackagePreview(data) {
         minY = Math.min(...data.pads.map(p => p.cy - p.h/2));
         maxY = Math.max(...data.pads.map(p => p.cy + p.h/2));
     }
-    const spanX = Math.max(2.0, (maxX - minX) * 1.6);
-    const spanY = Math.max(2.0, (maxY - minY) * 1.6);
+    let spanX = Math.max(2.0, (maxX - minX) * 1.6);
+    let spanY = Math.max(2.0, (maxY - minY) * 1.6);
+    if (Math.abs(pkgInstanceTf().s) > 0.7) [spanX, spanY] = [spanY, spanX];
 
     pkgState.zoom = Math.min(w / spanX, h / spanY, 150);
     pkgState.panX = 0;
@@ -4286,6 +4338,7 @@ function renderPkgPreview() {
         pkgCtx.rotate((pkgState.rotation * Math.PI) / 180);
     }
     pkgCtx.scale(pkgState.zoom, -pkgState.zoom); // Y nach oben wie in CAD
+    { const t = pkgInstanceTf(); pkgCtx.transform(t.m * t.c, -t.s, t.m * t.s, t.c, 0, 0); }
 
     const data = pkgState.activePackageData;
 
@@ -4413,21 +4466,21 @@ function renderPkgPreview() {
     }
 
     // 6. Pin Labels (falls aktiviert)
+    pkgCtx.restore();
+
     if (pkgState.showPinLabels && data.pads) {
+        pkgCtx.save();
+        resetToCssPixels(pkgCtx);
         pkgCtx.fillStyle = "#ffffff";
-        pkgCtx.font = `${Math.max(10, 14 / pkgState.zoom)}px monospace`;
+        pkgCtx.font = "11px monospace";
         pkgCtx.textAlign = "center";
         pkgCtx.textBaseline = "middle";
         for (const p of data.pads) {
-            pkgCtx.save();
-            pkgCtx.translate(p.cx, p.cy);
-            pkgCtx.scale(1, -1); // Text wieder aufrecht
-            pkgCtx.fillText(p.pin, 0, 0);
-            pkgCtx.restore();
+            const sp = pkgWorldToScreen(p.cx, p.cy);
+            pkgCtx.fillText(p.pin, sp.x, sp.y);
         }
+        pkgCtx.restore();
     }
-
-    pkgCtx.restore();
 
     // Measurements (Package View)
     drawMeasurementLayer(pkgCtx, "package", pkgWorldToScreen, pkgState.zoom);

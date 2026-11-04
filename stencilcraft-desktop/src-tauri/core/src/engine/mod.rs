@@ -691,7 +691,7 @@ impl StencilEngine {
             min_bridge: self.min_bridge_width,
             pin_count: pkg.pads_relative.len().max(pkg.pin_count),
             thickness: self.get_effective_thickness(ap.cx, ap.cy).0,
-            drill: self.drill_at(ap.cx, ap.cy, ap.width.min(ap.height)),
+            drill: self.drill_at(ap.cx, ap.cy, ap.width, ap.height),
             ..PadCtx::new(pw, ph, ap.cx, ap.cy, &ap.facing_dir)
         };
         let shaped = if !sized && ap.shape_type == "polygon" { shape_true_opening(&ap.points, &rule) } else { None };
@@ -996,15 +996,19 @@ impl StencilEngine {
     pub fn package_context(&self, pkg_name: &str, radius: f64, refdes: Option<&str>) -> Value {
         let target = self.resolve_alias(pkg_name);
         let side = &self.current_side;
-        let Some(c) = self.components.iter().find(|c| {
-            c.side.eq_ignore_ascii_case(side) && refdes.map_or(self.resolve_alias(&c.package) == target, |r| c.refdes == r)
-        }) else {
+        let picked = match refdes {
+            Some(r) => self.components.iter().find(|c| c.side.eq_ignore_ascii_case(side) && c.refdes == r),
+            None => self.first_instance(&target, side),
+        };
+        let Some(c) = picked else {
             return json!({"refdes": null, "items": []});
         };
         let mirror = c.side.eq_ignore_ascii_case("BOT");
+        // Ursprung der Vorlage kann vom Bauteilursprung abweichen (z. B. Ein-Pad-Packages): Umgebung mitverschieben
+        let (ox, oy) = self.instance_offset(&target, c, mirror);
         let tf = |x: f64, y: f64| {
             let p = frame_to_pkg((x - c.cx, y - c.cy), c.rotation, mirror);
-            [r4(p.0), r4(p.1)]
+            [r4(p.0 - ox), r4(p.1 - oy)]
         };
         let rect = |cx: f64, cy: f64, w: f64, h: f64| vec![(cx - w / 2.0, cy - h / 2.0), (cx + w / 2.0, cy - h / 2.0), (cx + w / 2.0, cy + h / 2.0), (cx - w / 2.0, cy + h / 2.0)];
         let mut items = Vec::new();
@@ -1025,7 +1029,61 @@ impl StencilEngine {
             };
             items.push(json!({"own": own, "copper": copper, "stencil": stencil}));
         }
-        json!({"refdes": c.refdes, "rot": c.rotation, "mirror": mirror, "items": items})
+        json!({"refdes": c.refdes, "rot": c.rotation, "mirror": mirror, "offset": [r3(ox), r3(oy)], "items": items})
+    }
+
+    /// Instanz, aus der die Vorschau Maske, Bohrung und Kupfer nimmt: Bauteil der ersten Öffnung des Packages
+    /// (wie annotate_packages), sonst das erste Bauteil des Packages auf dieser Seite.
+    fn first_instance(&self, pkg: &str, side: &str) -> Option<&ComponentItem> {
+        let on_side = |c: &&ComponentItem| c.side.eq_ignore_ascii_case(side);
+        self.apertures
+            .iter()
+            .find(|a| !a.component_id.is_empty() && self.resolve_alias(&a.package_name) == pkg)
+            .and_then(|a| self.components.iter().filter(on_side).find(|c| c.refdes == a.component_id))
+            .or_else(|| self.components.iter().filter(on_side).find(|c| self.resolve_alias(&c.package) == pkg))
+    }
+
+    /// Kupferpad-Mitten einer Instanz im Package-Rahmen (ohne Versatzkorrektur).
+    fn instance_pads(&self, c: &ComponentItem, mirror: bool) -> Vec<(f64, f64)> {
+        self.apertures
+            .iter()
+            .filter(|a| a.component_id == c.refdes)
+            .map(|a| {
+                let (x, y) = a.copper_ref.as_ref().map_or((a.cx, a.cy), |k| ((k.x0 + k.x1) / 2.0, (k.y0 + k.y1) / 2.0));
+                frame_to_pkg((x - c.cx, y - c.cy), c.rotation, mirror)
+            })
+            .collect()
+    }
+
+    /// Pads, wie der Editor sie zeichnet (Vorschau, Kupfermitten).
+    fn template_pads(&self, pkg: &str) -> Vec<(f64, f64)> {
+        let v = self.get_package_preview_data(pkg);
+        v["pads"].as_array().map(|a| a.iter().filter_map(|p| Some((p["cx"].as_f64()?, p["cy"].as_f64()?))).collect()).unwrap_or_default()
+    }
+
+    /// Versatz Instanz − Vorlage im Package-Rahmen: gleiche Padzahl → Schwerpunkte, sonst Median der nächsten Paare.
+    fn instance_offset(&self, pkg: &str, c: &ComponentItem, mirror: bool) -> (f64, f64) {
+        offset_between(&self.template_pads(pkg), &self.instance_pads(c, mirror))
+    }
+
+    /// Selbstprüfung Vorschau ↔ Platine (aktive Seite): je Package die größte Abweichung (mm) zwischen den
+    /// Vorschau-Pads und den Pads der ersten Instanz, zurückgerechnet in den Package-Rahmen.
+    /// Liefert nur Namen und Zahlen – keine Koordinaten, Netze oder Bauteildaten.
+    pub fn preview_check(&self, side: &str) -> Vec<Value> {
+        let mut out = Vec::new();
+        for name in self.packages.keys() {
+            let Some(c) = self.first_instance(name, side) else { continue };
+            let mirror = c.side.eq_ignore_ascii_case("BOT");
+            let own = self.instance_pads(c, mirror);
+            let pads = self.template_pads(name);
+            if own.is_empty() || pads.is_empty() {
+                continue;
+            }
+            let (ox, oy) = offset_between(&pads, &own);
+            let dev = pads.iter().map(|p| own.iter().map(|o| (p.0 + ox - o.0).hypot(p.1 + oy - o.1)).fold(f64::INFINITY, f64::min)).fold(0.0, f64::max);
+            out.push(json!({"package": name, "side": side, "deviation_mm": r3(dev), "origin_offset_mm": r3(ox.hypot(oy)), "pads": pads.len(), "board_pads": own.len()}));
+        }
+        out
     }
 
     pub fn get_package_preview_data(&self, pkg_name: &str) -> Value {
@@ -1281,6 +1339,42 @@ pub fn is_rotated_instance(tw: f64, th: f64, aw: f64, ah: f64) -> bool {
     !t_square && !a_square && (tw > th) != (aw > ah)
 }
 
+/// Bohrung, deren Mitte im Rechteck w × h um (x, y) liegt (nächste zur Mitte); Durchmesser.
+pub fn drill_in_box(drills: &[(f64, f64, f64)], x: f64, y: f64, w: f64, h: f64) -> Option<f64> {
+    let (hw, hh) = (w / 2.0 + 1e-3, h / 2.0 + 1e-3);
+    drills
+        .iter()
+        .filter(|d| (d.0 - x).abs() <= hw && (d.1 - y).abs() <= hh)
+        .min_by(|a, b| (a.0 - x).hypot(a.1 - y).total_cmp(&(b.0 - x).hypot(b.1 - y)))
+        .map(|d| d.2)
+}
+
+/// Versatz b − a zweier Padlisten: gleiche Anzahl → Schwerpunktdifferenz, sonst Median der nächsten Paare (a → b).
+pub fn offset_between(a: &[(f64, f64)], b: &[(f64, f64)]) -> (f64, f64) {
+    if a.is_empty() || b.is_empty() {
+        return (0.0, 0.0);
+    }
+    let mean = |v: &[(f64, f64)]| (v.iter().map(|p| p.0).sum::<f64>() / v.len() as f64, v.iter().map(|p| p.1).sum::<f64>() / v.len() as f64);
+    if a.len() == b.len() {
+        let (ma, mb) = (mean(a), mean(b));
+        return (mb.0 - ma.0, mb.1 - ma.1);
+    }
+    // Paare von der kleineren Liste aus suchen (fehlende Paste an einer Instanz verfälscht sonst den Versatz)
+    if b.len() < a.len() {
+        let (x, y) = offset_between(b, a);
+        return (-x, -y);
+    }
+    let mut dx = Vec::new();
+    let mut dy = Vec::new();
+    for p in a {
+        let q = b.iter().min_by(|x, y| (x.0 - p.0).hypot(x.1 - p.1).total_cmp(&(y.0 - p.0).hypot(y.1 - p.1))).unwrap();
+        dx.push(q.0 - p.0);
+        dy.push(q.1 - p.1);
+    }
+    let med = |v: &mut Vec<f64>| { v.sort_by(f64::total_cmp); v[v.len() / 2] };
+    (med(&mut dx), med(&mut dy))
+}
+
 impl StencilEngine {
     /// Ergänzt Package-Templates um Lötstopp-Freistellung und Bohrung je Pin (aus der ersten Instanz
     /// auf der Platine) und ordnet sie den Gruppen SMD / THT / Other / Fiducial / Library zu.
@@ -1288,8 +1382,16 @@ impl StencilEngine {
         // Erste Board-Instanz je (Package, Pin): Pasten-Apertur (Position, Lage)
         let mut first: std::collections::HashMap<(String, i64), (f64, f64, bool)> = std::collections::HashMap::new();
         let mut instances: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        let mut copper_first: std::collections::HashMap<(String, i64), (f64, f64, bool)> = std::collections::HashMap::new();
-        let mut copper_center: std::collections::HashMap<(String, i64), (f64, f64)> = std::collections::HashMap::new();
+        // Eine Ansicht für TOP und BOT: Packages der anderen Seite zählen ebenfalls als "auf der Platine"
+        for ap in self.sides.values().flat_map(|d| d.apertures.iter()) {
+            let pkg = self.package_aliases.get(&ap.package_name).cloned().unwrap_or_else(|| ap.package_name.clone());
+            *instances.entry(pkg).or_default() += 1;
+        }
+        // Alle Pads je (Package, Pin) der ersten Instanz: Kupfer (Größe im Package-Rahmen), Kupfermitte relativ, Lage auf der Platine.
+        // Ein Pin kann mehrere Pads haben (z. B. Elko-Kreuzpad): dann bekommt jedes Vorlagen-Pad sein eigenes.
+        type PinPad = (Option<(f64, f64, bool)>, Option<(f64, f64)>, (f64, f64, bool));
+        let mut pin_pads: std::collections::HashMap<String, Vec<(i64, PinPad)>> = std::collections::HashMap::new();
+        let mut first_comp: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let comp_frame: std::collections::HashMap<&str, (f64, f64, f64, bool)> =
             self.components.iter().map(|c| (c.refdes.as_str(), (c.cx, c.cy, c.rotation, c.side.eq_ignore_ascii_case("BOT")))).collect();
         let comp_rot: std::collections::HashMap<&str, f64> = self.components.iter().map(|c| (c.refdes.as_str(), c.rotation)).collect();
@@ -1301,13 +1403,15 @@ impl StencilEngine {
                 Some(r) => quarter(*r),
                 None => self.packages.get(&pkg).and_then(|t| t.pads_relative.iter().find(|p| p.pin == ap.pin_number)).map_or(false, |tp| is_rotated_instance(tp.w, tp.h, ap.width, ap.height)),
             };
-            if let Some(c) = &ap.copper_ref {
-                copper_first.entry((pkg.clone(), ap.pin_number)).or_insert(if rotated { (c.h, c.w, c.round) } else { (c.w, c.h, c.round) });
+            if *first_comp.entry(pkg.clone()).or_insert_with(|| ap.component_id.clone()) == ap.component_id {
+                let cu = ap.copper_ref.as_ref().map(|c| if rotated { (c.h, c.w, c.round) } else { (c.w, c.h, c.round) });
                 // Kupfermitte zurück in den Package-Rahmen (Drehung/Spiegelung des Bauteils aufheben)
-                if let Some(&(ccx, ccy, rot, mirror)) = comp_frame.get(ap.component_id.as_str()) {
+                let cen = ap.copper_ref.as_ref().and_then(|c| {
+                    let &(ccx, ccy, rot, mirror) = comp_frame.get(ap.component_id.as_str())?;
                     let rel = frame_to_pkg(((c.x0 + c.x1) / 2.0 - ccx, (c.y0 + c.y1) / 2.0 - ccy), rot, mirror);
-                    copper_center.entry((pkg.clone(), ap.pin_number)).or_insert((r3(rel.0), r3(rel.1)));
-                }
+                    Some((r3(rel.0), r3(rel.1)))
+                });
+                pin_pads.entry(pkg.clone()).or_default().push((ap.pin_number, (cu, cen, (ap.cx, ap.cy, rotated))));
             }
             first.entry((pkg, ap.pin_number)).or_insert((ap.cx, ap.cy, rotated));
         }
@@ -1328,53 +1432,61 @@ impl StencilEngine {
                 .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(m, _)| m)
         };
-        let mut updates: Vec<(String, Vec<(i64, Option<(f64, f64, bool)>, Option<f64>)>)> = Vec::new();
+        // Je Vorlagen-Pad (Index): Kupfer, Kupfermitte, Maske, Bohrung
+        type PadUpd = (usize, Option<(f64, f64, bool)>, Option<(f64, f64)>, Option<(f64, f64, bool)>, Option<f64>);
+        let mut updates: Vec<(String, Vec<PadUpd>)> = Vec::new();
         for (name, pkg) in &self.packages {
             let mut per_pin = Vec::new();
-            for p in &pkg.pads_relative {
-                let Some(&(x, y, rotated)) = first.get(&(name.clone(), p.pin)) else { continue };
+            let cands: &[(i64, PinPad)] = pin_pads.get(name).map_or(&[], |v| v.as_slice());
+            let mut taken = vec![false; cands.len()];
+            for (i, p) in pkg.pads_relative.iter().enumerate() {
+                // Nächstes freies Pad derselben Instanz: zuerst gleicher Pin, sonst irgendein Pin (Pinnummern von
+                // Paste und EDA können abweichen, z. B. Elko 1,2,3,4 gegenüber 1,1,2,2)
+                let dist = |k: usize| cands[k].1 .1.map_or(f64::INFINITY, |(x, y)| (x - p.cx).hypot(y - p.cy));
+                let best = |same_pin: bool| {
+                    (0..cands.len()).filter(|&k| !taken[k] && (!same_pin || cands[k].0 == p.pin)).min_by(|&a, &b| dist(a).total_cmp(&dist(b)))
+                };
+                let pick = best(true).filter(|&k| dist(k) < 0.5).or_else(|| best(false).filter(|&k| dist(k).is_finite())).or_else(|| best(true));
+                if let Some(k) = pick {
+                    taken[k] = true;
+                }
+                let chosen = pick.map(|k| cands[k].1);
+                let pos = chosen.map(|c| c.2).or_else(|| first.get(&(name.clone(), p.pin)).copied());
+                let Some((x, y, rotated)) = pos else { continue };
                 let mask = nearest_mask(x, y).map(|m| if rotated { (m.h, m.w, m.round) } else { (m.w, m.h, m.round) });
-                let tol = (p.w.min(p.h) / 2.0).max(0.3);
-                let drill = self
-                    .drills
-                    .iter()
-                    .map(|d| (d, (d.0 - x).hypot(d.1 - y)))
-                    .filter(|(_, dist)| *dist <= tol)
-                    .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-                    .map(|(d, _)| d.2);
-                per_pin.push((p.pin, mask, drill));
+                // Nur Bohrungen im Pad (gedrehte Instanz: Breite/Höhe getauscht), keine Vias daneben
+                let (bw, bh) = if rotated { (p.h, p.w) } else { (p.w, p.h) };
+                let drill = drill_in_box(&self.drills, x, y, bw, bh);
+                per_pin.push((i, chosen.and_then(|c| c.0), chosen.and_then(|c| c.1), mask, drill));
             }
             updates.push((name.clone(), per_pin));
         }
         for (name, per_pin) in updates {
             let has_instances = instances.get(&name).copied().unwrap_or(0) > 0;
             let Some(pkg) = self.packages.get_mut(&name) else { continue };
-            for p in pkg.pads_relative.iter_mut() {
-                if let Some(&(w, h, round)) = copper_first.get(&(name.clone(), p.pin)) {
-                    p.copper = Some((r3(w), r3(h), round));
-                }
-                p.copper_c = copper_center.get(&(name.clone(), p.pin)).copied();
-            }
             let mut drilled = 0usize;
             let pin_total = per_pin.len().max(1);
-            for (pin, mask, drill) in per_pin {
-                if let Some(p) = pkg.pads_relative.iter_mut().find(|p| p.pin == pin) {
+            for (i, copper, copper_c, mask, drill) in per_pin {
+                if let Some(p) = pkg.pads_relative.get_mut(i) {
+                    if let Some((w, h, round)) = copper {
+                        p.copper = Some((r3(w), r3(h), round));
+                    }
+                    p.copper_c = copper_c;
                     if let Some((w, h, round)) = mask {
                         p.mask_w = Some(r3(w));
                         p.mask_h = Some(r3(h));
                         p.mask_round = Some(round);
                     }
-                    if let Some(d) = drill {
-                        p.drill = Some(r3(d));
-                        // Via-in-Pad (kleine Bohrung) ist kein Bauteilanschluss
-                        if d >= THT_MIN_DRILL {
-                            drilled += 1;
-                        }
+                    // Immer neu setzen: eine früher (z. B. mit altem Fangradius) gespeicherte Bohrung darf nicht stehen bleiben
+                    p.drill = drill.map(r3);
+                    // Via-in-Pad (kleine Bohrung) ist kein Bauteilanschluss
+                    if drill.is_some_and(|d| d >= THT_MIN_DRILL) {
+                        drilled += 1;
                     }
                 }
             }
             let lname = name.to_lowercase();
-            pkg.group = if lname.contains("fiducial") || lname.starts_with("fid") {
+            pkg.group = if lname.contains("fiducial") || lname.starts_with("fid") || lname.starts_with("gfid") {
                 "Fiducial"
             } else if drilled * 2 >= pin_total && drilled > 0 {
                 "THT"
