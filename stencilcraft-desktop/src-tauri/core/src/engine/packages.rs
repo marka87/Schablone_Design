@@ -54,7 +54,7 @@ fn dual_row(name: &str, n_side: usize, pitch: f64, row_y: f64, w: f64, h: f64, o
     for i in 0..n_side {
         p.pads_relative.push(PadRel::new((i + n_side) as i64 + 1, r3(-x0 - i as f64 * pitch), row_y, w, h, "down"));
     }
-    p.rule = PackageRule { name: "Länglich & Schmal (Pitch-Schutz)".into(), rule_type: "elongated_pitch".into(), ..Default::default() };
+    p.rule = PackageRule { name: "Elongated & Narrow (Pitch Protection)".into(), rule_type: "elongated_pitch".into(), ..Default::default() };
     p
 }
 
@@ -438,7 +438,7 @@ impl StencilEngine {
                 }
             } else if (6..=32).contains(&pins) && (0.45..=1.35).contains(&pitch) && !has_thermal {
                 soic += pkg.component_count;
-                ("SOIC / SOP", Some(PackageRule { name: "Länglich & Schmal (Pitch-Schutz)".into(), rule_type: "elongated_pitch".into(), ..Default::default() }))
+                ("SOIC / SOP", Some(PackageRule { name: "Elongated & Narrow (Pitch Protection)".into(), rule_type: "elongated_pitch".into(), ..Default::default() }))
             } else if big_center || upper.contains("QFN") || upper.contains("DFN") {
                 qfn += pkg.component_count;
                 for p in &pkg.pads_relative {
@@ -459,7 +459,7 @@ impl StencilEngine {
                         }
                     }
                 }
-                ("QFN / DFN", Some(PackageRule { name: "QFN Peripheral (Pitch-Schutz)".into(), rule_type: "elongated_pitch".into(), pitch_reduction_pct: 15.0, ..Default::default() }))
+                ("QFN / DFN", Some(PackageRule { name: "QFN Peripheral (Pitch Protection)".into(), rule_type: "elongated_pitch".into(), pitch_reduction_pct: 15.0, ..Default::default() }))
             } else if pins >= 16 && (upper.contains("BGA") || (pw == ph && pw <= 0.60 && pitch <= 1.0)) {
                 bga += pkg.component_count;
                 ("BGA / CSP", Some(PackageRule { name: "BGA Release Reduction".into(), undersize_w: 0.02, undersize_h: 0.02, ..Default::default() }))

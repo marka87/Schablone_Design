@@ -173,7 +173,7 @@ impl StencilEngine {
         for fp in paths {
             let p = Path::new(fp);
             if !p.exists() {
-                errors.push(format!("Nicht gefunden: {fp}"));
+                errors.push(format!("Not found: {fp}"));
                 continue;
             }
             let result: Result<usize, String> = if p.is_dir() || odb::is_archive(p) {
@@ -266,7 +266,7 @@ impl StencilEngine {
             }
         }
         if gerbers.is_empty() {
-            return Err(format!("Keine ODB++- oder Gerber-Daten in {} gefunden", p.display()));
+            return Err(format!("No ODB++ or Gerber data found in {}", p.display()));
         }
         gerbers.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(self.import_gerber_set(gerbers, side))
@@ -493,7 +493,7 @@ impl StencilEngine {
                 }
                 self.upsert_layer(BoardLayer {
                     id: "odb_profile".into(),
-                    name: "PROFILE (Platinenkontur)".into(),
+                    name: "PROFILE (Board Outline)".into(),
                     filename: "profile".into(),
                     layer_type: "profile".into(),
                     side: "both".into(),
@@ -557,7 +557,7 @@ impl StencilEngine {
                 .collect();
             self.upsert_layer(BoardLayer {
                 id: format!("paste_orig_{s}"),
-                name: format!("{}_PASTE (Kunde / Original)", s.to_uppercase()),
+                name: format!("{}_PASTE (Customer / Original)", s.to_uppercase()),
                 filename: format!("{s}_paste_orig"),
                 layer_type: "paste_orig".into(),
                 side: s.into(),
@@ -569,7 +569,7 @@ impl StencilEngine {
             });
             self.upsert_layer(BoardLayer {
                 id: format!("stencil_mod_{s}"),
-                name: format!("Schablone {} (Zwischenspeicher)", s.to_uppercase()),
+                name: format!("Stencil {} (Working Buffer)", s.to_uppercase()),
                 filename: format!("stencil_{s}_working_buffer"),
                 layer_type: "paste".into(),
                 side: s.into(),

@@ -54,25 +54,25 @@ impl StencilEngine {
                 let cov = pad.map(|p| area / p * 100.0);
                 let mut issues: Vec<&str> = Vec::new();
                 if ipc.status != "OK" {
-                    issues.push(if ipc.area_ratio < self.ipc_min_ar { "Area Ratio" } else if ipc.aspect_ratio < self.ipc_min_aspect { "Aspect Ratio" } else { "Grenzwertig" });
+                    issues.push(if ipc.area_ratio < self.ipc_min_ar { "Area Ratio" } else if ipc.aspect_ratio < self.ipc_min_aspect { "Aspect Ratio" } else { "Borderline" });
                 }
                 if ipc.grain_warn {
-                    issues.push("Ball-Regel");
+                    issues.push("Ball Rule");
                 }
                 if ipc.via_warn {
-                    issues.push("Bohrung in Paste");
+                    issues.push("Drill in Paste");
                 }
                 if ipc.squeegee_warn {
-                    issues.push("Quer zur Rakel");
+                    issues.push("Across Squeegee");
                 }
                 if ipc.clearance_warn {
-                    issues.push("Stufenkante");
+                    issues.push("Step Edge");
                 }
                 if cov.is_some_and(|c| c < lim.min_pct) {
-                    issues.push("Abdeckung zu klein");
+                    issues.push("Coverage too low");
                 }
                 if cov.is_some_and(|c| c > lim.max_pct) {
-                    issues.push("Abdeckung zu groß");
+                    issues.push("Coverage too high");
                 }
                 let level = if ipc.status == "CRIT" { "CRIT" } else if ipc.status == "WARN" || !issues.is_empty() { "WARN" } else { "OK" };
                 json!({
@@ -104,7 +104,7 @@ impl StencilEngine {
 pub fn analysis_csv(rows: &[Value]) -> String {
     let num = |v: &Value| v.as_f64().map(|f| format!("{f}").replace('.', ",")).unwrap_or_default();
     let txt = |v: &Value| v.as_str().unwrap_or("").replace(';', ",");
-    let mut out = String::from("Id;Bauteil;Pin;Package;X (mm);Y (mm);Fläche (mm²);Padfläche (mm²);Abdeckung (%);Dicke (mm);Volumen (mm³);Area Ratio;Aspect Ratio;Min. Breite (mm);Status;Befunde\n");
+    let mut out = String::from("Id;Component;Pin;Package;X (mm);Y (mm);Area (mm²);Pad Area (mm²);Coverage (%);Thickness (mm);Volume (mm³);Area Ratio;Aspect Ratio;Min. Width (mm);Status;Findings\n");
     for r in rows {
         let issues: Vec<&str> = r["issues"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
         out.push_str(&format!(
@@ -142,7 +142,7 @@ mod tests {
         assert_eq!(rows[0]["status"], "OK");
         assert_eq!(rows[1]["coverage"], 25.0);
         assert_eq!(rows[1]["status"], "WARN");
-        assert!(rows[1]["issues"].as_array().unwrap().iter().any(|i| i == "Abdeckung zu klein"));
+        assert!(rows[1]["issues"].as_array().unwrap().iter().any(|i| i == "Coverage too low"));
         let csv = analysis_csv(&rows);
         assert_eq!(csv.lines().count(), 3);
         assert!(csv.lines().nth(2).unwrap().contains(";25;"), "{csv}");

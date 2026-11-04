@@ -44,9 +44,9 @@ pub fn default_profiles() -> BTreeMap<u8, IpcProfile> {
         transverse_clearance: tr,
     };
     BTreeMap::from([
-        (1, p(1, "Klasse 1 – Allgemeine Elektronik", 0.60, 1.40, 10.0, 4.0, 4.0, 0.08, 1.0, 0.7)),
-        (2, p(2, "Klasse 2 – Erweiterte Zuverlässigkeit", 0.66, 1.50, 10.0, 5.0, 5.0, 0.10, 1.2, 0.8)),
-        (3, p(3, "Klasse 3 – Hochzuverlässig", 0.70, 1.60, 15.0, 5.0, 5.0, 0.12, 1.5, 1.0)),
+        (1, p(1, "Class 1 – General Electronics", 0.60, 1.40, 10.0, 4.0, 4.0, 0.08, 1.0, 0.7)),
+        (2, p(2, "Class 2 – Extended Reliability", 0.66, 1.50, 10.0, 5.0, 5.0, 0.10, 1.2, 0.8)),
+        (3, p(3, "Class 3 – High Reliability", 0.70, 1.60, 15.0, 5.0, 5.0, 0.12, 1.5, 1.0)),
     ])
 }
 
@@ -117,7 +117,7 @@ impl StencilEngine {
         match self.ipc_profiles.get(&self.ipc_class).filter(|_| self.ipc_class > 0) {
             Some(p) => p.name.clone(),
             None if self.ipc_mode == "nano" => "Nano-Coated / E-Polish".into(),
-            None => "Benutzerdefiniert".into(),
+            None => "Custom".into(),
         }
     }
 

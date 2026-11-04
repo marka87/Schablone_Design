@@ -171,11 +171,11 @@ fn now_string() -> String {
 
 pub(crate) fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("Ordner nicht anlegbar: {e}"))?;
+        std::fs::create_dir_all(dir).map_err(|e| format!("Cannot create folder: {e}"))?;
     }
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, text).map_err(|e| format!("Fehler beim Schreiben von {}: {e}", path.display()))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("Fehler beim Speichern von {}: {e}", path.display()))
+    std::fs::write(&tmp, text).map_err(|e| format!("Error writing {}: {e}", path.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("Error saving {}: {e}", path.display()))
 }
 
 impl StencilEngine {
@@ -409,7 +409,7 @@ impl StencilEngine {
 
     pub fn save_project(&mut self, path: &Path) -> Result<String, String> {
         if self.source_paths.is_empty() {
-            return Err("Kein Datensatz geladen – nichts zu speichern".into());
+            return Err("No dataset loaded – nothing to save".into());
         }
         let path = if path.extension().map_or(true, |e| e != PROJECT_EXT) { path.with_extension(PROJECT_EXT) } else { path.to_path_buf() };
         let text = serde_json::to_string(&self.project_file()).map_err(|e| e.to_string())?;
@@ -425,9 +425,9 @@ impl StencilEngine {
     /// `dataset_override` ersetzt die gespeicherten Datensatzpfade (Datensatz wurde verschoben).
     pub fn open_project(&mut self, path: &Path, dataset_override: Option<Vec<String>>) -> Result<OpenResult, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let pf: ProjectFile = serde_json::from_str(&text).map_err(|e| format!("Ungültige Projektdatei: {e}"))?;
+        let pf: ProjectFile = serde_json::from_str(&text).map_err(|e| format!("Invalid project file: {e}"))?;
         if pf.format != "stencilcraft-project" {
-            return Err("Keine StencilCraft-Projektdatei".into());
+            return Err("Not a StencilCraft project file".into());
         }
         let paths = dataset_override.unwrap_or_else(|| pf.dataset.paths.clone());
         if paths.is_empty() || paths.iter().any(|p| !Path::new(p).exists()) {
@@ -487,7 +487,7 @@ impl StencilEngine {
         // Maske/Bohrung/Kupfer je Pin aus dem Datensatz neu ableiten; gespeicherte Werte (z. B. alte Bohrungszuordnung) nicht übernehmen
         self.annotate_packages();
         if unmatched > 0 {
-            warnings.push(format!("{unmatched} gespeicherte Öffnungen passen nicht mehr zum Datensatz (wurde er geändert?)"));
+            warnings.push(format!("{unmatched} saved apertures no longer match the dataset (was it changed?)"));
         }
         for ls in pf.layers {
             if let Some(l) = self.layer_mut(&ls.id) {
@@ -533,7 +533,7 @@ impl StencilEngine {
             return Ok(false);
         }
         let mut pf = self.project_file();
-        pf.dataset.name = format!("{} (wiederhergestellt)", pf.dataset.name);
+        pf.dataset.name = format!("{} (recovered)", pf.dataset.name);
         let text = serde_json::to_string(&pf).map_err(|e| e.to_string())?;
         write_atomic(&self.autosave_path(), &text)?;
         Ok(true)
@@ -593,63 +593,63 @@ pub fn edit_label(method: &str, seg: &[&str], body: &Map<String, Value>) -> Opti
     let id = || body.get("id").or_else(|| body.get("ap_id")).map(|v| v.to_string()).unwrap_or_default();
     Some(match (method, seg) {
         ("POST", ["api", "slice"]) => format!("Slicing Pad {}", id()),
-        ("POST", ["api", "reduce"]) => format!("Flächenreduktion Pad {}", id()),
-        ("POST", ["api", "elongate"]) => format!("Länglich & Schmal Pad {}", id()),
-        ("POST", ["api", "reset_aperture"]) => format!("Zurücksetzen Pad {}", id()),
+        ("POST", ["api", "reduce"]) => format!("Area Reduction Pad {}", id()),
+        ("POST", ["api", "elongate"]) => format!("Elongated & Narrow Pad {}", id()),
+        ("POST", ["api", "reset_aperture"]) => format!("Reset Pad {}", id()),
         ("POST", ["api", "openings", op]) => {
             let n = body.get("ids").and_then(Value::as_array).map_or(0, Vec::len);
             let what = match *op {
-                "move" => "verschoben",
-                "rotate" => "gedreht",
-                "scale" | "resize" => "Größe geändert",
-                "reduce" => "verkleinert",
-                "delete" => "gelöscht",
-                "duplicate" => "dupliziert",
-                "reset" => "zurückgesetzt",
-                "slice" => "Stege",
-                "elongate" => "länglich & schmal",
-                _ => "bearbeitet",
+                "move" => "moved",
+                "rotate" => "rotated",
+                "scale" | "resize" => "resized",
+                "reduce" => "reduced",
+                "delete" => "deleted",
+                "duplicate" => "duplicated",
+                "reset" => "reset",
+                "slice" => "webs",
+                "elongate" => "elongated & narrow",
+                _ => "edited",
             };
-            format!("{n} Öffnung(en) {what}")
+            format!("{n} aperture(s) {what}")
         }
-        ("POST", ["api", "opening", "add"]) => "Öffnung hinzugefügt".into(),
+        ("POST", ["api", "opening", "add"]) => "Aperture added".into(),
         ("POST", ["api", "pip", "apply"]) => format!("Pin-in-Paste Pad {}", id()),
-        ("POST", ["api", "pad", p, "override"]) => format!("Pad {p} anpassen"),
-        ("POST", ["api", "pad", p, "reset"]) => format!("Pad {p} zurücksetzen"),
-        ("POST", ["api", "zone"]) => "Zone anlegen".into(),
-        ("POST", ["api", "zone", "around_component"]) => "Stufenzone um Bauteil".into(),
-        ("POST", ["api", "zones", "create"]) => "Stufenzonen angelegt".into(),
-        ("POST", ["api", "ipc", "class"]) => "IPC-Klasse".into(),
-        ("POST", ["api", "tombstone", "apply"]) => "Grabstein-Schutz übernommen".into(),
-        ("POST", ["api", "tombstone", "revert"]) => "Grabstein-Schutz entfernt".into(),
-        ("POST", ["api", "package", n, "pins", "reset"]) => format!("Pins von {n} zurückgesetzt"),
-        ("POST", ["api", "tombstone", "config"]) => "Grabstein-Einstellungen".into(),
-        ("POST", ["api", "ipc", "profile", c]) => format!("IPC-Profil Klasse {c}"),
-        ("POST", ["api", "ipc", "profiles", "reset"]) => "IPC-Profile zurücksetzen".into(),
-        ("PUT" | "POST", ["api", "zone", z]) => format!("Zone {z} ändern"),
-        ("DELETE", ["api", "zone", z]) => format!("Zone {z} löschen"),
-        ("POST", ["api", "pcbi", "import"]) => "PCB-I-Kundenbibliothek importiert".into(),
-        ("POST", ["api", "paste", "add_missing"]) => "Fehlende Pastenöffnungen ergänzt".into(),
-        ("POST", ["api", "paste", "remove_added"]) => "Ergänzte Pastenöffnungen entfernt".into(),
-        ("POST", ["api", "package", n, "rule"]) => format!("Regel {n}"),
-        ("POST", ["api", "package", n, "generate"]) => format!("Regel anwenden {n}"),
-        ("POST", ["api", "package", n, "rename"]) => format!("Umbenennen {n}"),
-        ("POST" | "DELETE", ["api", "package", n, "pin", p, "override"]) => format!("Pin {p} von {n}"),
-        ("POST" | "DELETE", ["api", "package", n, "pins", "override"]) => format!("Pins von {n} angepasst"),
-        ("POST", ["api", "auto_classify"]) => "Auto-Klassifizierung".into(),
-        ("POST", ["api", "group", g, "rule"]) => format!("Gruppenregel {g}"),
-        ("POST", ["api", "group", g, "generate"]) => format!("Gruppe {g} anwenden"),
-        ("POST", ["api", "component", c, "rule"]) => format!("Bauteilregel {c}"),
-        ("POST", ["api", "component", c, "generate"]) => format!("Bauteil {c} anwenden"),
-        ("POST", ["api", "zone", z, "rule"]) => format!("Zonenregel {z}"),
-        ("POST", ["api", "zone", z, "generate"]) => format!("Zone {z} anwenden"),
-        ("POST", ["api", "generate_all"]) => "Alle Regeln anwenden".into(),
-        ("POST", ["api", "zones", "merge"]) => "Stufenzonen verbinden".into(),
-        ("POST", ["api", "library", "load"]) => "Bibliothek laden".into(),
-        ("POST", ["api", "set_ipc_mode"]) => "IPC-Klasse".into(),
-        ("POST", ["api", "set_paste_type"]) => "Pastentyp".into(),
-        ("POST", ["api", "set_squeegee"]) => "Rakelrichtung".into(),
-        ("POST", ["api", "set_thickness"]) => "Blechdicke".into(),
+        ("POST", ["api", "pad", p, "override"]) => format!("Modify Pad {p}"),
+        ("POST", ["api", "pad", p, "reset"]) => format!("Reset Pad {p}"),
+        ("POST", ["api", "zone"]) => "Create Zone".into(),
+        ("POST", ["api", "zone", "around_component"]) => "Step Zone around Component".into(),
+        ("POST", ["api", "zones", "create"]) => "Step Zones created".into(),
+        ("POST", ["api", "ipc", "class"]) => "IPC Class".into(),
+        ("POST", ["api", "tombstone", "apply"]) => "Tombstone Protection applied".into(),
+        ("POST", ["api", "tombstone", "revert"]) => "Tombstone Protection removed".into(),
+        ("POST", ["api", "package", n, "pins", "reset"]) => format!("Pins of {n} reset"),
+        ("POST", ["api", "tombstone", "config"]) => "Tombstoning Settings".into(),
+        ("POST", ["api", "ipc", "profile", c]) => format!("IPC Profile Class {c}"),
+        ("POST", ["api", "ipc", "profiles", "reset"]) => "Reset IPC Profiles".into(),
+        ("PUT" | "POST", ["api", "zone", z]) => format!("Modify Zone {z}"),
+        ("DELETE", ["api", "zone", z]) => format!("Delete Zone {z}"),
+        ("POST", ["api", "pcbi", "import"]) => "PCB-I Customer Library imported".into(),
+        ("POST", ["api", "paste", "add_missing"]) => "Missing paste apertures added".into(),
+        ("POST", ["api", "paste", "remove_added"]) => "Added paste apertures removed".into(),
+        ("POST", ["api", "package", n, "rule"]) => format!("Rule {n}"),
+        ("POST", ["api", "package", n, "generate"]) => format!("Apply Rule {n}"),
+        ("POST", ["api", "package", n, "rename"]) => format!("Rename {n}"),
+        ("POST" | "DELETE", ["api", "package", n, "pin", p, "override"]) => format!("Pin {p} of {n}"),
+        ("POST" | "DELETE", ["api", "package", n, "pins", "override"]) => format!("Pins of {n} modified"),
+        ("POST", ["api", "auto_classify"]) => "Auto Classification".into(),
+        ("POST", ["api", "group", g, "rule"]) => format!("Group Rule {g}"),
+        ("POST", ["api", "group", g, "generate"]) => format!("Apply Group {g}"),
+        ("POST", ["api", "component", c, "rule"]) => format!("Component Rule {c}"),
+        ("POST", ["api", "component", c, "generate"]) => format!("Apply Component {c}"),
+        ("POST", ["api", "zone", z, "rule"]) => format!("Zone Rule {z}"),
+        ("POST", ["api", "zone", z, "generate"]) => format!("Apply Zone {z}"),
+        ("POST", ["api", "generate_all"]) => "Apply All Rules".into(),
+        ("POST", ["api", "zones", "merge"]) => "Merge Step Zones".into(),
+        ("POST", ["api", "library", "load"]) => "Load Library".into(),
+        ("POST", ["api", "set_ipc_mode"]) => "IPC Class".into(),
+        ("POST", ["api", "set_paste_type"]) => "Paste Type".into(),
+        ("POST", ["api", "set_squeegee"]) => "Squeegee Direction".into(),
+        ("POST", ["api", "set_thickness"]) => "Stencil Thickness".into(),
         _ => return None,
     })
 }

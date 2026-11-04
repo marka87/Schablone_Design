@@ -12,7 +12,7 @@ pub const GROUPS: [(&str, &str); 5] = [
     ("THT", "THT Packages"),
     ("Other", "Other Packages"),
     ("Fiducial", "Fiducials"),
-    ("Library", "Bibliothek"),
+    ("Library", "Library"),
 ];
 
 pub fn group_label(key: &str) -> &'static str {
@@ -84,7 +84,7 @@ impl StencilEngine {
     /// Regel eines Packages, "inherit" aufgelöst über die Gruppe.
     pub fn package_effective_rule(&self, pkg: &PackageTemplate) -> (PackageRule, String) {
         if pkg.rule.rule_type == "inherit" {
-            (self.group_rule(&pkg.group), format!("Gruppe {}", group_label(&pkg.group)))
+            (self.group_rule(&pkg.group), format!("Group {}", group_label(&pkg.group)))
         } else {
             (pkg.rule.clone(), format!("Package {}", pkg.name))
         }
@@ -93,14 +93,14 @@ impl StencilEngine {
     /// Wirksame Regel einer Öffnung und ihre Herkunft.
     pub fn effective_rule(&self, ap: &ApertureItem) -> (PackageRule, String) {
         if let Some(r) = self.component_rules.get(&ap.component_id).filter(|_| !ap.component_id.is_empty()) {
-            return (r.clone(), format!("Bauteil {}", ap.component_id));
+            return (r.clone(), format!("Component {}", ap.component_id));
         }
         if let Some(z) = self.zones.iter().find(|z| z.rule.is_some() && z.contains_point(ap.cx, ap.cy)) {
             return (z.rule.clone().unwrap_or_default(), format!("Zone {}", z.name));
         }
         match self.packages.get(&self.resolve_alias(&ap.package_name)) {
             Some(pkg) => self.package_effective_rule(pkg),
-            None => (PackageRule::with("take_existing", "Take Existing"), "keine Regel".into()),
+            None => (PackageRule::with("take_existing", "Take Existing"), "no rule".into()),
         }
     }
 
@@ -141,6 +141,7 @@ impl StencilEngine {
             self.apertures[id].custom_slices = s;
         }
         self.clip_overlapping_pads(&ids);
+        self.apply_freehand(&ids);
         n
     }
 
@@ -168,7 +169,7 @@ impl StencilEngine {
             .iter()
             .filter(|a| {
                 let src = self.effective_rule(a).1;
-                src == format!("Gruppe {}", group_label(group))
+                src == format!("Group {}", group_label(group))
             })
             .map(|a| a.id)
             .collect()
@@ -241,8 +242,8 @@ impl StencilEngine {
         let pkg = comp.map(|c| c.package.clone()).or_else(|| self.apertures.iter().find(|a| a.component_id == refdes).map(|a| a.package_name.clone())).unwrap_or_default();
         let own = self.component_rules.get(refdes);
         let effective = match own {
-            Some(r) => (r.clone(), format!("Bauteil {refdes}")),
-            None => self.apertures.iter().find(|a| a.component_id == refdes).map(|a| self.effective_rule(a)).unwrap_or_else(|| (PackageRule::default(), "keine Regel".into())),
+            Some(r) => (r.clone(), format!("Component {refdes}")),
+            None => self.apertures.iter().find(|a| a.component_id == refdes).map(|a| self.effective_rule(a)).unwrap_or_else(|| (PackageRule::default(), "no rule".into())),
         };
         let preview = self.package_preview_with(&pkg, Some((&effective.0, effective.1.clone())));
         json!({
@@ -316,7 +317,7 @@ mod tests {
         handle(&mut e, "POST", "/api/group/SMD/rule", json!({"rule_type": "inverted_house_builder"}).as_object().unwrap(), &empty);
         let (_, v) = handle(&mut e, "POST", "/api/group/SMD/generate", &empty, &empty);
         assert_eq!(v["modified_count"], 8, "{v}");
-        assert_eq!(e.effective_rule(&e.apertures[0]).1, "Gruppe SMD Packages");
+        assert_eq!(e.effective_rule(&e.apertures[0]).1, "Group SMD Packages");
         assert_eq!(e.apertures[0].custom_slices.as_ref().unwrap()[0].kind.as_deref(), Some("inverted_house_builder"));
         // Zonenregel über Bauteil 2 (x ≈ 16)
         let (_, z) = handle(&mut e, "POST", "/api/zone", json!({"x0": 14, "y0": 8, "x1": 18, "y1": 12, "step": false}).as_object().unwrap(), &empty);
@@ -332,7 +333,7 @@ mod tests {
         handle(&mut e, "POST", &format!("/api/component/{refdes}/rule"), json!({"rule_type": "house_builder"}).as_object().unwrap(), &empty);
         handle(&mut e, "POST", &format!("/api/component/{refdes}/generate"), &empty, &empty);
         let ap = e.apertures.iter().find(|a| a.component_id == refdes).unwrap();
-        assert_eq!(e.effective_rule(ap).1, format!("Bauteil {refdes}"));
+        assert_eq!(e.effective_rule(ap).1, format!("Component {refdes}"));
         assert_eq!(ap.custom_slices.as_ref().unwrap()[0].kind.as_deref(), Some("house_builder"));
         // Undo stellt den vorherigen Stand wieder her
         assert!(e.undo().is_some());

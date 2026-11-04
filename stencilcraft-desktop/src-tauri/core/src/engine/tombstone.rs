@@ -29,7 +29,7 @@ pub struct TombstoneConfig {
 
 impl Default for TombstoneConfig {
     fn default() -> Self {
-        let mut rule = PackageRule::with("inverted_house_builder", "Grabstein-Schutz (Haus, Spitze nach außen)");
+        let mut rule = PackageRule::with("inverted_house_builder", "Tombstone Protection (House, Tip Outward)");
         rule.house_cut_pct = 30.0;
         rule.undersize_w = 0.025;
         rule.undersize_h = 0.025;
@@ -131,14 +131,14 @@ impl StencilEngine {
             let l = [self.pad_link(boxes[0]), self.pad_link(boxes[1])];
             let (s0, s1) = (l[0].strong(cfg), l[1].strong(cfg));
             let reason = if s0 != s1 {
-                Some("Ein Pad liegt in einer Kupferfläche, das andere nicht".to_string())
+                Some("One pad lies in a copper pour, the other does not".to_string())
             } else if !s0 && !s1 {
                 // Via im Pad zählt wie eine 0.3-mm-Bahn; Pads ohne erkennbare Anbindung nicht bewerten
                 let eff = |k: &PadLink| k.trace_w + 0.3 * k.vias as f64;
                 let known = l.iter().all(|k| k.traces + k.vias > 0);
                 let (w0, w1) = (eff(&l[0]).max(0.05), eff(&l[1]).max(0.05));
                 let ratio = w0.max(w1) / w0.min(w1);
-                (known && ratio >= cfg.trace_ratio).then(|| format!("Leiterbahnbreiten {:.2} / {:.2} mm (×{ratio:.1})", l[0].trace_w, l[1].trace_w))
+                (known && ratio >= cfg.trace_ratio).then(|| format!("Trace widths {:.2} / {:.2} mm (×{ratio:.1})", l[0].trace_w, l[1].trace_w))
             } else {
                 None
             };

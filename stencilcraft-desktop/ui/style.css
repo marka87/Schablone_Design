@@ -204,7 +204,7 @@ select:focus, input:focus {
 .canvas-container {
     flex: 1;
     position: relative;
-    background-color: #0b0d13;
+    background-color: #000; /* wie Stencil Generator und PCB-I */
     cursor: crosshair;
 }
 #cadCanvas {
@@ -2501,3 +2501,39 @@ html[data-theme="light"] .pkg-tree-item.active .pkg-item-name, html[data-theme="
 .layer-filter-chips .side-switch button { border-radius: 0; font-weight: 600; }
 .layer-filter-chips .side-switch button:first-child { border-radius: 10px 0 0 10px; }
 .layer-filter-chips .side-switch button:last-child { border-radius: 0 10px 10px 0; border-left: none; }
+
+/* ===== Einheitliches Maß für beide Fenster (Board View, Stencil Generator, abgedockter Generator) =====
+   rem statt px, damit "Schrift größer/kleiner" alles gleichmäßig skaliert */
+:root { --ui-fs: 0.8rem; --ui-fs-sm: 0.72rem; --ui-h: 1.6rem; --ui-r: 3px; }
+.btn, .btn-sm, .btn-xs, .btn-secondary, .btn-primary, .btn-ghost, .btn-danger {
+    font-size: var(--ui-fs); height: var(--ui-h); min-height: var(--ui-h); padding: 0 0.7rem; border-radius: var(--ui-r);
+    display: inline-flex; align-items: center; gap: 0.35rem; line-height: 1;
+}
+.btn-generate { height: calc(var(--ui-h) + 0.3rem); font-weight: 600; }
+body input[type="text"], body input[type="number"], body input[type="search"], body input:not([type]), body select {
+    font-size: var(--ui-fs); height: var(--ui-h); border-radius: var(--ui-r); padding-top: 0; padding-bottom: 0;
+}
+/* Filter-Chips: Lagenliste und Paketliste gleich */
+.layer-filter-chips button, .cat-pill {
+    font-size: var(--ui-fs-sm); height: 1.35rem; line-height: 1.3rem; padding: 0 0.6rem; border-radius: 0.7rem; font-weight: 600;
+}
+.layer-filter-chips .side-switch button { border-radius: 0; }
+.layer-filter-chips .side-switch button:first-child { border-radius: 0.7rem 0 0 0.7rem; }
+.layer-filter-chips .side-switch button:last-child { border-radius: 0 0.7rem 0.7rem 0; }
+/* Reiter links (Package/Zone/Component Rules) und rechts (Pad Inspector …) gleich */
+.tab-btn, .gen-tabs button { height: 2.3rem; padding: 0 0.4rem; font-size: var(--ui-fs-sm); text-transform: uppercase; letter-spacing: 0.04em; line-height: 1.1; }
+/* Schwebende Leiste auf beiden Zeichenflächen */
+.zoom-toolbar button { height: var(--ui-h); min-width: var(--ui-h); width: auto; padding: 0 0.45rem; font-size: var(--ui-fs); border-radius: var(--ui-r); }
+/* Schließen-Kreuze */
+.btn-close, .btn-close-sm, .btn-clear-search { font-size: 1rem; line-height: 1; }
+/* Generate unter den Eigenschaften (wie PCB-I), bleibt beim Scrollen sichtbar */
+.rule-generate-foot { position: sticky; bottom: 0; padding: 8px; background: var(--bg-surface); border-top: 1px solid var(--border-color); z-index: 2; }
+.rule-generate-foot .btn-generate { width: 100%; justify-content: center; }
+.layer-src { font-size: 0.62rem; padding: 0 4px; border: 1px solid var(--border-color); border-radius: 3px; color: var(--text-secondary); margin-left: 4px; }
+
+/* Freihand in der Pin-Liste */
+.pkg-pin-item.pin-hidden, .pkg-pin-item.pin-hidden span { color: #dc2626; text-decoration: line-through; }
+.pkg-pin-item.pin-sketch { color: #d97706; }
+/* Generator: Leiste über der Pin-Leiste, die unten über der Vorschau liegt */
+#pkgPreviewContainer .canvas-overlay.bottom-right { bottom: 46px; }
+.pkg-preview-toolbar { flex-shrink: 0; height: auto; min-height: 48px; padding-top: 4px; padding-bottom: 4px; } /* Schalter umbrechen statt abschneiden */

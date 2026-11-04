@@ -69,7 +69,7 @@ pub fn read_archive_entries(path: &Path) -> Result<Vec<(String, Vec<u8>)>, Strin
     let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut out = Vec::new();
     if s.ends_with(".zip") {
-        let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("Ungültiges ZIP-Archiv: {e}"))?;
+        let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("Invalid ZIP archive: {e}"))?;
         for i in 0..zip.len() {
             let Ok(mut f) = zip.by_index(i) else { continue };
             if f.is_dir() {
@@ -84,7 +84,7 @@ pub fn read_archive_entries(path: &Path) -> Result<Vec<(String, Vec<u8>)>, Strin
     } else {
         let reader: Box<dyn Read> = if s.ends_with(".tar") { Box::new(file) } else { Box::new(GzDecoder::new(file)) };
         let mut tar = tar::Archive::new(reader);
-        let entries = tar.entries().map_err(|e| format!("Ungültiges TAR-Archiv: {e}"))?;
+        let entries = tar.entries().map_err(|e| format!("Invalid TAR archive: {e}"))?;
         for entry in entries.flatten() {
             let mut entry = entry;
             if !entry.header().entry_type().is_file() {
@@ -110,7 +110,7 @@ impl OdbFiles {
                 insert_file(&mut raw, &name, data);
             }
         } else {
-            return Err(format!("Kein ODB++ Archiv oder Ordner: {}", path.display()));
+            return Err(format!("Not an ODB++ archive or folder: {}", path.display()));
         }
         let job_name = path
             .file_name()
@@ -154,7 +154,7 @@ impl OdbFiles {
             }
         }
         if files.is_empty() {
-            return Err("Keine gültigen ODB++ Daten gefunden (matrix/steps/layers fehlen).".into());
+            return Err("No valid ODB++ data found (matrix/steps/layers missing).".into());
         }
         Ok(OdbFiles { files, job_name })
     }

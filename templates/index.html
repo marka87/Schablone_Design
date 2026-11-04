@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SMT Stencil Craft - Schablonendesign, Package Generator & IPC</title>
+    <title>SMT Stencil Craft - Stencil Design, Package Generator & IPC</title>
     <link rel="stylesheet" href="/static/style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -13,7 +13,7 @@
     <!-- Kopfzeile als Ribbon: Zeile 1 = Navigation/Projekt/Datei/Status, Zeile 2 = Analyse & Werkzeuge.
          Jede Gruppe ist ein eigener Kasten mit Beschriftung darunter (wie PCB Investigator). -->
     <!-- Menüleiste wie PCB-I (Datei / Bearbeiten / Ansicht / Extras / Hilfe), Aufbau in app.js -->
-    <nav id="appMenuBar" class="app-menubar" aria-label="Hauptmenü"></nav>
+    <nav id="appMenuBar" class="app-menubar" aria-label="Main menu"></nav>
     <header class="app-header ribbon">
         <div class="header-row header-main">
             <div class="logo">
@@ -23,125 +23,125 @@
 
             <div class="rb-group rb-nav">
                 <div class="rb-body mode-switcher-group">
-                    <button id="btnViewBoard" class="mode-tab-btn active" title="Gesamte Platine analysieren (Übersicht)">
+                    <button id="btnViewBoard" class="mode-tab-btn active" title="Analyze entire board (overview)">
                         <span class="ico"><i class="ic ic-map"></i></span><span class="lbl">Board View</span>
                     </button>
-                    <button id="btnViewPackage" class="mode-tab-btn" title="Stencil Generator & Package-Regeln (Bearbeitung)">
+                    <button id="btnViewPackage" class="mode-tab-btn" title="Stencil Generator & Package Rules (editing)">
                         <span class="ico"><i class="ic ic-package"></i></span><span class="lbl">Stencil Generator</span>
                     </button>
-                    <button id="btnDetachGenerator" class="mode-tab-btn desktop-only" title="Stencil Generator in eigenem Fenster öffnen (z. B. auf zweitem Monitor)">
-                        <span class="ico">⧉</span><span class="lbl">Eigenes Fenster</span>
+                    <button id="btnDetachGenerator" class="mode-tab-btn desktop-only" title="Open Stencil Generator in a separate window (e.g. on a second monitor)">
+                        <span class="ico">⧉</span><span class="lbl">Separate Window</span>
                     </button>
                 </div>
-                <span class="rb-cap">Ansicht</span>
+                <span class="rb-cap">View</span>
             </div>
 
             <div class="rb-group project-group">
                 <div class="rb-body">
                     <div class="dropdown" id="projectMenu">
-                        <button id="btnProjectMenu" class="btn btn-sm btn-secondary" title="Projekt öffnen / speichern (Strg+S)">
-                            <span class="ico"><i class="ic ic-folder"></i></span><span class="lbl">Projekt</span> ▾
+                        <button id="btnProjectMenu" class="btn btn-sm btn-secondary" title="Open / Save Project (Ctrl+S)">
+                            <span class="ico"><i class="ic ic-folder"></i></span><span class="lbl">Project</span> ▾
                         </button>
                         <div class="dropdown-menu hidden" id="projectMenuList">
-                            <button data-act="open"><i class="ic ic-folder"></i> Projekt öffnen…</button>
-                            <button data-act="save"><i class="ic ic-save"></i> Speichern <kbd>Strg+S</kbd></button>
-                            <button data-act="saveas"><i class="ic ic-save"></i> Speichern unter… <kbd>Strg+⇧+S</kbd></button>
+                            <button data-act="open"><i class="ic ic-folder"></i> Open Project…</button>
+                            <button data-act="save"><i class="ic ic-save"></i> Save <kbd>Ctrl+S</kbd></button>
+                            <button data-act="saveas"><i class="ic ic-save"></i> Save As… <kbd>Ctrl+⇧+S</kbd></button>
                             <div class="dropdown-sep"></div>
-                            <div class="dropdown-title">Zuletzt geöffnet</div>
+                            <div class="dropdown-title">Recent Projects</div>
                             <div id="recentProjectsList"><div class="dropdown-empty">–</div></div>
                         </div>
                     </div>
-                    <button id="btnUndo" class="btn btn-sm btn-ghost icon-btn" title="Rückgängig (Strg+Z)" disabled>↶</button>
-                    <button id="btnRedo" class="btn btn-sm btn-ghost icon-btn" title="Wiederholen (Strg+Y)" disabled>↷</button>
+                    <button id="btnUndo" class="btn btn-sm btn-ghost icon-btn" title="Undo (Ctrl+Z)" disabled>↶</button>
+                    <button id="btnRedo" class="btn btn-sm btn-ghost icon-btn" title="Redo (Ctrl+Y)" disabled>↷</button>
                     <div class="dropdown">
-                        <button id="btnHistory" class="btn btn-sm btn-ghost icon-btn" title="Verlauf: zu einem früheren Stand springen">☰</button>
+                        <button id="btnHistory" class="btn btn-sm btn-ghost icon-btn" title="History: jump to an earlier state">☰</button>
                         <div class="dropdown-menu hidden history-menu" id="historyMenuList"></div>
                     </div>
-                    <span id="lblProjectName" class="project-name" title="Kein Projekt">–</span>
+                    <span id="lblProjectName" class="project-name" title="No project">–</span>
                 </div>
-                <span class="rb-cap">Projekt</span>
+                <span class="rb-cap">Project</span>
             </div>
 
             <div class="rb-group">
                 <div class="rb-body">
-                    <button id="btnOpenDataset" class="btn btn-sm btn-primary" title="ODB++ Archiv (.zip/.tgz/Ordner) oder Gerber-Dateien öffnen (Strg+O)">
-                        <span class="ico"><i class="ic ic-folder"></i></span><span class="lbl">Öffnen</span>
+                    <button id="btnOpenDataset" class="btn btn-sm btn-primary" title="Open ODB++ archive (.zip/.tgz/folder) or Gerber files (Ctrl+O)">
+                        <span class="ico"><i class="ic ic-folder"></i></span><span class="lbl">Open</span>
                     </button>
-                    <button id="btnExport" class="btn btn-sm btn-primary" title="Schablone als Gerber exportieren (Strg+E)">
+                    <button id="btnExport" class="btn btn-sm btn-primary" title="Export stencil as Gerber (Ctrl+E)">
                         <span class="ico"><i class="ic ic-save"></i></span><span class="lbl">Gerber Export</span>
                     </button>
-                    <button id="btnCloseDataset" class="btn btn-ghost btn-sm btn-close-dataset" title="Aktuellen Datensatz schließen">
-                        <span class="ico">✕</span><span class="lbl">Schließen</span>
+                    <button id="btnCloseDataset" class="btn btn-ghost btn-sm btn-close-dataset" title="Close current dataset">
+                        <span class="ico">✕</span><span class="lbl">Close</span>
                     </button>
                 </div>
-                <span class="rb-cap">Datei</span>
+                <span class="rb-cap">File</span>
             </div>
 
             <div class="header-spacer"></div>
 
-            <div class="rb-group ov-only">
+            <div class="rb-group">
                 <div class="rb-body stats-pills">
-                    <div class="pill total" title="Gesamtzahl Pastenöffnungen">
+                    <div class="pill total" title="Total paste apertures">
                         <span class="pill-label">Pads</span>
                         <span id="statTotal" class="pill-val">0</span>
                     </div>
-                    <div class="pill ok" title="IPC konform">
+                    <div class="pill ok" title="IPC compliant">
                         <span class="pill-label"><span class="dot ok"></span></span>
                         <span id="statOk" class="pill-val">0</span>
                     </div>
-                    <div class="pill warn" id="warnPill" title="Grenzwertig (Pastenauslösung schwankend)">
+                    <div class="pill warn" id="warnPill" title="Marginal (inconsistent paste release)">
                         <span class="pill-label"><span class="dot warn"></span></span>
                         <span id="statWarn" class="pill-val">0</span>
                     </div>
-                    <div class="pill crit" id="critPill" title="Kritisch: Pastenabriss-Risiko">
+                    <div class="pill crit" id="critPill" title="Critical: risk of poor paste release">
                         <span class="pill-label"><span class="dot crit"></span></span>
                         <span id="statCrit" class="pill-val">0</span>
                     </div>
                 </div>
-                <span class="rb-cap">IPC-Status</span>
+                <span class="rb-cap">IPC Status</span>
             </div>
         </div>
 
         <div class="header-row header-tools">
-            <div class="rb-group ov-only">
+            <div class="rb-group">
                 <div class="rb-body">
                     <div class="ipc-control">
                         <label for="ipcModeSelect">IPC</label>
-                        <select id="ipcModeSelect" title="Prüfprofil: IPC-Klasse bzw. Schablonentechnik">
-                            <option value="class1">IPC Klasse 1 – Allgemein</option>
-                            <option value="class2" selected>IPC Klasse 2 – Erweitert</option>
-                            <option value="class3">IPC Klasse 3 – Hochzuverlässig</option>
+                        <select id="ipcModeSelect" title="Check profile: IPC class or stencil technology">
+                            <option value="class1">IPC Class 1 – General</option>
+                            <option value="class2" selected>IPC Class 2 – Dedicated Service</option>
+                            <option value="class3">IPC Class 3 – High Reliability</option>
                             <option value="nano">Nano-Coated / E-Polish (AR ≥ 0.55, Asp ≥ 1.3)</option>
                         </select>
-                        <button id="btnIpcProfiles" class="btn btn-xs btn-ghost" title="Grenzwerte der IPC-Klassen anzeigen und je Kunde anpassen"><i class="ic ic-gear"></i></button>
+                        <button id="btnIpcProfiles" class="btn btn-xs btn-ghost" title="Show IPC class limits and adjust per customer"><i class="ic ic-gear"></i></button>
                     </div>
                     <div class="ipc-control">
                         <label for="selectPasteType">Paste</label>
-                        <select id="selectPasteType" title="Solder Paste Type für 5-Ball-Regel">
-                            <option value="type3">Typ 3 (45 µm)</option>
-                            <option value="type4" selected>Typ 4 (38 µm)</option>
-                            <option value="type5">Typ 5 (25 µm)</option>
+                        <select id="selectPasteType" title="Solder paste type for 5-ball rule">
+                            <option value="type3">Type 3 (45 µm)</option>
+                            <option value="type4" selected>Type 4 (38 µm)</option>
+                            <option value="type5">Type 5 (25 µm)</option>
                         </select>
                     </div>
                     <div class="squeegee-control">
-                        <label for="squeegeeDir">Rakel</label>
+                        <label for="squeegeeDir">Squeegee</label>
                         <select id="squeegeeDir">
-                            <option value="Y">Y (Vertikal)</option>
+                            <option value="Y">Y (Vertical)</option>
                             <option value="X">X (Horizontal)</option>
                         </select>
                     </div>
                 </div>
-                <span class="rb-cap">Analyse</span>
+                <span class="rb-cap">Analysis</span>
             </div>
 
-            <div class="rb-group ov-only">
+            <div class="rb-group">
                 <div class="rb-body">
-                    <div class="ipc-control thickness-control" title="Grund-Blechdicke der Schablone (Stufenzonen behalten ihre eigene Dicke)">
-                        <label for="inputBaseThickness">Blech</label>
+                    <div class="ipc-control thickness-control" title="Base stencil thickness (step zones keep their own thickness)">
+                        <label for="inputBaseThickness">Thickness</label>
                         <input type="number" id="inputBaseThickness" list="thicknessPresets" min="50" max="300" step="5" value="120">
                         <span class="unit">µm</span>
                         <div class="dropdown" id="thickInfoMenu">
-                            <button id="btnThickInfo" class="btn btn-xs btn-ghost" title="Welche Dicke passt? Übersicht je Standarddicke"><i class="ic ic-chart"></i></button>
+                            <button id="btnThickInfo" class="btn btn-xs btn-ghost" title="Which thickness fits? Overview per standard thickness"><i class="ic ic-chart"></i></button>
                             <div id="thickPopover" class="dropdown-menu thick-popover hidden"></div>
                         </div>
                         <datalist id="thicknessPresets">
@@ -150,51 +150,51 @@
                         </datalist>
                     </div>
                 </div>
-                <span class="rb-cap">Schablone</span>
+                <span class="rb-cap">Stencil</span>
             </div>
 
             <div class="rb-group hidden">
                 <div class="rb-body">
-                    <div class="side-switch" id="boardSideSwitch" title="Bestückungsseite, die bearbeitet wird (TOP / BOT)">
+                    <div class="side-switch" id="boardSideSwitch" title="Assembly side being edited (TOP / BOT)">
                         <button data-side="top" class="active">TOP <span class="side-count"></span></button>
                         <button data-side="bot">BOT <span class="side-count"></span></button>
                     </div>
                 </div>
-                <span class="rb-cap">Seite</span>
+                <span class="rb-cap">Side</span>
             </div>
 
             <div class="rb-group ov-only">
                 <div class="rb-body">
-                    <button id="btnCheckBridges" class="btn btn-sm btn-secondary" title="Schablonenstegbreite prüfen (Web Check)">
-                        <span id="bridgeWarnIcon" class="ico"><i class="ic ic-microscope"></i></span><span class="lbl">Stegprüfung</span> <span class="mono-small">(<span id="lblMinBridge">0.10</span> mm)</span>
+                    <button id="btnCheckBridges" class="btn btn-sm btn-secondary" title="Check stencil web width (Web Check)">
+                        <span id="bridgeWarnIcon" class="ico"><i class="ic ic-microscope"></i></span><span class="lbl">Web Check</span> <span class="mono-small">(<span id="lblMinBridge">0.10</span> mm)</span>
                         <span id="badgeBridgeViolations" class="badge-count badge-danger hidden">0</span>
                     </button>
-                    <button id="btnAnalysis" class="btn btn-sm btn-secondary" title="Stencil-Analyse: alle Öffnungen mit Area/Aspect Ratio, Volumen, Pad-Abdeckung und Befunden">
-                        <span class="ico"><i class="ic ic-search"></i></span><span class="lbl">Analyse</span>
+                    <button id="btnAnalysis" class="btn btn-sm btn-secondary" title="Stencil analysis: all apertures with area/aspect ratio, volume, pad coverage and findings">
+                        <span class="ico"><i class="ic ic-search"></i></span><span class="lbl">Analysis</span>
                     </button>
-                    <button id="btnNewZone" class="btn btn-sm btn-secondary" title="Stufenzone im Board aufziehen">
+                    <button id="btnNewZone" class="btn btn-sm btn-secondary" title="Draw step zone on board">
                         <span class="ico"><i class="ic ic-plus"></i></span><span class="lbl">Zone</span>
                     </button>
                 </div>
-                <span class="rb-cap">Prüfung & Zonen</span>
+                <span class="rb-cap">Check & Zones</span>
             </div>
 
             <div class="rb-group ed-only">
                 <div class="rb-body">
-                    <button id="btnOpenPipModal" class="btn btn-sm btn-secondary" title="Pin-in-Paste / Through-Hole Reflow Berechnungsmodul">
+                    <button id="btnOpenPipModal" class="btn btn-sm btn-secondary" title="Pin-in-Paste / through-hole reflow calculator">
                         <span class="ico"><i class="ic ic-plug"></i></span><span class="lbl">Pin-in-Paste</span>
                     </button>
-                    <button id="btnOpenCalculator" class="btn btn-sm btn-secondary" title="Auslösekalkulator für Schablonendicken">
-                        <span class="ico"><i class="ic ic-chart"></i></span><span class="lbl">Auslösekalkulator</span>
+                    <button id="btnOpenCalculator" class="btn btn-sm btn-secondary" title="Release calculator for stencil thicknesses">
+                        <span class="ico"><i class="ic ic-chart"></i></span><span class="lbl">Release Calculator</span>
                     </button>
                 </div>
-                <span class="rb-cap">Berechnung</span>
+                <span class="rb-cap">Calculation</span>
             </div>
 
             <div class="header-spacer"></div>
 
             <div class="rb-group">
-                <div class="rb-body ui-size-control" title="Schriftgröße / Skalierung der Oberfläche">
+                <div class="rb-body ui-size-control" title="Font size / UI scaling">
                     <label for="selectUiScale"><i class="ic ic-search"></i></label>
                     <select id="selectUiScale">
                         <option value="auto">Auto</option>
@@ -205,9 +205,9 @@
                         <option value="1.25">125 %</option>
                         <option value="1.4">140 %</option>
                     </select>
-                    <button id="btnTheme" class="btn btn-sm btn-secondary" title="Helles / dunkles Design umschalten">◐</button>
+                    <button id="btnTheme" class="btn btn-sm btn-secondary" title="Toggle light / dark theme">◐</button>
                 </div>
-                <span class="rb-cap">Darstellung</span>
+                <span class="rb-cap">Display</span>
             </div>
         </div>
     </header>
@@ -222,38 +222,38 @@
             <aside class="layer-panel" id="layerPanel">
                 <div class="layer-panel-header">
                     <div class="layer-panel-title">
-                        <span><i class="ic ic-layers"></i></span> <strong>Lagen-Manager</strong> <span class="layer-count-badge" id="layerCountBadge">0</span>
+                        <span><i class="ic ic-layers"></i></span> <strong>Layer Manager</strong> <span class="layer-count-badge" id="layerCountBadge">0</span>
                     </div>
                     <div class="layer-header-actions">
-                        <button id="btnAllLayersOn" class="btn-icon-sm" title="Alle Lagen einblenden (Haken an)"><i class="ic ic-eye"></i></button>
-                        <button id="btnAllLayersOff" class="btn-icon-sm" title="Alle Lagen ausblenden (Haken aus)"><i class="ic ic-eye-closed"></i></button>
-                        <button id="btnRefreshLayers" class="btn-icon-sm" title="Lagen neu laden"><i class="ic ic-refresh"></i></button>
+                        <button id="btnAllLayersOn" class="btn-icon-sm" title="Show all layers"><i class="ic ic-eye"></i></button>
+                        <button id="btnAllLayersOff" class="btn-icon-sm" title="Hide all layers"><i class="ic ic-eye-closed"></i></button>
+                        <button id="btnRefreshLayers" class="btn-icon-sm" title="Reload layers"><i class="ic ic-refresh"></i></button>
                     </div>
                 </div>
 
                 <!-- Lagen Import Actions -->
                 <div class="layer-import-section">
-                    <button id="btnAddMoreLayers" class="btn btn-sm btn-secondary" style="width: 100%; justify-content: center;" title="Weitere Gerber- oder ODB++ Lagen hinzufügen">
-                        <span><i class="ic ic-plus"></i></span> Lage hinzufügen...
+                    <button id="btnAddMoreLayers" class="btn btn-sm btn-secondary" style="width: 100%; justify-content: center;" title="Add more Gerber or ODB++ layers">
+                        <span><i class="ic ic-plus"></i></span> Add Layer...
                     </button>
                     <input type="file" id="browserFileInput" multiple accept=".zip,.ger,.gbr,.pho,.tgz,.tar.gz" style="display:none;">
                 </div>
 
                 <!-- Drag & Drop Zone Hint -->
-                <div id="layerDropZone" class="layer-dropzone" title="Gerber-Dateien oder ODB++-Archiv (.zip/.tgz) hier ablegen">
-                    <span><i class="ic ic-inbox"></i> Dateien / ZIP / TGZ hier ablegen</span>
+                <div id="layerDropZone" class="layer-dropzone" title="Drop Gerber files or ODB++ archive (.zip/.tgz) here">
+                    <span><i class="ic ic-inbox"></i> Drop files / ZIP / TGZ here</span>
                 </div>
 
                 <!-- Layer List Table with Checkboxes (Haken) -->
                 <div class="layer-filter-bar">
-                    <input type="search" id="layerSearch" placeholder="Lage suchen…" title="Nach Name oder Datei filtern">
+                    <input type="search" id="layerSearch" placeholder="Search layer…" title="Filter by name or file">
                     <div class="layer-filter-chips" id="layerFilterChips">
-                        <button data-f="all" class="active">Alle</button>
-                        <button data-f="copper">Kupfer</button>
-                        <button data-f="mask">Maske</button>
+                        <button data-f="all" class="active">All</button>
+                        <button data-f="copper">Copper</button>
+                        <button data-f="mask">Mask</button>
                         <button data-f="paste">Paste</button>
-                        <button data-f="visible" title="Nur eingeblendete Lagen"><i class="ic ic-eye"></i></button>
-                        <span class="side-switch" title="Schnellschalter: COMP, Stencil und Solder der Seite ein-, der anderen Seite ausblenden">
+                        <button data-f="visible" title="Visible layers only"><i class="ic ic-eye"></i></button>
+                        <span class="side-switch" title="Quick switch: show COMP, Stencil and Solder of this side, hide the other side">
                             <button data-side="top">TOP</button><button data-side="bot">BOT</button>
                         </span>
                     </div>
@@ -263,8 +263,8 @@
                     <table class="layer-table" id="layerTable">
                         <thead>
                             <tr>
-                                <th class="col-chk" title="Sichtbarkeit (Haken)"><i class="ic ic-eye"></i></th>
-                                <th class="col-color" title="Lagenfarbe">Farbe</th>
+                                <th class="col-chk" title="Visibility"><i class="ic ic-eye"></i></th>
+                                <th class="col-color" title="Layer color">Color</th>
                                 <th class="col-name">Name</th>
                                 <th class="col-info">Info</th>
                                 <th class="col-del"></th>
@@ -279,71 +279,71 @@
                 <!-- Layer Panel Footer -->
                 <div class="layer-panel-footer">
                     <div class="layer-opacity-row">
-                        <span>Deckkraft:</span>
+                        <span>Opacity:</span>
                         <input type="range" id="layerGlobalOpacity" min="0.1" max="1.0" step="0.05" value="0.85">
                         <span id="layerGlobalOpacityVal">85%</span>
                     </div>
                 </div>
             </aside>
 
-            <div class="splitter splitter-v" data-target="layerPanel" data-side="left" title="Ziehen zum Ändern der Breite, Doppelklick zum Ein-/Ausklappen"></div>
+            <div class="splitter splitter-v" data-target="layerPanel" data-side="left" title="Drag to resize, double-click to collapse/expand"></div>
 
             <!-- CAD Canvas Viewport -->
             <div class="canvas-container" id="canvasContainer">
                 <div id="pkgHighlightChip" class="pkg-highlight-chip hidden">
                     <span class="dot"></span>
                     <span>Package <strong id="lblHighlightPkg">-</strong> · <span id="lblHighlightCount">0</span> Pads<span id="lblHighlightPin"></span></span>
-                    <label title="Andere Pads abdunkeln"><input type="checkbox" id="chkHighlightDim" checked> abdunkeln</label>
-                    <button id="btnHighlightZoom" class="btn btn-xs btn-ghost" title="Auf alle Instanzen zoomen"><i class="ic ic-search"></i> Zeigen</button>
-                    <button id="btnHighlightStep" class="btn btn-xs btn-ghost" title="Stufenzonen um alle Bauteile dieses Packages vorschlagen"><i class="ic ic-layers"></i> Stufe</button>
-                    <button id="btnHighlightClear" class="btn btn-xs btn-ghost" title="Hervorhebung aufheben">×</button>
+                    <label title="Dim other pads"><input type="checkbox" id="chkHighlightDim" checked> dim</label>
+                    <button id="btnHighlightZoom" class="btn btn-xs btn-ghost" title="Zoom to all instances"><i class="ic ic-search"></i> Show</button>
+                    <button id="btnHighlightStep" class="btn btn-xs btn-ghost" title="Suggest step zones around all components of this package"><i class="ic ic-layers"></i> Step</button>
+                    <button id="btnHighlightClear" class="btn btn-xs btn-ghost" title="Clear highlight">×</button>
                 </div>
                 <div id="stepPanel" class="step-panel hidden">
-                    <div class="step-head"><strong>Stufenzonen für <span id="stepPkg">-</span></strong>
-                        <button id="btnStepClose" class="btn btn-xs btn-ghost" title="Schließen">×</button></div>
+                    <div class="step-head"><strong>Step Zones for <span id="stepPkg">-</span></strong>
+                        <button id="btnStepClose" class="btn btn-xs btn-ghost" title="Close">×</button></div>
                     <div class="step-form">
-                        <label>Dicke <input type="number" id="stepThick" step="5" min="30" max="300"> µm</label>
-                        <label title="Bauteile, die näher als dieser Abstand beieinander liegen, bekommen eine gemeinsame Zone">Zusammenfassen bis <input type="number" id="stepGap" step="0.5" min="0" value="0"> mm</label>
+                        <label>Thickness <input type="number" id="stepThick" step="5" min="30" max="300"> µm</label>
+                        <label title="Components closer than this distance share one zone">Merge up to <input type="number" id="stepGap" step="0.5" min="0" value="0"> mm</label>
                     </div>
                     <div id="stepInfo" class="step-info"></div>
                     <div class="step-actions">
-                        <button id="btnStepCreate" class="btn btn-xs btn-primary">Zonen anlegen</button>
-                        <span class="step-hint">Vorschau gestrichelt auf dem Board</span>
+                        <button id="btnStepCreate" class="btn btn-xs btn-primary">Create Zones</button>
+                        <span class="step-hint">Preview dashed on the board</span>
                     </div>
                 </div>
                 <canvas id="cadCanvas"></canvas>
 
                 <!-- Board-Mehrfachauswahl: Strg/Umschalt-Klick, Umschalt+Ziehen = Rahmen -->
                 <div id="selBar" class="sel-bar hidden">
-                    <strong id="selCount">0</strong> gewählt
+                    <strong id="selCount">0</strong> selected
                     <span class="sel-sep"></span>
-                    <span class="sel-lbl">Gleiche:</span>
-                    <button class="btn btn-xs btn-ghost" data-similar="size" title="Alle Öffnungen mit gleicher Größe und Form dazu wählen">Größe</button>
-                    <button class="btn btn-xs btn-ghost" data-similar="pkg" title="Alle Öffnungen desselben Packages dazu wählen">Package</button>
-                    <button class="btn btn-xs btn-ghost" data-similar="comp" title="Alle Öffnungen desselben Bauteils dazu wählen">Bauteil</button>
+                    <span class="sel-lbl">Same:</span>
+                    <button class="btn btn-xs btn-ghost" data-similar="size" title="Add all apertures with the same size and shape">Size</button>
+                    <button class="btn btn-xs btn-ghost" data-similar="pkg" title="Add all apertures of the same package">Package</button>
+                    <button class="btn btn-xs btn-ghost" data-similar="comp" title="Add all apertures of the same component">Component</button>
                     <span class="sel-sep"></span>
-                    <button class="btn btn-xs btn-ghost" data-op="rotate" title="Um 90° drehen (R)">↻ 90°</button>
-                    <label title="Fläche verkleinern, Form bleibt">−<input type="number" id="selReducePct" value="10" min="1" max="90" step="1">%</label>
-                    <button class="btn btn-xs btn-ghost" data-op="reduce">Verkleinern</button>
-                    <label title="Breite × Höhe in mm (leer = unverändert)">B <input type="number" id="selW" step="0.01" min="0.01"> H <input type="number" id="selH" step="0.01" min="0.01"></label>
-                    <button class="btn btn-xs btn-ghost" data-op="resize">Größe setzen</button>
-                    <button class="btn btn-xs btn-ghost" data-op="duplicate" title="Duplizieren, 0,5 mm versetzt (Strg+D)">Duplizieren</button>
-                    <button class="btn btn-xs btn-ghost" data-op="reset" title="Kundenöffnung bzw. Regelergebnis wiederherstellen">Zurücksetzen</button>
-                    <button class="btn btn-xs btn-ghost" id="btnSelZone" title="Stufen- oder Regelzone um die gewählten Öffnungen (mit Abstand zur Stufenkante)">▣ Zone</button>
-                    <button class="btn btn-xs btn-danger" data-op="delete" title="Keine Öffnung an diesen Pads (Entf)">Löschen</button>
-                    <button class="btn btn-xs btn-ghost" id="btnSelClear" title="Auswahl aufheben (Esc)">×</button>
-                    <div class="sel-hint">Pfeiltasten verschieben 0,01 mm (Umschalt: 0,1 mm) · Strg+A alle · Doppelklick öffnet Package</div>
+                    <button class="btn btn-xs btn-ghost" data-op="rotate" title="Rotate 90° (R)">↻ 90°</button>
+                    <label title="Reduce area, keep shape">−<input type="number" id="selReducePct" value="10" min="1" max="90" step="1">%</label>
+                    <button class="btn btn-xs btn-ghost" data-op="reduce">Reduce</button>
+                    <label title="Width × height in mm (empty = unchanged)">W <input type="number" id="selW" step="0.01" min="0.01"> H <input type="number" id="selH" step="0.01" min="0.01"></label>
+                    <button class="btn btn-xs btn-ghost" data-op="resize">Set Size</button>
+                    <button class="btn btn-xs btn-ghost" data-op="duplicate" title="Duplicate, offset 0.5 mm (Ctrl+D)">Duplicate</button>
+                    <button class="btn btn-xs btn-ghost" data-op="reset" title="Restore customer aperture or rule result">Reset</button>
+                    <button class="btn btn-xs btn-ghost" id="btnSelZone" title="Step or rule zone around the selected apertures (with clearance to the step edge)">▣ Zone</button>
+                    <button class="btn btn-xs btn-danger" data-op="delete" title="No aperture on these pads (Del)">Delete</button>
+                    <button class="btn btn-xs btn-ghost" id="btnSelClear" title="Clear selection (Esc)">×</button>
+                    <div class="sel-hint">Arrow keys move 0.01 mm (Shift: 0.1 mm) · Ctrl+A all · Double-click opens package</div>
                 </div>
-                <button id="btnAddOpening" class="btn btn-xs btn-secondary add-opening-btn" title="Neue Öffnung: danach auf das Board klicken (Größe aus B × H der Auswahlleiste, sonst 0,5 × 0,5 mm)">＋ Öffnung</button>
+                <button id="btnAddOpening" class="btn btn-xs btn-secondary add-opening-btn" title="New aperture: then click on the board (size from W × H in the selection bar, otherwise 0.5 × 0.5 mm)">＋ Aperture</button>
 
                 <!-- Floating Controls (Oben links im Canvas) -->
                 <div class="canvas-overlay top-left">
                     <div class="view-mode">
-                        <label>Farbmodus:</label>
+                        <label>Color Mode:</label>
                         <select id="colorModeSelect">
                             <option value="ipc">IPC-7525 Status (Heatmap)</option>
-                            <option value="layers" selected>Lagengetreu (Originalfarben)</option>
-                            <option value="thickness">Schablonendicke</option>
+                            <option value="layers" selected>Layer Colors (original)</option>
+                            <option value="thickness">Stencil Thickness</option>
                         </select>
                     </div>
                 </div>
@@ -356,55 +356,55 @@
 
                 <div class="canvas-overlay bottom-right">
                     <div class="zoom-toolbar">
-                        <button id="btnMeasureBoard" class="btn-measure" title="Lineal / Messwerkzeug (Taste: M)"><i class="ic ic-ruler"></i> Messen (M)</button>
-                        <button id="btnClearMeasureBoard" class="btn-tool-del hidden" title="Messungen löschen (Taste: Entf / C)"><i class="ic ic-trash"></i> Messung löschen</button>
-                        <button id="btnZoomIn" title="Vergrößern">+</button>
-                        <button id="btnZoomOut" title="Verkleinern">-</button>
-                        <button id="btnFitScreen" title="Gesamten Nutzen anzeigen">Fit</button>
+                        <button id="btnMeasureBoard" class="btn-measure" title="Ruler / measure tool (key: M)"><i class="ic ic-ruler"></i> Measure (M)</button>
+                        <button id="btnClearMeasureBoard" class="btn-tool-del hidden" title="Clear measurements (key: Del / C)"><i class="ic ic-trash"></i> Clear Measurement</button>
+                        <button id="btnZoomIn" title="Zoom In">+</button>
+                        <button id="btnZoomOut" title="Zoom Out">-</button>
+                        <button id="btnFitScreen" title="Show entire panel">Fit</button>
                     </div>
                 </div>
 
                 <!-- Mode Notice / Drawing Banner -->
                 <div id="drawingBanner" class="drawing-banner hidden">
-                    <span><i class="ic ic-edit"></i> Klicken und ziehen Sie auf der Platine, um eine neue Stufenzone zu zeichnen.</span>
-                    <button id="btnCancelDrawing" class="btn btn-sm btn-ghost">Abbrechen</button>
+                    <span><i class="ic ic-edit"></i> Click and drag on the board to draw a new step zone.</span>
+                    <button id="btnCancelDrawing" class="btn btn-sm btn-ghost">Cancel</button>
                 </div>
 
                 <!-- Mode Notice / Measure Banner (Board View) -->
                 <div id="measureBanner" class="measure-banner hidden">
-                    <span><i class="ic ic-ruler"></i> <strong>Messwerkzeug aktiv:</strong> 1. Punkt klicken, 2. Zielpunkt klicken. [M] oder [ESC] zum Beenden.</span>
-                    <button id="btnClearMeasurementsBoard" class="btn btn-xs btn-ghost" title="Messungen löschen">Löschen</button>
+                    <span><i class="ic ic-ruler"></i> <strong>Measure tool active:</strong> click 1st point, then target point. [M] or [ESC] to exit.</span>
+                    <button id="btnClearMeasurementsBoard" class="btn btn-xs btn-ghost" title="Clear measurements">Clear</button>
                     <button id="btnCancelMeasureBoard" class="btn btn-xs btn-ghost">&times;</button>
                 </div>
             </div>
 
             <!-- Sidebar Inspector & Tools -->
-            <div class="splitter splitter-v" data-target="boardSidebar" data-side="right" title="Ziehen zum Ändern der Breite, Doppelklick zum Ein-/Ausklappen"></div>
+            <div class="splitter splitter-v" data-target="boardSidebar" data-side="right" title="Drag to resize, double-click to collapse/expand"></div>
             <aside class="sidebar" id="boardSidebar">
                 <div class="sidebar-tabs">
                     <button class="tab-btn active" data-tab="tabPad">Pad Inspector</button>
-                    <button class="tab-btn" data-tab="tabZones">Stufenzonen (<span id="zonesCount">0</span>)</button>
-                    <button class="tab-btn" data-tab="tabCritical">Kritische Bauteile <span id="tombTabBadge" class="tab-badge hidden">0</span></button>
+                    <button class="tab-btn" data-tab="tabZones">Step Zones (<span id="zonesCount">0</span>)</button>
+                    <button class="tab-btn" data-tab="tabCritical">Critical Components <span id="tombTabBadge" class="tab-badge hidden">0</span></button>
                 </div>
 
                 <!-- TAB 1: PAD INSPECTOR -->
                 <div id="tabPad" class="tab-content active">
                     <div id="noSelectionMsg" class="empty-state">
                         <div class="empty-icon"><i class="ic ic-search"></i></div>
-                        <p>Klicken Sie auf ein Pad oder Bauteil im Viewer, um es zu untersuchen und zu bearbeiten.</p>
-                        <p class="empty-hint">Tipp: Im <strong>Stencil Generator</strong> können Sie Package-Regeln global definieren.</p>
+                        <p>Click a pad or component in the viewer to inspect and edit it.</p>
+                        <p class="empty-hint">Tip: Define package rules globally in the <strong>Stencil Generator</strong>.</p>
                     </div>
 
                     <div id="selectionDetails" class="selection-details hidden">
                         <div class="section-title">
-                            <span>Apertur #<span id="padId">-</span> (<span id="padPkgNameBadge">0805</span>)</span>
+                            <span>Aperture #<span id="padId">-</span> (<span id="padPkgNameBadge">0805</span>)</span>
                             <span id="padStatusBadge" class="badge ok">OK</span>
                         </div>
 
                         <!-- Geometrie Grid -->
                         <div class="data-grid">
                             <div class="data-cell">
-                                <span class="data-label">Abmessung:</span>
+                                <span class="data-label">Size:</span>
                                 <span id="padDim" class="data-val">2.40 x 2.40 mm</span>
                             </div>
                             <div class="data-cell">
@@ -412,12 +412,12 @@
                                 <span id="padPos" class="data-val">X: 120.5 | Y: 154.2</span>
                             </div>
                             <div class="data-cell">
-                                <span class="data-label">Foliendicke:</span>
-                                <span id="padThick" class="data-val highlight">120 µm (Basis)</span>
+                                <span class="data-label">Thickness:</span>
+                                <span id="padThick" class="data-val highlight">120 µm (base)</span>
                             </div>
                             <div class="data-cell">
-                                <span class="data-label">Identische Pads:</span>
-                                <span id="padIdentical" class="data-val">16 auf Platine</span>
+                                <span class="data-label">Identical Pads:</span>
+                                <span id="padIdentical" class="data-val">16 on board</span>
                             </div>
                         </div>
 
@@ -429,7 +429,7 @@
                             </div>
                             <div class="gauge-bar-bg">
                                 <div id="gaugeBarFill" class="gauge-bar-fill ok" style="width: 75%;"></div>
-                                <div class="gauge-marker limit" title="IPC Grenzwert" style="left: 66%;"></div>
+                                <div class="gauge-marker limit" title="IPC limit" style="left: 66%;"></div>
                             </div>
                             <div class="gauge-footer">
                                 <span>0.0</span>
@@ -437,11 +437,11 @@
                                 <span>1.0+</span>
                             </div>
                             <div style="margin-top: 8px; display: flex; justify-content: space-between; align-items: center;">
-                                <button id="btnOpenInStencilGen" class="btn btn-xs btn-primary" title="Package-Regel im Stencil Generator bearbeiten">
-                                    <i class="ic ic-edit"></i> Im Stencil Generator bearbeiten &rarr;
+                                <button id="btnOpenInStencilGen" class="btn btn-xs btn-primary" title="Edit package rule in the Stencil Generator">
+                                    <i class="ic ic-edit"></i> Edit in Stencil Generator &rarr;
                                 </button>
                                 <button id="btnSendToCalc" class="btn btn-xs btn-ghost" style="color: var(--text-secondary);">
-                                    <i class="ic ic-chart"></i> In Kalkulator
+                                    <i class="ic ic-chart"></i> To Calculator
                                 </button>
                             </div>
                         </div>
@@ -449,69 +449,69 @@
                         <!-- Empfohlene Blechdicke für dieses Pad -->
                         <div id="thickRecBox" class="thick-rec">
                             <div class="thick-rec-line">
-                                <span>Empfohlene Dicke:</span>
+                                <span>Recommended Thickness:</span>
                                 <strong id="thickRecVal">–</strong>
                             </div>
                             <div id="thickRecNote" class="thick-rec-note"></div>
                             <div class="thick-rec-actions">
-                                <button id="btnZoneAroundComp" class="btn btn-xs btn-secondary hidden" title="Stufenzone mit der empfohlenen Dicke um dieses Bauteil (mit Rakel- und Querabstand)">▣ Stufenzone</button>
+                                <button id="btnZoneAroundComp" class="btn btn-xs btn-secondary hidden" title="Step zone with the recommended thickness around this component (with squeegee and lateral clearance)">▣ Step Zone</button>
                             </div>
                         </div>
 
                         <!-- CLEARANCE WARN (FALLS NAH AN STUFE) -->
                         <div id="clearanceAlert" class="alert-box warn hidden">
-                            <i class="ic ic-warning"></i> <strong>Rakelabstand kritisch:</strong> Diese Öffnung liegt zu nah an der Stufenkante (<span id="clearanceDist">1.2 mm</span>)!
+                            <i class="ic ic-warning"></i> <strong>Squeegee clearance critical:</strong> This aperture is too close to the step edge (<span id="clearanceDist">1.2 mm</span>)!
                         </div>
 
                         <!-- 5-BALL GRAIN WARN -->
                         <div id="grainAlert" class="alert-box warn hidden">
-                            <i class="ic ic-warning"></i> <strong id="grainAlertTitle">Pastenkorn-Warnung:</strong> <span id="grainAlertMsg">5-Ball-Regel verletzt!</span>
+                            <i class="ic ic-warning"></i> <strong id="grainAlertTitle">Paste grain warning:</strong> <span id="grainAlertMsg">5-ball rule violated!</span>
                         </div>
                         <div id="viaAlert" class="alert-box warn hidden">
-                            <i class="ic ic-warning"></i> <strong>Via im Pad:</strong> <span id="viaAlertMsg"></span>
+                            <i class="ic ic-warning"></i> <strong>Via in Pad:</strong> <span id="viaAlertMsg"></span>
                         </div>
                         <div id="squeegeeAlert" class="alert-box warn hidden">
-                            <i class="ic ic-warning"></i> <strong>Rakelrichtung:</strong> <span id="squeegeeAlertMsg"></span>
+                            <i class="ic ic-warning"></i> <strong>Squeegee Direction:</strong> <span id="squeegeeAlertMsg"></span>
                         </div>
 
                         <!-- Einzelpad-Werkzeuge: bewusst eingeklappt (Übersicht ≠ Bearbeitung) -->
                         <details id="inspEditTools" class="insp-edit">
-                        <summary><i class="ic ic-edit"></i> Dieses Pad bearbeiten: Länglich &amp; Schmal · Thermal-Pad Slicing · Flächenreduktion</summary>
+                        <summary><i class="ic ic-edit"></i> Edit this pad: Elongated &amp; Narrow · Thermal Pad Slicing · Area Reduction</summary>
                         <!-- AKTION 1: LÄNGLICH & SCHMAL (PITCH-SCHUTZ) -->
                         <div class="action-card highlight-card">
-                            <div class="card-badge">Praxis-Vorschlag</div>
-                            <h3><i class="ic ic-sparkle"></i> Länglich & Schmal (Pitch-Schutz)</h3>
+                            <div class="card-badge">Recommended</div>
+                            <h3><i class="ic ic-sparkle"></i> Elongated & Narrow (Pitch Protection)</h3>
                             <p class="tool-desc">
-                                Schmälert in Pitch-Richtung zur <strong>Lötbrückenvermeidung</strong> und nutzt die volle Padlänge mit Verrundung.
+                                Narrows in pitch direction to <strong>prevent solder bridges</strong> and uses the full pad length with rounded corners.
                             </p>
 
                             <div class="form-row">
-                                <label>Breitenreduktion (%):</label>
+                                <label>Width Reduction (%):</label>
                                 <input type="number" id="elongateWidthRed" value="20" step="5" min="5" max="40">
                             </div>
                             <div class="form-row">
-                                <label>Längennutzung (%):</label>
+                                <label>Length Usage (%):</label>
                                 <input type="number" id="elongateLengthUse" value="95" step="5" min="70" max="100">
                             </div>
                             <div class="form-row">
-                                <label>Eckverrundung R (mm):</label>
+                                <label>Corner Radius R (mm):</label>
                                 <input type="number" id="elongateRadius" value="0.08" step="0.02" min="0.0" max="0.3">
                             </div>
 
                             <label class="checkbox-label">
                                 <input type="checkbox" id="chkElongateAll" checked>
-                                Auf alle <span class="lblIdenticalCount">16</span> identischen Pads anwenden
+                                Apply to all <span class="lblIdenticalCount">16</span> identical pads
                             </label>
 
                             <button id="btnApplyElongate" class="btn btn-action primary">
-                                <i class="ic ic-sparkle"></i> Länglich & Schmal anwenden
+                                <i class="ic ic-sparkle"></i> Apply Elongated & Narrow
                             </button>
                         </div>
 
                         <!-- AKTION 2: THERMAL-PAD SLICING -->
                         <div class="action-card">
-                            <h3><i class="ic ic-split"></i> Thermal-Pad Slicing (Fensterung)</h3>
-                            <p class="tool-desc">Teilt große Flächen in Einzelfenster mit definierten Stegbreiten.</p>
+                            <h3><i class="ic ic-split"></i> Thermal Pad Slicing (Windowing)</h3>
+                            <p class="tool-desc">Splits large areas into individual windows with defined web widths.</p>
                             
                             <div class="quick-presets">
                                 <button class="btn-preset active" data-grid="2x2">2 x 2</button>
@@ -522,48 +522,48 @@
                             </div>
 
                             <div class="form-row">
-                                <label>Stegbreite (mm):</label>
+                                <label>Web Width (mm):</label>
                                 <input type="number" id="sliceWeb" value="0.25" step="0.05" min="0.1" max="1.0">
                             </div>
                             <div class="form-row">
-                                <label>Randreduktion (mm):</label>
+                                <label>Edge Reduction (mm):</label>
                                 <input type="number" id="sliceEdge" value="0.05" step="0.02" min="0.0" max="0.5">
                             </div>
 
                             <label class="checkbox-label">
                                 <input type="checkbox" id="chkSliceAll" checked>
-                                Auf alle <span class="lblIdenticalCount">16</span> identischen Pads anwenden
+                                Apply to all <span class="lblIdenticalCount">16</span> identical pads
                             </label>
 
                             <button id="btnApplySlice" class="btn btn-action secondary">
-                                Fensterung anwenden
+                                Apply Windowing
                             </button>
                         </div>
 
                         <!-- AKTION 3: REDUKTION -->
                         <div class="action-card">
-                            <h3><i class="ic ic-shrink"></i> Flächenreduktion (Undersize)</h3>
-                            <p class="tool-desc">Prozentuale Verkleinerung gegen Lötbrücken und Perlenbildung.</p>
+                            <h3><i class="ic ic-shrink"></i> Area Reduction (Undersize)</h3>
+                            <p class="tool-desc">Percentage reduction against solder bridges and solder balling.</p>
                             
                             <div class="form-row">
-                                <label>Flächenreduktion (%):</label>
+                                <label>Area Reduction (%):</label>
                                 <input type="number" id="reducePercent" value="10" step="5" min="5" max="50">
                             </div>
 
                             <label class="checkbox-label">
                                 <input type="checkbox" id="chkReduceAll" checked>
-                                Auf alle identischen Pads anwenden
+                                Apply to all identical pads
                             </label>
 
                             <button id="btnApplyReduce" class="btn btn-action secondary">
-                                Reduktion anwenden
+                                Apply Reduction
                             </button>
                         </div>
 
                         <!-- ZURÜCKSETZEN -->
                         <div class="action-card reset-card">
                             <button id="btnResetAperture" class="btn btn-sm btn-danger">
-                                <i class="ic ic-refresh"></i> Auf Original zurücksetzen
+                                <i class="ic ic-refresh"></i> Reset to Original
                             </button>
                         </div>
                         </details>
@@ -573,14 +573,14 @@
                 <!-- TAB 2: STUFENZONEN -->
                 <div id="tabZones" class="tab-content">
                     <div class="section-title">
-                        <span>Definierte Stufenzonen</span>
+                        <span>Defined Step Zones</span>
                         <span style="display:flex;gap:6px">
-                            <button id="btnSuggestZones" class="btn btn-sm btn-secondary" title="Zonen für alle Packages vorschlagen, die bei der Grunddicke nicht ausreichen">Vorschlagen</button>
-                            <button id="btnMergeZones" class="btn btn-sm btn-secondary" title="Stufenzonen gleicher Dicke, die sich überlappen, zu einer Zone verbinden (Strg+Z rückgängig)">Überlappende verbinden</button>
-                            <button id="btnAddZoneTab" class="btn btn-sm btn-secondary">+ Neu</button>
+                            <button id="btnSuggestZones" class="btn btn-sm btn-secondary" title="Suggest zones for all packages that are insufficient at base thickness">Suggest</button>
+                            <button id="btnMergeZones" class="btn btn-sm btn-secondary" title="Merge overlapping step zones of equal thickness into one zone (Ctrl+Z to undo)">Merge Overlapping</button>
+                            <button id="btnAddZoneTab" class="btn btn-sm btn-secondary">+ New</button>
                         </span>
                     </div>
-                    <p class="section-desc">Zone anklicken: zeigt sie auf dem Board; dort verschieben (ziehen) oder an Ecken/Kanten die Größe ändern.</p>
+                    <p class="section-desc">Click a zone to show it on the board; drag to move it, or drag corners/edges to resize.</p>
                     <div id="zoneSuggestList" class="zone-suggest-list"></div>
                     <div id="zonesList" class="zones-list">
                         <!-- Dynamisch -->
@@ -591,41 +591,41 @@
                 <div id="tabCritical" class="tab-content">
                     <!-- Grabstein-Risiko: Erkennung automatisch, Übernahme als Empfehlung (oder automatisch je Kunde) -->
                     <div class="section-title">
-                        <span><i class="ic ic-warning"></i> Grabstein-Risiko (2-Pin-Chips)</span>
+                        <span><i class="ic ic-warning"></i> Tombstoning Risk (2-Pin Chips)</span>
                         <span id="tombCount" class="badge warn">0</span>
                     </div>
-                    <p class="section-desc">Ein Pad hängt deutlich stärker am Kupfer (Fläche, breite Bahn, Vias) als das andere.
-                        Vorschlag als Bauteilregel: <strong id="tombRuleLabel">Haus, Spitze nach außen</strong>.</p>
+                    <p class="section-desc">One pad is tied to much more copper (pour, wide trace, vias) than the other.
+                        Suggested component rule: <strong id="tombRuleLabel">House, tip outward</strong>.</p>
                     <div class="tomb-actions">
-                        <button id="btnTombApplyAll" class="btn btn-xs btn-primary">Alle übernehmen</button>
-                        <label title="Beim Laden eines Datensatzes offene Kandidaten automatisch als Bauteilregel übernehmen (wird in der Kundenbibliothek gespeichert)">
-                            <input type="checkbox" id="chkTombAuto"> automatisch beim Laden</label>
+                        <button id="btnTombApplyAll" class="btn btn-xs btn-primary">Apply All</button>
+                        <label title="Automatically apply open candidates as component rule when a dataset is loaded (saved in the customer library)">
+                            <input type="checkbox" id="chkTombAuto"> auto on load</label>
                     </div>
                     <div id="tombList" class="critical-list tomb-list"></div>
                     <details class="tomb-settings">
-                        <summary>Einstellungen Grabstein-Schutz</summary>
+                        <summary>Tombstoning Protection Settings</summary>
                         <div class="tomb-form">
-                            <label>Form<select id="tombShape">
-                                <option value="inverted_house_builder">Haus – Spitze nach außen</option>
-                                <option value="house_builder">Haus – Spitze zum Bauteil</option>
-                                <option value="simple_rect">Rechteck (nur verkleinern)</option>
+                            <label>Shape<select id="tombShape">
+                                <option value="inverted_house_builder">House – tip outward</option>
+                                <option value="house_builder">House – tip toward component</option>
+                                <option value="simple_rect">Rectangle (reduce only)</option>
                             </select></label>
-                            <label>Haus-Schnitt (%)<input type="number" id="tombCut" step="5" min="5" max="60"></label>
+                            <label>House Cut (%)<input type="number" id="tombCut" step="5" min="5" max="60"></label>
                             <label>Undersize (mm)<input type="number" id="tombUndersize" step="0.005" min="0" max="0.3"></label>
-                            <label>Eckradius (mm)<input type="number" id="tombRadius" step="0.005" min="0" max="0.3"></label>
-                            <label title="Kupferfläche ab dieser Größe gilt als Wärmesenke">Fläche ab (mm²)<input type="number" id="tombPour" step="0.5" min="0.1"></label>
-                            <label title="Verhältnis der Bahnbreiten (stark/schwach), ab dem ohne Fläche gewarnt wird">Bahn-Verhältnis ≥<input type="number" id="tombRatio" step="0.5" min="1.2"></label>
+                            <label>Corner Radius (mm)<input type="number" id="tombRadius" step="0.005" min="0" max="0.3"></label>
+                            <label title="Copper pour from this size counts as heat sink">Pour from (mm²)<input type="number" id="tombPour" step="0.5" min="0.1"></label>
+                            <label title="Trace width ratio (strong/weak) above which a warning is raised without a pour">Trace Ratio ≥<input type="number" id="tombRatio" step="0.5" min="1.2"></label>
                         </div>
                         <div class="tomb-actions">
-                            <button id="btnTombSaveCfg" class="btn btn-xs btn-secondary">Übernehmen</button>
-                            <label><input type="checkbox" id="chkTombSaveLib" checked> in Kundenbibliothek speichern</label>
+                            <button id="btnTombSaveCfg" class="btn btn-xs btn-secondary">Apply</button>
+                            <label><input type="checkbox" id="chkTombSaveLib" checked> save in customer library</label>
                         </div>
                     </details>
 
                     <div class="section-title" style="margin-top:16px;">
-                        <span>Top Problem-Packages (IPC Violations)</span>
+                        <span>Top Problem Packages (IPC Violations)</span>
                     </div>
-                    <p class="section-desc">Klicken Sie auf ein Package, um direkt zu den betroffenen Stellen zu springen:</p>
+                    <p class="section-desc">Click a package to jump directly to the affected locations:</p>
                     <div id="criticalList" class="critical-list">
                         <!-- Dynamisch -->
                     </div>
@@ -645,26 +645,26 @@
                     <!-- Bibliothek: aktuelle Bibliothek, Laden (Liste / vom PC / neu), Speichern, Werkzeuge -->
                     <div class="lib-selector-row">
                         <span class="lib-icon"><i class="ic ic-library"></i></span>
-                        <span class="lib-caption">Bibliothek</span>
-                        <strong id="lblCurrentLib" class="lib-current" title="Aktuelle Kundenbibliothek">Standard</strong>
-                        <span id="lblLibDirty" class="lib-dirty hidden" title="Regeln geändert, Bibliothek noch nicht gespeichert">● geändert</span>
+                        <span class="lib-caption">Library</span>
+                        <strong id="lblCurrentLib" class="lib-current" title="Current customer library">Standard</strong>
+                        <span id="lblLibDirty" class="lib-dirty hidden" title="Rules changed, library not saved yet">● modified</span>
                         <select id="selectCustomerLib" class="hidden"></select>
                     </div>
                     <div class="lib-tools-row">
                         <div class="dropdown" id="libLoadMenu">
-                            <button id="btnLibLoad" class="btn btn-xs btn-secondary" title="Bibliothek laden">Laden ▾</button>
+                            <button id="btnLibLoad" class="btn btn-xs btn-secondary" title="Load library">Load ▾</button>
                             <div class="dropdown-menu hidden" id="libLoadList"></div>
                         </div>
-                        <button id="btnSaveCurrentLib" class="btn btn-xs btn-primary" title="Bibliothek speichern"><i class="ic ic-save"></i> Speichern</button>
+                        <button id="btnSaveCurrentLib" class="btn btn-xs btn-primary" title="Save library"><i class="ic ic-save"></i> Save</button>
                         <div class="dropdown" id="libToolsMenu">
-                            <button id="btnLibTools" class="btn btn-xs btn-secondary" title="Werkzeuge für Bibliothek und Datensatz"><i class="ic ic-tools"></i> Werkzeuge ▾</button>
+                            <button id="btnLibTools" class="btn btn-xs btn-secondary" title="Tools for library and dataset"><i class="ic ic-tools"></i> Tools ▾</button>
                             <div class="dropdown-menu hidden" id="libToolsList">
-                                <button id="btnAutoClassify" title="Automatische Bauteil-Erkennung & IPC-Regelzuweisung"><i class="ic ic-zap"></i> Auto-Klassifizierung</button>
-                                <button id="btnCheckPreview" title="Prüft lokal, ob Editor und Platine je Package übereinstimmen; zeigt nur Package-Namen und Abweichungen in mm">✓ Vorschau ↔ Platine prüfen</button>
-                                <button id="btnAddMissingPaste" title="Öffnungen für Bauteilpins ohne Kundenpaste aus dem Kupfer ergänzen (wie PCB Investigator)">＋ Fehlende Paste aus Kupfer…</button>
+                                <button id="btnAutoClassify" title="Automatic component detection & IPC rule assignment"><i class="ic ic-zap"></i> Auto-Classify</button>
+                                <button id="btnCheckPreview" title="Checks locally whether editor and board match per package; shows only package names and deviations in mm">✓ Check Preview ↔ Board</button>
+                                <button id="btnAddMissingPaste" title="Add apertures from copper for component pins without customer paste (like PCB Investigator)">＋ Missing Paste from Copper…</button>
                                 <div class="dropdown-sep desktop-only"></div>
-                                <button id="btnPcbiImport" class="desktop-only" title="Kundenbibliothek aus PCB Investigator (ruleTreeFile_*.xml) übernehmen">⇩ PCB-I-Bibliothek importieren…</button>
-                                <button id="btnPcbiExport" class="desktop-only" title="Aktuelle Regeln als PCB-Investigator-Kundenbibliothek (XML) speichern">⇧ Als PCB-I-Bibliothek exportieren…</button>
+                                <button id="btnPcbiImport" class="desktop-only" title="Import customer library from PCB Investigator (ruleTreeFile_*.xml)">⇩ Import PCB-I Library…</button>
+                                <button id="btnPcbiExport" class="desktop-only" title="Save current rules as PCB Investigator customer library (XML)">⇧ Export as PCB-I Library…</button>
                             </div>
                         </div>
                     </div>
@@ -680,24 +680,24 @@
                 <div id="genTabPackages" class="gen-tab-pane">
                 <!-- Search Input -->
                 <div class="pkg-search-box">
-                    <input type="text" id="pkgSearchInput" placeholder="Package suchen (z. B. 0805, QFN)...">
+                    <input type="text" id="pkgSearchInput" placeholder="Search package (e.g. 0805, QFN)...">
                     <button id="btnClearPkgSearch" class="btn-clear-search">&times;</button>
                 </div>
 
                 <!-- Category Filters -->
                 <div class="pkg-category-bar">
-                    <button class="cat-pill active" data-cat="">Alle (<span id="countAllPkgs">0</span>)</button>
+                    <button class="cat-pill active" data-cat="">All (<span id="countAllPkgs">0</span>)</button>
                     <button class="cat-pill" data-cat="SMD">SMD</button>
                     <button class="cat-pill" data-cat="THT">THT</button>
                     <button class="cat-pill" data-cat="Other">Other</button>
-                    <button class="cat-pill" data-cat="Library" title="Bibliotheks-Packages, die nicht auf der Platine vorkommen">Bibliothek</button>
+                    <button class="cat-pill" data-cat="Library" title="Library packages not used on the board">Library</button>
                 </div>
 
                 <!-- Seite: TOP / BOT bearbeitet diese Seite, Beide zeigt alle Packages -->
-                <div class="side-switch pkg-side-switch hidden" id="sideSwitch" title="Packages nach Bestückungsseite">
+                <div class="side-switch pkg-side-switch hidden" id="sideSwitch" title="Packages by assembly side">
                     <button data-side="top" class="active">TOP <span class="side-count" id="cntSideTop"></span></button>
                     <button data-side="bot">BOT <span class="side-count" id="cntSideBot"></span></button>
-                    <button data-side="both">Beide</button>
+                    <button data-side="both">Both</button>
                 </div>
 
                 <!-- Package Tree List -->
@@ -708,25 +708,25 @@
 
                 <div id="genTabZones" class="gen-tab-pane hidden">
                     <div class="gen-pane-actions">
-                        <button id="btnNewRuleZone" class="btn btn-xs btn-secondary" title="Rechteck im Board aufziehen; Öffnungen darin erhalten die Zonenregel"><i class="ic ic-plus"></i> Regelzone im Board aufziehen</button>
+                        <button id="btnNewRuleZone" class="btn btn-xs btn-secondary" title="Draw a rectangle on the board; apertures inside get the zone rule"><i class="ic ic-plus"></i> Draw Rule Zone on Board</button>
                     </div>
                     <div class="pkg-tree-list" id="zoneRuleList"></div>
                 </div>
 
                 <div id="genTabComponents" class="gen-tab-pane hidden">
                     <div class="pkg-search-box">
-                        <input type="text" id="compSearchInput" placeholder="Bauteil suchen (RefDes / Package)...">
+                        <input type="text" id="compSearchInput" placeholder="Search component (RefDes / Package)...">
                     </div>
                     <div class="pkg-category-bar">
-                        <button class="cat-pill comp-filter active" data-f="">Alle</button>
-                        <button class="cat-pill comp-filter" data-f="rule">Mit eigener Regel</button>
+                        <button class="cat-pill comp-filter active" data-f="">All</button>
+                        <button class="cat-pill comp-filter" data-f="rule">With Own Rule</button>
                     </div>
                     <div class="pkg-tree-list" id="componentList"></div>
                 </div>
             </div>
 
             <!-- Right Column: Rule Config (Top) & CAD Preview (Bottom) -->
-            <div class="splitter splitter-v" data-target="pkgSidebar" data-side="left" title="Ziehen zum Ändern der Breite, Doppelklick zum Ein-/Ausklappen"></div>
+            <div class="splitter splitter-v" data-target="pkgSidebar" data-side="left" title="Drag to resize, double-click to collapse/expand"></div>
             <div class="pkg-main-content">
                 <!-- Top Section: Rule Table / Grid (Matching PCB Investigator Screenshot 1) -->
                 <div class="rule-config-card" id="ruleConfigCard">
@@ -734,7 +734,7 @@
                         <div class="rule-dropdown-group">
                             <label for="selectPkgRule">Select Rule:</label>
                             <select id="selectPkgRule">
-                                <option value="inherit">Inherit – Regel der Gruppe übernehmen</option>
+                                <option value="inherit">Inherit – use group rule</option>
                                 <option value="package_group">Handle Stencil Creation by Package Group</option>
                                 <!-- Namen und Reihenfolge wie in PCB Investigator "Select Rule" -->
                                 <option value="array_pads">Array Pads</option>
@@ -747,45 +747,40 @@
                                 <option value="take_existing">Take Existing Paste Elements</option>
                                 <option value="undersize">UndersizeStencilCreationScript</option>
                                 <option value="pin_mask">Use Pin intersecting with Mask</option>
-                                <optgroup label="Nur StencilCraft">
-                                    <option value="elongated_pitch">Länglich & Schmal (Pitch-Schutz)</option>
-                                    <option value="array_slicing">Thermal-Pad Slicing (Fensterung, Stege)</option>
-                                    <option value="pin_in_paste">Pin-in-Paste (THT, automatisch)</option>
+                                <optgroup label="StencilCraft only">
+                                    <option value="elongated_pitch">Elongated & Narrow (Pitch Protection)</option>
+                                    <option value="array_slicing">Thermal Pad Slicing (Windowing, Webs)</option>
+                                    <option value="pin_in_paste">Pin-in-Paste (THT, auto)</option>
                                 </optgroup>
                             </select>
                         </div>
 
                         <!-- Pin Selector Dropdown -->
                         <div class="rule-dropdown-group">
-                            <label for="selectPinDropdown">Pin bearbeiten:</label>
+                            <label for="selectPinDropdown">Edit Pin:</label>
                             <select id="selectPinDropdown">
-                                <option value="all">Alle Pins (Ganzes Package)</option>
+                                <option value="all">All Pins (Entire Package)</option>
                             </select>
                         </div>
 
                         <div class="pkg-status-summary">
                             <span>Package: <strong id="lblActivePkgName" class="pkg-title">0805</strong>
-                                <button id="btnRenamePackage" class="btn btn-xs btn-ghost" title="Package umbenennen" style="padding: 1px 6px; margin-left: 4px; font-size: 0.72rem; border: 1px solid var(--border);"><i class="ic ic-edit"></i> Umbenennen</button>
+                                <button id="btnRenamePackage" class="btn btn-xs btn-ghost" title="Rename package" style="padding: 1px 6px; margin-left: 4px; font-size: 0.72rem; border: 1px solid var(--border);"><i class="ic ic-edit"></i> Rename</button>
                             </span>
                             <span>Pins: <strong id="lblActivePkgPins">2</strong></span>
                             <span>Pitch: <strong id="lblActivePkgPitch">1.702 mm</strong></span>
-                            <span>Auf Platine: <span id="lblActivePkgBoardCount" class="badge-count">101x</span></span>
-                            <select id="selectRuleLayout" class="rule-layout-select" title="Position der Regel-Einstellungen">
-                                <option value="top">Einstellungen oben</option>
-                                <option value="right">Einstellungen rechts</option>
-                                <option value="left">Einstellungen links</option>
-                            </select>
+                            <span>On Board: <span id="lblActivePkgBoardCount" class="badge-count">101x</span></span>
                         </div>
                     </div>
 
                     <!-- Rule Property Grid (Exact PCB Investigator Parameters) -->
                     <div id="ruleSourceBanner" class="rule-source-banner hidden">
                         <span id="ruleSourceText"></span>
-                        <button id="btnRemoveTargetRule" class="btn btn-xs btn-ghost hidden">Eigene Regel entfernen</button>
+                        <button id="btnRemoveTargetRule" class="btn btn-xs btn-ghost hidden">Remove Own Rule</button>
                     </div>
                     <div id="pkgMissingPaste" class="pkg-missing-paste hidden">
                         <span id="pkgMissingPasteText"></span>
-                        <button id="btnPkgAddMissing" class="btn btn-xs btn-primary">Paste aus Kupfer erzeugen</button>
+                        <button id="btnPkgAddMissing" class="btn btn-xs btn-primary">Create Paste from Copper</button>
                     </div>
                     <div id="ruleDescription" class="rule-description"></div>
                     <div class="rule-property-grid">
@@ -810,15 +805,15 @@
                             <input type="number" id="propLengthUse" value="95" step="5" min="50" max="150">
                         </div>
                         <div class="prop-item" data-rules="elongated_pitch">
-                            <label title="Pastenabstand zwischen den Öffnungen im Verhältnis zur Öffnungsbreite. 1,0 = Abstand gleich Öffnungsbreite (0,5 mm Pitch → 0,25 mm Öffnung).">Abstand / Öffnungsbreite:</label>
+                            <label title="Paste gap between apertures relative to aperture width. 1.0 = gap equals aperture width (0.5 mm pitch → 0.25 mm aperture).">Gap / Aperture Width:</label>
                             <input type="number" id="propGapRatio" value="1.0" step="0.1" min="0.2" max="5">
                         </div>
                         <div class="prop-item" data-rules="elongated_pitch">
-                            <label title="Die Öffnung wird im Verhältnis zur Verschmälerung länger: Mehrlänge = Verschmälerung (%) × Ausgleich (%).">Längenausgleich (%):</label>
+                            <label title="The aperture gets longer in proportion to the narrowing: extra length = narrowing (%) × compensation (%).">Length Compensation (%):</label>
                             <input type="number" id="propLengthComp" value="70" step="10" min="0" max="200">
                         </div>
                         <div class="prop-item" data-rules="elongated_pitch">
-                            <label title="Verschiebt die Öffnung vom Bauteilzentrum weg nach außen (negativ = nach innen).">Versatz nach außen (MM):</label>
+                            <label title="Moves the aperture outward, away from the component center (negative = inward).">Outward Offset (MM):</label>
                             <input type="number" id="propOutwardShift" value="0.025" step="0.005" min="-0.5" max="0.5">
                         </div>
                         <div class="prop-item" data-rules="simple_rect house_builder inverted_house_builder elongated_pitch array_pads array_fix">
@@ -826,23 +821,23 @@
                             <input type="number" id="propOffsetMoveAway" value="0.0" step="0.02" min="0" max="1.0">
                         </div>
                         <div class="prop-item" data-rules="simple_rect house_builder inverted_house_builder elongated_pitch array_pads array_fix">
-                            <label title="Richtung für Move away, Versatz nach außen und Toe-/Heel-Shift. X/Y beziehen sich auf das Package (drehen mit dem Bauteil).">Richtung nach außen:</label>
+                            <label title="Direction for move away, outward offset and toe/heel shift. X/Y refer to the package (rotate with the component).">Outward Direction:</label>
                             <select id="propMoveAxis">
-                                <option value="long">Pad-Längsachse</option>
-                                <option value="auto">Zum Bauteilzentrum (automatisch)</option>
-                                <option value="x">Nur X (Package)</option>
-                                <option value="y">Nur Y (Package)</option>
+                                <option value="long">Pad Long Axis</option>
+                                <option value="auto">Relative to Component Center (auto)</option>
+                                <option value="x">X Only (Package)</option>
+                                <option value="y">Y Only (Package)</option>
                             </select>
                         </div>
                         <div class="prop-item" data-rules="package_group simple_rect house_builder inverted_house_builder elongated_pitch array_slicing donut array_pads array_fix">
-                            <label title="Verschiebung im Package-Rahmen; dreht auf der Platine mit dem Bauteil.">Offset to Center X / Y (MM):</label>
+                            <label title="Offset in the package frame; rotates with the component on the board.">Offset to Center X / Y (MM):</label>
                             <div class="dual-row">
                                 <input type="number" id="propOffsetX" value="0.0" step="0.01" placeholder="X">
                                 <input type="number" id="propOffsetY" value="0.0" step="0.01" placeholder="Y">
                             </div>
                         </div>
                         <div class="prop-item" data-rules="simple_rect array_slicing">
-                            <label>Bridge Count X / Y (Stege):</label>
+                            <label>Bridge Count X / Y:</label>
                             <div class="dual-row">
                                 <input type="number" id="propBridgeX" value="0" step="1" min="0" max="6" placeholder="X">
                                 <input type="number" id="propBridgeY" value="0" step="1" min="0" max="6" placeholder="Y">
@@ -854,30 +849,30 @@
                         </div>
                         <div class="prop-item" data-rules="simple_rect house_builder inverted_house_builder elongated_pitch">
                             <label>Toe-/Heel-Shift (MM):</label>
-                            <input type="number" id="propToeHeelShift" value="0.0" step="0.01" min="-0.5" max="0.5" title="Systematischer Offset: >0 Toe (nach außen zur Spitze), <0 Heel (nach innen zur Ferse)">
+                            <input type="number" id="propToeHeelShift" value="0.0" step="0.01" min="-0.5" max="0.5" title="Systematic offset: >0 toe (outward to the tip), <0 heel (inward to the heel)">
                         </div>
                         <div class="prop-item" data-rules="simple_rect">
                             <label>Chamfer Size / Mode:</label>
                             <div class="dual-row">
-                                <input type="number" id="propChamferSize" value="0.0" step="0.01" min="0" max="0.5" placeholder="Anfasung (mm)" title="45° Eck-Anfasung">
+                                <input type="number" id="propChamferSize" value="0.0" step="0.01" min="0" max="0.5" placeholder="Chamfer (mm)" title="45° corner chamfer">
                                 <select id="propChamferMode" style="font-size:0.75rem;">
-                                    <option value="all">Alle 4 Ecken</option>
-                                    <option value="pin1">Nur Pin 1</option>
-                                    <option value="toe">Toe (außen)</option>
-                                    <option value="heel">Heel (innen)</option>
+                                    <option value="all">All 4 Corners</option>
+                                    <option value="pin1">Pin 1 Only</option>
+                                    <option value="toe">Toe (outer)</option>
+                                    <option value="heel">Heel (inner)</option>
                                 </select>
                             </div>
                         </div>
                         <div class="prop-item" data-rules="simple_rect">
                             <label>Size Width / Height (MM):</label>
                             <div class="dual-row">
-                                <input type="number" id="propSizeW" value="0" step="0.05" min="0" placeholder="B" title="Feste Öffnungsbreite (0 = aus Padgröße)">
-                                <input type="number" id="propSizeH" value="0" step="0.05" min="0" placeholder="H" title="Feste Öffnungshöhe (0 = aus Padgröße)">
+                                <input type="number" id="propSizeW" value="0" step="0.05" min="0" placeholder="W" title="Fixed aperture width (0 = from pad size)">
+                                <input type="number" id="propSizeH" value="0" step="0.05" min="0" placeholder="H" title="Fixed aperture height (0 = from pad size)">
                             </div>
                         </div>
                         <div class="prop-item" data-rules="donut">
                             <label>Donut Inner Diameter (MM):</label>
-                            <input type="number" id="propDonutInner" value="0" step="0.05" min="0" title="0 = Bohrung + 0.1 mm">
+                            <input type="number" id="propDonutInner" value="0" step="0.05" min="0" title="0 = drill + 0.1 mm">
                         </div>
                         <div class="prop-item" data-rules="package_group">
                             <label>BGA Threashold Square (MM):</label>
@@ -893,7 +888,7 @@
                         </div>
                         <div class="prop-item" data-rules="package_group">
                             <label>Mini Chip Size (MM):</label>
-                            <input type="number" id="propMiniChip" value="0.075" step="0.005" min="0" title="Zusätzliche Reduktion für Mini-Chips (Inverted House)">
+                            <input type="number" id="propMiniChip" value="0.075" step="0.005" min="0" title="Additional reduction for mini chips (inverted house)">
                         </div>
                         <div class="prop-item" data-rules="package_group array_pads array_fix">
                             <label>Minimum Array Field Size (MM):</label>
@@ -909,35 +904,35 @@
                         </div>
                         <div class="prop-item" data-rules="package_group">
                             <label>Utilization House Area (%):</label>
-                            <input type="number" id="propUtilHouse" value="0" step="5" min="0" max="100" title="0 = keine Flächenanpassung">
+                            <input type="number" id="propUtilHouse" value="0" step="5" min="0" max="100" title="0 = no area adjustment">
                         </div>
                         <div class="prop-item" data-rules="pin_in_paste">
-                            <label>Leiterplattendicke (MM):</label>
+                            <label>PCB Thickness (MM):</label>
                             <input type="number" id="propPipPcb" value="1.6" step="0.1" min="0.2">
                         </div>
                         <div class="prop-item" data-rules="pin_in_paste">
-                            <label>Metallanteil Paste (%):</label>
+                            <label>Paste Metal Content (%):</label>
                             <input type="number" id="propPipMetal" value="50" step="1" min="10" max="100">
                         </div>
                         <div class="prop-item" data-rules="pin_in_paste">
-                            <label>Spiel Bohrung − Pin (MM):</label>
-                            <input type="number" id="propPipClearance" value="0.25" step="0.05" min="0" title="Pin-Durchmesser = Bohrung − Spiel">
+                            <label>Clearance Drill − Pin (MM):</label>
+                            <input type="number" id="propPipClearance" value="0.25" step="0.05" min="0" title="Pin diameter = drill − clearance">
                         </div>
                         <div class="prop-item" data-rules="pin_in_paste">
-                            <label>Overprint-Form / max. Größe (MM):</label>
+                            <label>Overprint Shape / Max Size (MM):</label>
                             <div class="dual-row">
                                 <select id="propPipShape" style="font-size:0.75rem;">
-                                    <option value="circle">Kreis</option>
-                                    <option value="rect">Quadrat</option>
-                                    <option value="donut">Donut (segmentiert)</option>
+                                    <option value="circle">Circle</option>
+                                    <option value="rect">Square</option>
+                                    <option value="donut">Donut (segmented)</option>
                                 </select>
-                                <input type="number" id="propPipMax" value="0" step="0.1" min="0" title="0 = Pitch − Mindeststeg">
+                                <input type="number" id="propPipMax" value="0" step="0.1" min="0" title="0 = pitch − min. web">
                             </div>
                         </div>
                         <div class="prop-item" data-rules="array_pads array_fix">
-                            <label title="Array Pads: feste Feldgröße (0 = aus Mindestfeldgröße und Ausnutzung)">Array Size Width / Height in MM:</label>
+                            <label title="Array Pads: fixed field size (0 = from minimum field size and utilization)">Array Size Width / Height in MM:</label>
                             <div class="dual-row">
-                                <input type="number" id="propArraySizeW" value="0" step="0.05" min="0" placeholder="B">
+                                <input type="number" id="propArraySizeW" value="0" step="0.05" min="0" placeholder="W">
                                 <input type="number" id="propArraySizeH" value="0" step="0.05" min="0" placeholder="H">
                             </div>
                         </div>
@@ -957,15 +952,15 @@
                             <input type="number" id="propDonutRotation" value="0" step="5">
                         </div>
                         <div class="prop-item" data-rules="donut">
-                            <label title="Gilt ohne festen Innen-Ø und ohne Bohrung">Value for inner donut circle in percent:</label>
+                            <label title="Applies without fixed inner Ø and without drill">Value for inner donut circle in percent:</label>
                             <input type="number" id="propDonutInnerPct" value="50" step="5" min="0" max="95">
                         </div>
                         <div class="prop-item" data-rules="donut">
-                            <label title="PCB-I: percentOuterDiameter, 100 % = kleinere Padseite">Value for outer donut circle in percent:</label>
+                            <label title="PCB-I: percentOuterDiameter, 100 % = smaller pad side">Value for outer donut circle in percent:</label>
                             <input type="number" id="propDonutOuterPct" value="100" step="5" min="5" max="200">
                         </div>
                         <div class="prop-item" data-rules="undersize inverted_house_builder">
-                            <label title="Größere Öffnungen werden geteilt (0 = nie teilen)">Max Size of one Element (MM):</label>
+                            <label title="Larger apertures are split (0 = never split)">Max Size of one Element (MM):</label>
                             <input type="number" id="propMaxElement" value="5" step="0.5" min="0">
                         </div>
                         <div class="prop-item" data-rules="undersize inverted_house_builder">
@@ -984,14 +979,30 @@
                             <label><input type="checkbox" id="propTryDirection" checked> Try Find Direction</label>
                         </div>
                     </div>
+                    <!-- wie PCB-I: großer Generate-Knopf unter den Eigenschaften -->
+                    <div class="rule-generate-foot">
+                            <button id="btnGenerateStencilPads" class="btn btn-primary btn-generate btn-block" title="Generate the whole board (TOP and BOT) from the rule tree into top_stencil / bot_stencil. Customer paste, zones and manually modified apertures stay untouched. Single package / group only: right-click in the tree. Undo with Ctrl+Z.">
+                                <span><i class="ic ic-zap"></i></span> Generate Stencil Pads
+                            </button>
+                    </div>
                 </div>
 
-                <div class="splitter splitter-h" data-target="ruleConfigCard" data-side="top" title="Ziehen zum Ändern der Höhe, Doppelklick zum Ein-/Ausklappen"></div>
+                <div class="splitter splitter-h" data-target="ruleConfigCard" data-side="top" title="Drag to resize, double-click to collapse/expand"></div>
 
                 <!-- Bottom Section: CAD Preview Canvas (Matching Screenshots 1 & 3) -->
                 <div class="pkg-preview-card">
                     <div class="preview-canvas-container" id="pkgPreviewContainer">
                         <canvas id="pkgPreviewCanvas"></canvas>
+                        <!-- gleiche Leiste wie in der Board View -->
+                        <div class="canvas-overlay bottom-right">
+                            <div class="zoom-toolbar">
+                                <button id="btnMeasurePkg" class="btn-measure" title="Ruler / measure tool (key: M)"><i class="ic ic-ruler"></i> Measure (M)</button>
+                                <button id="btnClearMeasurePkg" class="btn-tool-del hidden" title="Clear measurements (key: Del / C)"><i class="ic ic-trash"></i> Clear Measurement</button>
+                                <button id="btnPkgZoomIn" title="Zoom In">+</button>
+                                <button id="btnPkgZoomOut" title="Zoom Out">-</button>
+                                <button id="btnPkgFit" title="Fit package">Fit</button>
+                            </div>
+                        </div>
                         
                         <!-- Overlay Pitch & Name -->
                         <div class="pkg-overlay-info">
@@ -1005,9 +1016,9 @@
                                 <span><i class="ic ic-target"></i> <strong><span id="lblPinBarPrefix">Pin </span><span id="lblSelectedPin">1</span></strong>:</span>
                             </div>
                             <div class="pad-bar-inputs">
-                                <select id="selectPinRule" title="Regel für diesen Pin" style="font-size: 0.75rem; padding: 3px 6px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border); border-radius: 4px;">
-                                    <option value="inherit">Regel: Vom Package erben</option>
-                                    <option value="manual">Manuell (feste Öffnung)</option>
+                                <select id="selectPinRule" title="Rule for this pin" style="font-size: 0.75rem; padding: 3px 6px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border); border-radius: 4px;">
+                                    <option value="inherit">Rule: Inherit from package</option>
+                                    <option value="manual">Manual (fixed aperture)</option>
                                     <option value="package_group">Handle Stencil Creation by Package Group</option>
                                     <option value="array_pads">Array Pads</option>
                                     <option value="array_fix">Array Pads Fix Count</option>
@@ -1019,13 +1030,13 @@
                                     <option value="take_existing">Take Existing Paste Elements</option>
                                     <option value="undersize">UndersizeStencilCreationScript</option>
                                     <option value="pin_mask">Use Pin intersecting with Mask</option>
-                                    <option value="elongated_pitch">Länglich & Schmal</option>
-                                    <option value="array_slicing">Thermal-Pad Slicing (Fensterung)</option>
+                                    <option value="elongated_pitch">Elongated & Narrow</option>
+                                    <option value="array_slicing">Thermal Pad Slicing (Windowing)</option>
                                 </select>
-                                <input type="number" id="inputPadCustomW" placeholder="B (mm)" step="0.05" style="width: 70px;">
+                                <input type="number" id="inputPadCustomW" placeholder="W (mm)" step="0.05" style="width: 70px;">
                                 <input type="number" id="inputPadCustomH" placeholder="H (mm)" step="0.05" style="width: 70px;">
                                 <input type="number" id="inputPadCustomUndersize" class="pin-rule-only" placeholder="Red. (mm)" step="0.005" style="width: 75px;" title="Undersize (mm)">
-                                <select id="pinSliceGrid" class="pin-slice-only hidden" title="Fensterung (Spalten × Zeilen, wie angezeigt)">
+                                <select id="pinSliceGrid" class="pin-slice-only hidden" title="Windowing (columns × rows, as displayed)">
                                     <option value="1x2">1 × 2</option>
                                     <option value="2x1">2 × 1</option>
                                     <option value="1x3">1 × 3</option>
@@ -1038,19 +1049,19 @@
                                     <option value="3x3">3 × 3</option>
                                     <option value="4x4">4 × 4</option>
                                 </select>
-                                <input type="number" id="pinSliceWeb" class="pin-slice-only hidden" placeholder="Steg" step="0.05" min="0.08" value="0.25" style="width: 64px;" title="Stegbreite zwischen den Fenstern (mm)">
-                                <input type="number" id="inputPadOffX" class="pin-manual-only hidden" placeholder="dX" step="0.01" style="width: 64px;" title="Versatz nach rechts (mm, wie angezeigt) – Pfeiltasten ←/→">
-                                <input type="number" id="inputPadOffY" class="pin-manual-only hidden" placeholder="dY" step="0.01" style="width: 64px;" title="Versatz nach oben (mm, wie angezeigt) – Pfeiltasten ↑/↓"> 
-                                <button id="btnSavePadOverride" class="btn btn-xs btn-primary">Anpassen</button>
+                                <input type="number" id="pinSliceWeb" class="pin-slice-only hidden" placeholder="Web" step="0.05" min="0.08" value="0.25" style="width: 64px;" title="Web width between windows (mm)">
+                                <input type="number" id="inputPadOffX" class="pin-manual-only hidden" placeholder="dX" step="0.01" style="width: 64px;" title="Offset to the right (mm, as displayed) – arrow keys ←/→">
+                                <input type="number" id="inputPadOffY" class="pin-manual-only hidden" placeholder="dY" step="0.01" style="width: 64px;" title="Offset upward (mm, as displayed) – arrow keys ↑/↓"> 
+                                <button id="btnSavePadOverride" class="btn btn-xs btn-primary">Apply</button>
                                 <button id="btnResetPadOverride" class="btn btn-xs btn-ghost">Reset</button>
-                                <button id="btnApplyPinToAll" class="btn btn-xs btn-ghost" title="Alle Einstellungen dieses Pins auf Pads gleicher Größe und Form übernehmen (Pad-Gruppe)">Für gleiche Pads übernehmen</button>
+                                <button id="btnApplyPinToAll" class="btn btn-xs btn-ghost" title="Apply all settings of this pin to pads of the same size and shape (pad group)">Apply to Same Pads</button>
                                 <button id="btnClosePadBar" class="btn-close-sm">&times;</button>
                             </div>
                         </div>
                         <!-- Measure Banner in Package View -->
                         <div id="measureBannerPkg" class="measure-banner hidden">
-                            <span><i class="ic ic-ruler"></i> <strong>Messwerkzeug aktiv:</strong> 1. Punkt klicken, 2. Zielpunkt klicken. [M] oder [ESC] zum Beenden.</span>
-                            <button id="btnClearMeasurementsPkg" class="btn btn-xs btn-ghost" title="Messungen löschen">Löschen</button>
+                            <span><i class="ic ic-ruler"></i> <strong>Measure tool active:</strong> click 1st point, then target point. [M] or [ESC] to exit.</span>
+                            <button id="btnClearMeasurementsPkg" class="btn btn-xs btn-ghost" title="Clear measurements">Clear</button>
                             <button id="btnCancelMeasurePkg" class="btn btn-xs btn-ghost">&times;</button>
                         </div>
                     </div>
@@ -1060,15 +1071,15 @@
                         <div class="preview-toggles">
                             <label><input type="checkbox" id="chkPrevMask" checked> Show Mask</label>
                             <label><input type="checkbox" id="chkPrevCopper" checked> <span class="dot-copper"></span> Show Copper (Pad)</label>
-                            <label><input type="checkbox" id="chkPrevPaste" checked> <span class="dot-paste"></span> Show Paste (Schablone)</label>
+                            <label><input type="checkbox" id="chkPrevPaste" checked> <span class="dot-paste"></span> Show Paste (Stencil)</label>
                             <label><input type="checkbox" id="chkPrevComponent" checked> <span class="dot-comp"></span> Show Component</label>
                             <label><input type="checkbox" id="chkPrevRuler" checked> Show Ruler</label>
                             <label><input type="checkbox" id="chkPrevPinLabels"> Show Pin Labels</label>
                             <label><input type="checkbox" id="chkPrevDrills" checked> Show Drills</label>
-                            <label title="Area Ratio, Fläche und Pastenvolumen je Öffnung"><input type="checkbox" id="chkPrevInfo"> Show Info Layer</label>
-                            <label title="Originalpaste des Kunden an der gezeigten Instanz (rosa Umriss)"><input type="checkbox" id="chkPrevCustomer" checked> Show Kundenpaste</label>
-                            <label title="Nachbarn auf der Platine um die erste Instanz zeigen (Kupfer und Schablone)"><input type="checkbox" id="chkPrevBoard" checked> Show Board</label>
-                            <select id="selPrevBoardRadius" title="Umkreis der Platinenansicht" style="font-size:0.72rem;">
+                            <label title="Area ratio, area and paste volume per aperture"><input type="checkbox" id="chkPrevInfo"> Show Info Layer</label>
+                            <label title="Customer's original paste on the shown instance (pink outline)"><input type="checkbox" id="chkPrevCustomer" checked> Show Customer Paste</label>
+                            <label title="Show board neighbors around the first instance (copper and stencil)"><input type="checkbox" id="chkPrevBoard" checked> Show Board</label>
+                            <select id="selPrevBoardRadius" title="Board view radius" style="font-size:0.72rem;">
                                 <option value="2">2 mm</option>
                                 <option value="4" selected>4 mm</option>
                                 <option value="8">8 mm</option>
@@ -1077,17 +1088,10 @@
                         </div>
 
                         <div class="preview-cta">
-                            <button id="btnRotatePkg" class="btn btn-sm btn-secondary" title="Package um 90° drehen">
-                                <span>⟳</span> 90° Drehen
-                            </button>
-                            <button id="btnMeasurePkg" class="btn btn-sm btn-secondary btn-measure-pkg" title="Lineal / Messwerkzeug (Taste: M)">
-                                <span><i class="ic ic-ruler"></i></span> Messen (M)
-                            </button>
-                            <button id="btnClearMeasurePkg" class="btn btn-sm btn-tool-del hidden" title="Messungen löschen (Taste: Entf / C)">
-                                <span><i class="ic ic-trash"></i></span> Messung löschen
-                            </button>
-                            <button id="btnGenerateStencilPads" class="btn btn-primary btn-generate" title="Ganze Platine (TOP und BOT) nach dem Regelbaum in top_stencil / bot_stencil erzeugen. Kundenpaste und Zonen bleiben unberührt, von Hand geänderte Öffnungen auch. Nur ein Package / eine Gruppe: Rechtsklick im Baum. Rückgängig mit Strg+Z.">
-                                <span><i class="ic ic-zap"></i></span> Generate Stencil Pads
+                            <button id="btnSketchRect" class="btn btn-sm btn-secondary" title="Freehand: draw rectangle aperture (Esc ends, Shift = no snapping). Right-click a pad: hide">▭ Rectangle</button>
+                            <button id="btnSketchPoly" class="btn btn-sm btn-secondary" title="Freehand: polygon aperture point by point; double-click, Enter or click on the first point closes it">⬠ Polygon</button>
+                            <button id="btnRotatePkg" class="btn btn-sm btn-secondary" title="Rotate package 90°">
+                                <span>⟳</span> Rotate 90°
                             </button>
                         </div>
                     </div>
@@ -1103,66 +1107,66 @@
     <!-- New Customer Library Modal -->
     <div id="ipcProfileModal" class="modal hidden">
         <div class="modal-box ipc-modal">
-            <h3>IPC-Klassenprofile</h3>
-            <p class="modal-desc">Prüfgrenzen je Produktklasse (Klassen nach IPC-A-610 / J-STD-001, Kennzahlen nach IPC-7525).
-                Die Standardwerte sind Vorschläge – passen Sie sie je Kunde an. Sie werden in der Kundenbibliothek gespeichert
-                und beim Laden der Bibliothek übernommen.</p>
+            <h3>IPC Class Profiles</h3>
+            <p class="modal-desc">Check limits per product class (classes per IPC-A-610 / J-STD-001, metrics per IPC-7525).
+                The defaults are suggestions – adjust them per customer. They are saved in the customer library
+                and applied when the library is loaded.</p>
             <table class="ipc-profile-table" id="ipcProfileTable"></table>
-            <label class="ipc-save-lib"><input type="checkbox" id="chkIpcSaveLib" checked> In Kundenbibliothek „<span id="lblIpcCustomer">Standard</span>“ speichern</label>
+            <label class="ipc-save-lib"><input type="checkbox" id="chkIpcSaveLib" checked> Save in customer library “<span id="lblIpcCustomer">Standard</span>”</label>
             <div class="modal-actions">
-                <button id="btnIpcReset" class="btn btn-ghost" title="Alle drei Profile auf die Vorschlagswerte zurücksetzen">Vorschlagswerte</button>
-                <button id="btnIpcCancel" class="btn btn-ghost">Abbrechen</button>
-                <button id="btnIpcSave" class="btn btn-primary">Übernehmen</button>
+                <button id="btnIpcReset" class="btn btn-ghost" title="Reset all three profiles to the suggested values">Defaults</button>
+                <button id="btnIpcCancel" class="btn btn-ghost">Cancel</button>
+                <button id="btnIpcSave" class="btn btn-primary">Apply</button>
             </div>
         </div>
     </div>
 
     <div id="libAskModal" class="modal hidden">
         <div class="modal-box">
-            <h3>Bibliothek laden?</h3>
-            <p class="modal-desc">Du beginnst mit dem Bearbeiten. Mit welcher Kundenbibliothek möchtest du arbeiten?</p>
+            <h3>Load Library?</h3>
+            <p class="modal-desc">You are starting to edit. Which customer library do you want to work with?</p>
             <div id="libAskList" class="lib-ask-list"></div>
             <div class="modal-actions">
-                <button id="btnLibAskPc" class="btn btn-secondary">Vom PC laden…</button>
-                <button id="btnLibAskSkip" class="btn btn-ghost">Ohne Laden weiter</button>
+                <button id="btnLibAskPc" class="btn btn-secondary">Load from PC…</button>
+                <button id="btnLibAskSkip" class="btn btn-ghost">Continue Without Loading</button>
             </div>
         </div>
     </div>
 
     <div id="libDiffModal" class="modal hidden">
         <div class="modal-box lib-diff-box">
-            <h3>Bibliothek „<span id="lblDiffLib"></span>“ laden – deine Änderungen</h3>
-            <p class="modal-desc">Du hast schon bearbeitet. Beim Laden würden sich diese Regeln ändern. Wähle je Zeile, welcher Stand gelten soll.</p>
+            <h3>Load library “<span id="lblDiffLib"></span>” – your changes</h3>
+            <p class="modal-desc">You have already made changes. Loading would change these rules. Choose for each row which version to keep.</p>
             <div class="lib-diff-actions">
-                <button id="btnDiffAllMine" class="btn btn-xs btn-secondary">Alle: mein Stand</button>
-                <button id="btnDiffAllLib" class="btn btn-xs btn-secondary">Alle: Bibliothek</button>
+                <button id="btnDiffAllMine" class="btn btn-xs btn-secondary">All: Mine</button>
+                <button id="btnDiffAllLib" class="btn btn-xs btn-secondary">All: Library</button>
             </div>
             <div class="lib-diff-table-wrap">
                 <table class="lib-diff-table">
-                    <thead><tr><th>Package / Gruppe</th><th>Mein Stand</th><th>Bibliothek</th></tr></thead>
+                    <thead><tr><th>Package / Group</th><th>Mine</th><th>Library</th></tr></thead>
                     <tbody id="libDiffBody"></tbody>
                 </table>
             </div>
             <div class="modal-actions">
-                <button id="btnDiffCancel" class="btn btn-ghost">Abbrechen</button>
-                <button id="btnDiffApply" class="btn btn-primary">Laden</button>
+                <button id="btnDiffCancel" class="btn btn-ghost">Cancel</button>
+                <button id="btnDiffApply" class="btn btn-primary">Load</button>
             </div>
         </div>
     </div>
 
     <div id="newLibModal" class="modal hidden">
         <div class="modal-box">
-            <h3>Neue Kunden-Bibliothek anlegen</h3>
-            <p class="modal-desc">Erstellen Sie eine eigene Schablonenregel-Bibliothek für einen Kunden:</p>
+            <h3>Create New Customer Library</h3>
+            <p class="modal-desc">Create a custom stencil rule library for a customer:</p>
             
             <div class="form-row">
-                <label>Kundenname:</label>
-                <input type="text" id="inputNewCustName" placeholder="z. B. Kunde_Automotive, Kunde_XYZ">
+                <label>Customer Name:</label>
+                <input type="text" id="inputNewCustName" placeholder="e.g. Customer_Automotive, Customer_XYZ">
             </div>
 
             <div class="modal-actions">
-                <button id="btnCancelNewLib" class="btn btn-ghost">Abbrechen</button>
-                <button id="btnConfirmNewLib" class="btn btn-primary">Bibliothek Erstellen</button>
+                <button id="btnCancelNewLib" class="btn btn-ghost">Cancel</button>
+                <button id="btnConfirmNewLib" class="btn btn-primary">Create Library</button>
             </div>
         </div>
     </div>
@@ -1170,11 +1174,11 @@
     <!-- Zone Modal (Freie Zahleneingabe für Dicke!) -->
     <div id="zoneModal" class="modal hidden">
         <div class="modal-box">
-            <h3>Neue Stufenzone konfigurieren</h3>
-            <p class="modal-desc">Geben Sie eine beliebige Dicke in µm ein (oder nutzen Sie die Schnellauswahl):</p>
+            <h3>Configure New Step Zone</h3>
+            <p class="modal-desc">Enter any thickness in µm (or use the quick selection):</p>
             
             <div class="form-row">
-                <label>Zonendicke (µm):</label>
+                <label>Zone Thickness (µm):</label>
                 <div class="input-with-unit">
                     <input type="number" id="modalZoneThickUm" value="100" step="5" min="40" max="300">
                     <span class="unit-badge">µm</span>
@@ -1191,18 +1195,18 @@
             </div>
 
             <div class="form-row" style="margin-top: 10px;">
-                <label><input type="checkbox" id="modalZoneIsStep" checked> Stufenzone (Blechdicke ändern)</label>
+                <label><input type="checkbox" id="modalZoneIsStep" checked> Step zone (change stencil thickness)</label>
             </div>
-            <p class="modal-desc">Ohne Häkchen: reine Regelzone – die Zonenregel wird im Stencil Generator unter „Zone Rules“ festgelegt.</p>
+            <p class="modal-desc">Unchecked: rule zone only – the zone rule is set in the Stencil Generator under “Zone Rules”.</p>
 
             <div class="form-row" style="margin-top: 14px;">
-                <label>Zonenname (optional):</label>
-                <input type="text" id="modalZoneName" placeholder="z.B. QFN Step-Down 100um">
+                <label>Zone Name (optional):</label>
+                <input type="text" id="modalZoneName" placeholder="e.g. QFN Step-Down 100um">
             </div>
 
             <div class="modal-actions">
-                <button id="btnCancelModal" class="btn btn-ghost">Abbrechen</button>
-                <button id="btnSaveZoneModal" class="btn btn-primary">Zone Speichern</button>
+                <button id="btnCancelModal" class="btn btn-ghost">Cancel</button>
+                <button id="btnSaveZoneModal" class="btn btn-primary">Save Zone</button>
             </div>
         </div>
     </div>
@@ -1211,28 +1215,28 @@
     <div id="calculatorModal" class="modal hidden">
         <div class="modal-box calc-modal-box">
             <div class="modal-header">
-                <h3><i class="ic ic-chart"></i> Auslösekalkulator & Pastenvolumen</h3>
+                <h3><i class="ic ic-chart"></i> Release Calculator & Paste Volume</h3>
                 <button id="btnCloseCalcModal" class="btn-close">&times;</button>
             </div>
-            <p class="modal-desc">Multi-Dicken-Vergleich & Transfer Efficiency für Pastenschablonen:</p>
+            <p class="modal-desc">Multi-thickness comparison & transfer efficiency for paste stencils:</p>
 
             <div class="calc-inputs-bar">
                 <div class="calc-input-group">
-                    <label>Apertur-Breite:</label>
+                    <label>Aperture Width:</label>
                     <input type="number" id="calcWidth" value="11.8" step="0.1">
                 </div>
                 <div class="calc-input-group">
-                    <label>Apertur-Länge:</label>
+                    <label>Aperture Length:</label>
                     <input type="number" id="calcHeight" value="11.8" step="0.1">
                 </div>
                 <div class="calc-input-group">
-                    <label>Einheit:</label>
+                    <label>Unit:</label>
                     <div class="unit-toggle">
                         <button class="btn-unit active" data-unit="mil">mil</button>
                         <button class="btn-unit" data-unit="mm">mm</button>
                     </div>
                 </div>
-                <button id="btnRecalc" class="btn btn-primary" style="align-self: flex-end;">Neu berechnen</button>
+                <button id="btnRecalc" class="btn btn-primary" style="align-self: flex-end;">Recalculate</button>
             </div>
 
             <!-- Vergleichs-Grid (wie in Excel) -->
@@ -1246,21 +1250,21 @@
     <div id="pipModal" class="modal hidden">
         <div class="modal-box calc-modal-box">
             <div class="modal-header">
-                <h3><i class="ic ic-plug"></i> Pin-in-Paste (PiP / Through-Hole Reflow) Kalkulator</h3>
+                <h3><i class="ic ic-plug"></i> Pin-in-Paste (PiP / Through-Hole Reflow) Calculator</h3>
                 <button id="btnClosePipModal" class="btn-close">&times;</button>
             </div>
-            <p class="modal-desc">Präzise Volumenberechnung nach IPC-7525 & Geometriegenerator für bedrahtete Bauteile im Reflow-Lötprozess:</p>
+            <p class="modal-desc">Precise volume calculation per IPC-7525 & geometry generator for through-hole components in reflow soldering:</p>
 
             <div class="calc-inputs-bar" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
                 <div class="calc-input-group">
-                    <label>Bohrungs-Ø D (mm):</label>
+                    <label>Drill Ø D (mm):</label>
                     <input type="number" id="pipDrill" value="1.00" step="0.05" min="0.3">
                 </div>
                 <div class="calc-input-group">
-                    <label>Pin-Form:</label>
+                    <label>Pin Shape:</label>
                     <select id="pipPinShape" style="padding: 6px 8px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border); border-radius: 4px;">
-                        <option value="round">Rund (Ø)</option>
-                        <option value="rect">Rechteck (B × H)</option>
+                        <option value="round">Round (Ø)</option>
+                        <option value="rect">Rectangle (W × H)</option>
                     </select>
                 </div>
                 <div class="calc-input-group">
@@ -1268,23 +1272,23 @@
                     <input type="number" id="pipPinW" value="0.60" step="0.05" min="0.1">
                 </div>
                 <div class="calc-input-group" id="groupPipPinH" style="display:none;">
-                    <label>Pin-Höhe (mm):</label>
+                    <label>Pin Height (mm):</label>
                     <input type="number" id="pipPinH" value="0.60" step="0.05" min="0.1">
                 </div>
                 <div class="calc-input-group">
-                    <label>LP-Dicke H_PCB (mm):</label>
+                    <label>PCB Thickness H_PCB (mm):</label>
                     <input type="number" id="pipPcbThick" value="1.60" step="0.1" min="0.4">
                 </div>
                 <div class="calc-input-group">
-                    <label>Metallanteil Paste (%):</label>
+                    <label>Paste Metal Content (%):</label>
                     <input type="number" id="pipMetalRatio" value="50" step="5" min="20" max="80">
                 </div>
                 <div class="calc-input-group">
-                    <label>Meniskus V (mm³, 0=Auto):</label>
+                    <label>Meniscus V (mm³, 0=Auto):</label>
                     <input type="number" id="pipMeniscus" value="0.00" step="0.02" min="0.0">
                 </div>
                 <div class="calc-input-group">
-                    <label>Schablonendicke (mm):</label>
+                    <label>Stencil Thickness (mm):</label>
                     <input type="number" id="pipStencilThick" value="0.120" step="0.01" min="0.05">
                 </div>
             </div>
@@ -1292,34 +1296,34 @@
             <!-- Ergebnisse & Volumen-Aufschlüsselung -->
             <div style="margin: 16px 0; padding: 12px 16px; background: rgba(30, 41, 59, 0.7); border: 1px solid var(--border); border-radius: 8px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; text-align: center;">
                 <div>
-                    <div style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Netto-Bohrungsvolumen</div>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Net Hole Volume</div>
                     <div id="pipResHoleNet" style="font-size: 1.25rem; font-weight: 700; color: #38bdf8; margin-top: 4px;">0.754 mm³</div>
                 </div>
                 <div>
-                    <div style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Soll-Pastenvolumen (Nass)</div>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Required Paste Volume (Wet)</div>
                     <div id="pipResPasteReq" style="font-size: 1.25rem; font-weight: 700; color: #a855f7; margin-top: 4px;">1.810 mm³</div>
                 </div>
                 <div>
-                    <div style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Erforderliche Aperturfläche</div>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase;">Required Aperture Area</div>
                     <div id="pipResAreaReq" style="font-size: 1.25rem; font-weight: 700; color: #22c55e; margin-top: 4px;">15.08 mm²</div>
                 </div>
             </div>
 
             <!-- Overprint Geometrie-Auswahl -->
             <div style="margin: 14px 0;">
-                <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-main); display: block; margin-bottom: 8px;">Apertur-Geometrie für Schablonen-Overprint wählen:</label>
+                <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-main); display: block; margin-bottom: 8px;">Select aperture geometry for stencil overprint:</label>
                 <div class="quick-presets" style="display: flex; gap: 8px;">
-                    <button class="btn-preset active" data-pip-shape="rectangle" style="flex: 1; padding: 8px 12px;">Rechteck Overprint (<span id="pipDimRect">3.88 × 3.88 mm</span>)</button>
+                    <button class="btn-preset active" data-pip-shape="rectangle" style="flex: 1; padding: 8px 12px;">Rectangle Overprint (<span id="pipDimRect">3.88 × 3.88 mm</span>)</button>
                     <button class="btn-preset" data-pip-shape="donut" style="flex: 1; padding: 8px 12px;">Donut / Ring (Ø <span id="pipDimDonut">4.52 mm</span>)</button>
-                    <button class="btn-preset" data-pip-shape="cross" style="flex: 1; padding: 8px 12px;">Kreuzform Overprint (Span <span id="pipDimCross">5.20 mm</span>)</button>
+                    <button class="btn-preset" data-pip-shape="cross" style="flex: 1; padding: 8px 12px;">Cross Overprint (Span <span id="pipDimCross">5.20 mm</span>)</button>
                 </div>
             </div>
 
             <div class="modal-actions" style="margin-top: 16px; display: flex; justify-content: space-between; align-items: center;">
-                <span id="pipTargetInfo" style="font-size: 0.82rem; color: var(--text-secondary);">Ziel: Aktuell gewähltes Pad auf der Schablone</span>
+                <span id="pipTargetInfo" style="font-size: 0.82rem; color: var(--text-secondary);">Target: currently selected pad on the stencil</span>
                 <div style="display: flex; gap: 8px;">
-                    <button id="btnCancelPip" class="btn btn-ghost">Schließen</button>
-                    <button id="btnApplyPipAperture" class="btn btn-primary"><i class="ic ic-zap"></i> PiP-Apertur auf Schablone erzeugen</button>
+                    <button id="btnCancelPip" class="btn btn-ghost">Close</button>
+                    <button id="btnApplyPipAperture" class="btn btn-primary"><i class="ic ic-zap"></i> Create PiP Aperture on Stencil</button>
                 </div>
             </div>
         </div>
@@ -1329,36 +1333,36 @@
     <div id="analysisModal" class="modal hidden">
         <div class="modal-box analysis-modal">
             <div class="modal-header">
-                <h3><i class="ic ic-search"></i> Stencil-Analyse</h3>
+                <h3><i class="ic ic-search"></i> Stencil Analysis</h3>
                 <button id="btnCloseAnalysis" class="btn-close">&times;</button>
             </div>
             <div class="analysis-filters">
                 <select id="anStatus">
-                    <option value="issues">Nur Befunde</option>
-                    <option value="CRIT">Nur kritisch</option>
-                    <option value="all">Alle Öffnungen</option>
+                    <option value="issues">Findings Only</option>
+                    <option value="CRIT">Critical Only</option>
+                    <option value="all">All Apertures</option>
                 </select>
-                <input type="search" id="anSearch" placeholder="Bauteil, Package oder Befund…">
-                <label title="Paste-zu-Pad-Abdeckung außerhalb dieser Grenzen wird gemeldet">Abdeckung
+                <input type="search" id="anSearch" placeholder="Component, package or finding…">
+                <label title="Paste-to-pad coverage outside these limits is reported">Coverage
                     <input type="number" id="anCovMin" value="30" step="5" min="0">–<input type="number" id="anCovMax" value="150" step="5" min="0"> %</label>
                 <span id="anSummary" class="analysis-summary"></span>
             </div>
             <div class="analysis-table-wrap">
                 <table class="layer-table analysis-table">
                     <thead><tr>
-                        <th data-k="status">Status</th><th data-k="comp">Bauteil</th><th data-k="pin">Pin</th><th data-k="pkg">Package</th>
-                        <th data-k="ar" title="Area Ratio = Öffnungsfläche / Wandfläche">AR</th><th data-k="aspect" title="Aspect Ratio = kleinste Breite / Blechdicke">AsR</th>
-                        <th data-k="min_w">Min. Breite</th><th data-k="area">Fläche mm²</th><th data-k="volume">Volumen mm³</th>
-                        <th data-k="coverage" title="Öffnungsfläche / Padfläche (Kupfer, sonst Maske)">Abdeckung</th><th data-k="issues">Befunde</th>
+                        <th data-k="status">Status</th><th data-k="comp">Component</th><th data-k="pin">Pin</th><th data-k="pkg">Package</th>
+                        <th data-k="ar" title="Area Ratio = aperture area / wall area">AR</th><th data-k="aspect" title="Aspect Ratio = smallest width / stencil thickness">AsR</th>
+                        <th data-k="min_w">Min. Width</th><th data-k="area">Area mm²</th><th data-k="volume">Volume mm³</th>
+                        <th data-k="coverage" title="Aperture area / pad area (copper, otherwise mask)">Coverage</th><th data-k="issues">Findings</th>
                     </tr></thead>
                     <tbody id="anBody"></tbody>
                 </table>
             </div>
             <div class="modal-actions">
-                <span class="analysis-hint">Zeile anklicken: zum Pad springen · Spaltenkopf: sortieren</span>
-                <button id="btnAnSelect" class="btn btn-secondary" title="Alle gefilterten Öffnungen auf dem Board wählen und gemeinsam bearbeiten">Gefilterte auf dem Board wählen</button>
-                <button id="btnAnCsv" class="btn btn-secondary">CSV exportieren</button>
-                <button id="btnCloseAnalysis2" class="btn btn-ghost">Schließen</button>
+                <span class="analysis-hint">Click row: jump to pad · Column header: sort</span>
+                <button id="btnAnSelect" class="btn btn-secondary" title="Select all filtered apertures on the board and edit them together">Select Filtered on Board</button>
+                <button id="btnAnCsv" class="btn btn-secondary">Export CSV</button>
+                <button id="btnCloseAnalysis2" class="btn btn-ghost">Close</button>
             </div>
         </div>
     </div>
@@ -1367,20 +1371,20 @@
     <div id="bridgeModal" class="modal hidden">
         <div class="modal-box calc-modal-box" style="max-width: 680px;">
             <div class="modal-header">
-                <h3><i class="ic ic-microscope"></i> Schablonensteg-Prüfung (Web / Bridge DFM Check)</h3>
+                <h3><i class="ic ic-microscope"></i> Stencil Web Check (Web / Bridge DFM Check)</h3>
                 <button id="btnCloseBridgeModal" class="btn-close">&times;</button>
             </div>
-            <p class="modal-desc">Erkennt kritische Stegunterschreitungen benachbarter Aperturen zur Vermeidung von Laserschneidfehlern und Stegbruch:</p>
+            <p class="modal-desc">Detects webs between adjacent apertures that are below the minimum width, to avoid laser cutting errors and web breakage:</p>
 
             <div style="display: flex; gap: 12px; align-items: center; margin: 12px 0;">
-                <label style="font-size: 0.85rem; white-space: nowrap;">Mindest-Stegbreite:</label>
+                <label style="font-size: 0.85rem; white-space: nowrap;">Min. Web Width:</label>
                 <input type="number" id="inputMinBridgeVal" value="0.10" step="0.01" min="0.05" max="0.30" style="width: 80px; padding: 5px 8px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border); border-radius: 4px;">
                 <span style="font-size: 0.85rem; color: var(--text-secondary);">mm</span>
-                <button id="btnRunBridgeCheckNow" class="btn btn-sm btn-primary" style="margin-left: auto;">Prüfung starten</button>
+                <button id="btnRunBridgeCheckNow" class="btn btn-sm btn-primary" style="margin-left: auto;">Run Check</button>
             </div>
 
             <div id="bridgeResultsSummary" style="font-size: 0.85rem; padding: 8px 12px; border-radius: 6px; background: rgba(30,41,59,0.5); margin-bottom: 12px;">
-                Keine Prüfung durchgeführt.
+                No check performed.
             </div>
 
             <div id="bridgeViolationsContainer" style="max-height: 280px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px;">
@@ -1388,19 +1392,19 @@
                     <thead>
                         <tr>
                             <th style="padding: 6px 10px;">Status</th>
-                            <th style="padding: 6px 10px;">Abstand</th>
-                            <th style="padding: 6px 10px;">Aperturen / Packages</th>
-                            <th style="padding: 6px 10px; text-align: right;">Aktion</th>
+                            <th style="padding: 6px 10px;">Gap</th>
+                            <th style="padding: 6px 10px;">Apertures / Packages</th>
+                            <th style="padding: 6px 10px; text-align: right;">Action</th>
                         </tr>
                     </thead>
                     <tbody id="bridgeViolationsTableBody">
-                        <tr><td colspan="4" style="text-align:center; padding: 16px; color: var(--text-secondary);">Keine Stegunterschreitungen gefunden.</td></tr>
+                        <tr><td colspan="4" style="text-align:center; padding: 16px; color: var(--text-secondary);">No web violations found.</td></tr>
                     </tbody>
                 </table>
             </div>
 
             <div class="modal-actions" style="margin-top: 14px;">
-                <button id="btnCloseBridgeModalBtn" class="btn btn-ghost">Schließen</button>
+                <button id="btnCloseBridgeModalBtn" class="btn btn-ghost">Close</button>
             </div>
         </div>
     </div>
@@ -1418,32 +1422,32 @@
     <!-- Export-Dialog -->
     <div id="exportModal" class="modal hidden">
         <div class="modal-box export-box">
-            <h3><i class="ic ic-save"></i> Export für den Schablonenhersteller</h3>
+            <h3><i class="ic ic-save"></i> Export for Stencil Manufacturer</h3>
             <div id="exportForm" class="export-form">
-                <label>Zielordner</label>
+                <label>Target Folder</label>
                 <div class="row-flex">
-                    <input type="text" id="expDir" placeholder="Standard-Exportordner">
-                    <button id="btnExpPickDir" class="btn btn-sm btn-secondary desktop-only" title="Ordner wählen">…</button>
+                    <input type="text" id="expDir" placeholder="Default export folder">
+                    <button id="btnExpPickDir" class="btn btn-sm btn-secondary desktop-only" title="Select folder">…</button>
                 </div>
-                <label>Dateiname</label>
+                <label>File Name</label>
                 <div>
                     <input type="text" id="expPattern" spellcheck="false">
-                    <small class="hint">Platzhalter: {job} {side} {dicke} {datum}</small>
+                    <small class="hint">Placeholders: {job} {side} {dicke} {datum}</small>
                 </div>
-                <label>Seiten</label>
+                <label>Sides</label>
                 <select id="expSides">
                     <option value="top">TOP</option>
                     <option value="bot">BOT</option>
                     <option value="both">TOP + BOT</option>
                 </select>
-                <label>Dateien</label>
+                <label>Files</label>
                 <div class="exp-checks">
-                    <label><input type="checkbox" id="expZones"> Stufenzonen</label>
-                    <label><input type="checkbox" id="expOutline"> Platinenkontur</label>
-                    <label><input type="checkbox" id="expReport"> Prüfbericht</label>
-                    <label><input type="checkbox" id="expX2"> Gerber X2-Attribute</label>
+                    <label><input type="checkbox" id="expZones"> Step Zones</label>
+                    <label><input type="checkbox" id="expOutline"> Board Outline</label>
+                    <label><input type="checkbox" id="expReport"> Check Report</label>
+                    <label><input type="checkbox" id="expX2"> Gerber X2 Attributes</label>
                 </div>
-                <label>Vorschau</label>
+                <label>Preview</label>
                 <div id="expPreview" class="exp-preview"></div>
             </div>
             <div id="exportResult" class="hidden">
@@ -1451,10 +1455,10 @@
                 <div class="export-file-list" id="exportFileList"></div>
             </div>
             <div class="modal-actions choice-actions">
-                <button id="btnExpOpenDir" class="btn btn-secondary hidden"><i class="ic ic-folder"></i> Ordner öffnen</button>
-                <button id="btnExpOpenReport" class="btn btn-secondary hidden"><i class="ic ic-file"></i> Bericht öffnen</button>
-                <button id="btnCloseExportModal" class="btn btn-ghost">Schließen</button>
-                <button id="btnExpRun" class="btn btn-primary">Exportieren</button>
+                <button id="btnExpOpenDir" class="btn btn-secondary hidden"><i class="ic ic-folder"></i> Open Folder</button>
+                <button id="btnExpOpenReport" class="btn btn-secondary hidden"><i class="ic ic-file"></i> Open Report</button>
+                <button id="btnCloseExportModal" class="btn btn-ghost">Close</button>
+                <button id="btnExpRun" class="btn btn-primary">Export</button>
             </div>
         </div>
     </div>

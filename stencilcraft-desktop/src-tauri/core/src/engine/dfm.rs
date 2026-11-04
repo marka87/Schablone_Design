@@ -172,7 +172,7 @@ impl StencilEngine {
         // Etwas mehr als der geforderte Abstand, damit keine Kantenwarnung entsteht
         let (along, across) = (self.squeegee_clearance + 0.05, self.transverse_clearance + 0.05);
         let (mx, my) = if self.squeegee_dir == "Y" { (across, along) } else { (along, across) };
-        Some(self.add_zone_ext(b[0] - mx, b[1] - my, b[2] + mx, b[3] + my, thickness, &format!("Stufe {refdes}"), true))
+        Some(self.add_zone_ext(b[0] - mx, b[1] - my, b[2] + mx, b[3] + my, thickness, &format!("Step {refdes}"), true))
     }
 
     /// IPC-7525 Kennzahlen einer Apertur unter ihrer effektiven Schablonendicke.
@@ -278,9 +278,9 @@ impl StencilEngine {
             if status == "OK" {
                 status = "WARN";
             }
-            format!("{balls:.0}-Ball-Regel: {:.3}mm < {:.3}mm ({})", min_ap_dim, min_required_w, self.paste_type.to_uppercase())
+            format!("{balls:.0}-Ball Rule: {:.3}mm < {:.3}mm ({})", min_ap_dim, min_required_w, self.paste_type.to_uppercase())
         } else {
-            format!("{balls:.0}-Ball-Regel OK ({:.3}mm >= {:.3}mm)", min_ap_dim, min_required_w)
+            format!("{balls:.0}-Ball Rule OK ({:.3}mm >= {:.3}mm)", min_ap_dim, min_required_w)
         };
 
         let boxes = Self::opening_boxes(item);
@@ -304,9 +304,9 @@ impl StencilEngine {
             grain_msg,
             min_required_w: r3(min_required_w),
             via_warn: via.is_some(),
-            via_msg: via.map_or_else(String::new, |d| format!("Bohrung ⌀{:.2} mm in der Öffnung – Lot läuft ab (Via füllen/abdecken oder Öffnung freistellen)", d)),
+            via_msg: via.map_or_else(String::new, |d| format!("Drill ⌀{:.2} mm in the aperture – solder drains away (fill/cover the via or clear the aperture)", d)),
             squeegee_warn: slot.is_some(),
-            squeegee_msg: slot.map_or_else(String::new, |(n, l)| format!("Schmale Öffnung {n:.3} × {l:.3} mm quer zur Rakel ({}) – Füllung prüfen", self.squeegee_dir)),
+            squeegee_msg: slot.map_or_else(String::new, |(n, l)| format!("Narrow aperture {n:.3} × {l:.3} mm across the squeegee ({}) – check filling", self.squeegee_dir)),
         }
     }
 
@@ -465,7 +465,7 @@ impl StencilEngine {
                             severity: severity.into(),
                             p1: (r3(p1.0), r3(p1.1)),
                             p2: (r3(p2.0), r3(p2.1)),
-                            msg: format!("Stegbreite {:.3} mm < {:.3} mm ({})", dist, threshold, severity),
+                            msg: format!("Web width {:.3} mm < {:.3} mm ({})", dist, threshold, severity),
                         });
                     }
                 }

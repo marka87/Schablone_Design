@@ -131,7 +131,7 @@ impl StencilEngine {
     /// Exportiert gemäß Optionen alle gewünschten Seiten; aktive Seite und Lagen-Sichtbarkeit bleiben erhalten.
     pub fn export_all(&mut self, opts: &ExportSettings) -> Result<Value, String> {
         let dir = if opts.target_dir.trim().is_empty() { self.export_dir() } else { PathBuf::from(opts.target_dir.trim()) };
-        std::fs::create_dir_all(&dir).map_err(|e| format!("Zielordner nicht anlegbar ({}): {e}", dir.display()))?;
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create target folder ({}): {e}", dir.display()))?;
         let sides: Vec<String> = match opts.sides.as_str() {
             // Eine Ansicht für beide Seiten: "active" (alte Einstellung) exportiert ebenfalls alles Geladene
             "top" => vec!["top".into()],
@@ -139,7 +139,7 @@ impl StencilEngine {
             _ => self.loaded_sides(),
         };
         if sides.is_empty() {
-            return Err("Keine Seite mit Pastendaten geladen".into());
+            return Err("No side with paste data loaded".into());
         }
         let job = self.job_name();
         let date = today();
@@ -236,7 +236,7 @@ impl StencilEngine {
             "files": files,
             "report_file": report_file,
             "stencil_file": stencil_files.first(),
-            "message": format!("{} Datei(en) exportiert nach {}", files.len(), dir.display()),
+            "message": format!("{} file(s) exported to {}", files.len(), dir.display()),
         }))
     }
 }

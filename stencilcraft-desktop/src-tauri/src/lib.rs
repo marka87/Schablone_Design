@@ -39,39 +39,39 @@ struct NativeDialogs;
 impl Dialogs for NativeDialogs {
     fn pick_files(&self) -> Option<Vec<PathBuf>> {
         rfd::FileDialog::new()
-            .set_title("ODB++ / Gerber Datensatz öffnen")
+            .set_title("Open ODB++ / Gerber Dataset")
             .add_filter("ODB++ / Gerber", &["zip", "tgz", "gz", "tar", "ger", "gbr", "pho", "art", "gtp", "gbp", "gts", "gbs", "gtl", "gbl", "gko"])
-            .add_filter("Alle Dateien", &["*"])
+            .add_filter("All Files", &["*"])
             .pick_files()
     }
     fn pick_folder(&self) -> Option<PathBuf> {
-        rfd::FileDialog::new().set_title("ODB++ / Gerber Ordner öffnen").pick_folder()
+        rfd::FileDialog::new().set_title("Open ODB++ / Gerber Folder").pick_folder()
     }
     fn pick_project(&self) -> Option<PathBuf> {
         rfd::FileDialog::new()
-            .set_title("StencilCraft-Projekt öffnen")
-            .add_filter("StencilCraft-Projekt", &["stencilproj"])
+            .set_title("Open StencilCraft Project")
+            .add_filter("StencilCraft Project", &["stencilproj"])
             .pick_file()
     }
     fn pick_save_project(&self, default_name: &str) -> Option<PathBuf> {
         rfd::FileDialog::new()
-            .set_title("StencilCraft-Projekt speichern")
-            .add_filter("StencilCraft-Projekt", &["stencilproj"])
+            .set_title("Save StencilCraft Project")
+            .add_filter("StencilCraft Project", &["stencilproj"])
             .set_file_name(format!("{default_name}.stencilproj"))
             .save_file()
     }
     fn pick_library(&self) -> Option<PathBuf> {
-        rfd::FileDialog::new().set_title("Bibliothek vom PC laden").add_filter("StencilCraft-Bibliothek", &["json"]).pick_file()
+        rfd::FileDialog::new().set_title("Load Library from PC").add_filter("StencilCraft Library", &["json"]).pick_file()
     }
     fn pick_rule_tree(&self) -> Option<PathBuf> {
         rfd::FileDialog::new()
-            .set_title("PCB-Investigator-Kundenbibliothek importieren")
+            .set_title("Import PCB-Investigator Customer Library")
             .add_filter("PCB-I Rule Tree", &["xml"])
             .pick_file()
     }
     fn pick_save_rule_tree(&self, default_name: &str) -> Option<PathBuf> {
         rfd::FileDialog::new()
-            .set_title("Als PCB-Investigator-Kundenbibliothek exportieren")
+            .set_title("Export as PCB-Investigator Customer Library")
             .add_filter("PCB-I Rule Tree", &["xml"])
             .set_file_name(format!("{default_name}.xml"))
             .save_file()
@@ -96,8 +96,8 @@ async fn api_request(app: tauri::AppHandle, window: tauri::WebviewWindow, method
                 .downcast_ref::<String>()
                 .cloned()
                 .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
-                .unwrap_or_else(|| "Unbekannter Fehler".into());
-            (500, serde_json::json!({"status": "error", "message": format!("Interner Fehler: {msg}")}))
+                .unwrap_or_else(|| "Unknown error".into());
+            (500, serde_json::json!({"status": "error", "message": format!("Internal error: {msg}")}))
         });
         // Andere Fenster über Änderungen informieren (sie laden ihre Ansicht nach)
         let method_uc = method.to_uppercase();
@@ -115,7 +115,7 @@ async fn api_request(app: tauri::AppHandle, window: tauri::WebviewWindow, method
 /// Async, weil das Erzeugen von Fenstern in synchronen Commands unter Windows blockieren kann.
 #[tauri::command]
 async fn open_view_window(app: tauri::AppHandle, view: String) -> Result<(), String> {
-    let label = view_label(&view).ok_or("Unbekannte Ansicht")?;
+    let label = view_label(&view).ok_or("Unknown view")?;
     if let Some(w) = app.get_webview_window(label) {
         let _ = w.unminimize();
         let _ = w.set_focus();
@@ -161,12 +161,12 @@ fn get_ui_zoom(app: tauri::AppHandle) -> f64 {
 fn open_path(path: String) -> Result<(), String> {
     let p = std::path::Path::new(&path);
     if !p.exists() {
-        return Err(format!("Nicht gefunden: {path}"));
+        return Err(format!("Not found: {path}"));
     }
     // Nur Ordner und Exportdateien öffnen, nie Programme (Schutz, falls fremdes Skript in die Oberfläche gelangt)
     let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
     if p.is_file() && !matches!(ext.as_str(), "html" | "htm" | "gbr" | "ger" | "xml" | "json" | "txt" | "pdf" | "svg") {
-        return Err(format!("Dateityp nicht erlaubt: {path}"));
+        return Err(format!("File type not allowed: {path}"));
     }
     std::process::Command::new("explorer").arg(p).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
@@ -181,7 +181,7 @@ fn confirm_close(app: tauri::AppHandle) {
 #[tauri::command]
 fn broadcast(app: tauri::AppHandle, event: String, payload: Value) -> Result<(), String> {
     if !matches!(event.as_str(), "pkg-focus" | "open-package") {
-        return Err("Ereignis nicht erlaubt".into());
+        return Err("Event not allowed".into());
     }
     app.emit(&event, payload).map_err(|e| e.to_string())
 }
@@ -191,16 +191,16 @@ fn broadcast(app: tauri::AppHandle, event: String, payload: Value) -> Result<(),
 #[tauri::command]
 fn stage_upload(request: tauri::ipc::Request<'_>) -> Result<String, String> {
     let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
-        return Err("Erwartet binäre Dateidaten".into());
+        return Err("Expected binary file data".into());
     };
     let header = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).map(api::url_decode);
     let name = header("x-file-name").unwrap_or_else(|| "upload.bin".into());
     let name = std::path::Path::new(&name).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "upload.bin".into());
     let batch: String = header("x-batch").unwrap_or_default().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     let dir = upload_root().join(if batch.is_empty() { "default".into() } else { batch });
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Upload-Ordner nicht anlegbar: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create upload folder: {e}"))?;
     let path = dir.join(name);
-    std::fs::write(&path, data).map_err(|e| format!("Upload fehlgeschlagen: {e}"))?;
+    std::fs::write(&path, data).map_err(|e| format!("Upload failed: {e}"))?;
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -249,5 +249,5 @@ pub fn run() {
             open_path
         ])
         .run(tauri::generate_context!())
-        .expect("Fehler beim Starten der SMT StencilCraft Desktop Anwendung");
+        .expect("Error starting the SMT StencilCraft Desktop application");
 }

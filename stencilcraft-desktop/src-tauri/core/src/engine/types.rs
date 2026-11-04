@@ -634,6 +634,12 @@ pub struct PackageTemplate {
     /// Baumgruppe wie PCB Investigator: "SMD", "THT", "Other", "Fiducial"
     #[serde(default = "default_group")]
     pub group: String,
+    /// Freihand im Editor: Pads ohne Paste (Kupfermitte im Package-Rahmen)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignored_pads: Vec<Pt>,
+    /// Freihand im Editor: selbst skizzierte Öffnungen (Eckpunkte im Package-Rahmen)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub freehand: Vec<Vec<Pt>>,
 }
 
 fn default_group() -> String {
@@ -655,7 +661,30 @@ impl PackageTemplate {
             outline: Outline { w: 2.0, h: 1.25 },
             pad_overrides: BTreeMap::new(),
             group: "SMD".into(),
+            ignored_pads: Vec::new(),
+            freehand: Vec::new(),
         }
+    }
+
+    /// Ist das Pad mit Kupfermitte (x, y) im Package-Rahmen ausgeblendet?
+    pub fn is_ignored(&self, x: f64, y: f64, tol: f64) -> bool {
+        self.ignored_pads.iter().any(|p| (p.0 - x).hypot(p.1 - y) <= tol)
+    }
+
+    pub fn freehand_json(&self) -> Value {
+        serde_json::json!({"ignored": self.ignored_pads, "shapes": self.freehand})
+    }
+
+    /// Freihand aus `{"ignored": [[x,y]..], "shapes": [[[x,y]..]..]}`; Formen mit < 3 Punkten entfallen.
+    pub fn set_freehand(&mut self, v: &Value) {
+        let pt = |p: &Value| Some((p.get(0)?.as_f64()?, p.get(1)?.as_f64()?));
+        let list = |k: &str| v.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
+        self.ignored_pads = list("ignored").iter().filter_map(pt).collect();
+        self.freehand = list("shapes")
+            .iter()
+            .filter_map(|s| Some(s.as_array()?.iter().filter_map(pt).collect::<Vec<Pt>>()))
+            .filter(|s| s.len() >= 3)
+            .collect();
     }
 
     pub fn overrides_json(&self) -> Value {

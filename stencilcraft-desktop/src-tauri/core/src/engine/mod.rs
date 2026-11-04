@@ -99,7 +99,7 @@ pub struct StencilEngine {
     pub data_root: PathBuf,
 }
 
-pub const NO_DATASET: &str = "Kein Datensatz geladen";
+pub const NO_DATASET: &str = "No dataset loaded";
 
 /// Seitenspezifischer Arbeitsstand (für die jeweils nicht aktive Seite TOP/BOT).
 #[derive(Debug, Clone, Default)]
@@ -377,7 +377,7 @@ impl StencilEngine {
                     let count: usize = if generated { aps.iter().map(|a| a.custom_slices.as_ref().map_or(1, Vec::len)).sum() } else { 0 };
                     v["name"] = json!(format!("{s}_stencil"));
                     v["count"] = json!(count);
-                    v["info"] = json!(if generated { format!("{:.0} µm", t * 1000.0) } else { "noch nicht generiert".into() });
+                    v["info"] = json!(if generated { format!("{:.0} µm", t * 1000.0) } else { "not generated yet".into() });
                 }
                 v
             })
@@ -810,7 +810,7 @@ impl StencilEngine {
         } else if step {
             Self::auto_zone_name(n, thickness, is_step_down)
         } else {
-            format!("Regelzone {n}")
+            format!("Rule Zone {n}")
         };
         let z = StencilZone {
             id: format!("zone_{n}"),
@@ -896,7 +896,75 @@ impl StencilEngine {
             self.apertures[id].custom_slices = slices;
         }
         self.clip_overlapping_pads(&ids);
+        self.apply_freehand(&ids);
         n
+    }
+
+    /// Freihand der Packages auf die Platine: ausgeblendete Pads ohne Paste, Skizzen an das passende Pad jeder Instanz.
+    pub(crate) fn apply_freehand(&mut self, ids: &[usize]) {
+        use std::collections::HashMap;
+        let mut by_comp: HashMap<String, (String, Vec<usize>)> = HashMap::new();
+        for &id in ids {
+            let a = &self.apertures[id];
+            let pkg = self.resolve_alias(&a.package_name);
+            if a.component_id.is_empty() || !self.packages.get(&pkg).is_some_and(|p| !p.ignored_pads.is_empty() || !p.freehand.is_empty()) {
+                continue;
+            }
+            by_comp.entry(a.component_id.clone()).or_insert_with(|| (pkg, Vec::new())).1.push(id);
+        }
+        let mut tpl_cache: HashMap<String, Vec<(f64, f64, i64, String)>> = HashMap::new();
+        let mut set: Vec<(usize, Vec<Slice>)> = Vec::new();
+        let mut add: Vec<(usize, Slice)> = Vec::new();
+        for (refdes, (pkg_name, mine)) in &by_comp {
+            let Some(c) = self.components.iter().find(|c| &c.refdes == refdes) else { continue };
+            let pkg = &self.packages[pkg_name];
+            let mirror = c.side.eq_ignore_ascii_case("BOT");
+            let tpl_full = tpl_cache.entry(pkg_name.clone()).or_insert_with(|| self.template_pins(pkg_name)).clone();
+            let tpl: Vec<(f64, f64)> = tpl_full.iter().map(|p| (p.0, p.1)).collect();
+            let off = offset_between(&tpl, &self.instance_pads(c, mirror));
+            // alle Öffnungen der Instanz mit Kupfermitte im Vorlagen-Rahmen
+            let inst: Vec<(usize, (f64, f64))> = self
+                .apertures
+                .iter()
+                .filter(|a| &a.component_id == refdes)
+                .map(|a| {
+                    let (x, y) = a.copper_ref.as_ref().map_or((a.cx, a.cy), |k| ((k.x0 + k.x1) / 2.0, (k.y0 + k.y1) / 2.0));
+                    let q = frame_to_pkg((x - c.cx, y - c.cy), c.rotation, mirror);
+                    (a.id, (q.0 - off.0, q.1 - off.1))
+                })
+                .collect();
+            for &(id, q) in &inst {
+                if mine.contains(&id) && !self.apertures[id].is_manually_overridden && pkg.is_ignored(q.0, q.1, 0.15) {
+                    set.push((id, Vec::new()));
+                }
+            }
+            let qs: Vec<(f64, f64, f64, f64)> = inst.iter().map(|&(_, q)| (q.0, q.1, 0.0, 0.0)).collect();
+            let tpl_boxes: Vec<(f64, f64, f64, f64)> = tpl.iter().map(|&(x, y)| (x, y, 0.0, 0.0)).collect();
+            for s in &pkg.freehand {
+                let Some(t) = nearest_pad(&tpl_boxes, geometry::centroid(s)) else { continue };
+                let Some(k) = nearest_pad(&qs, tpl[t]) else { continue };
+                let id = inst[k].0;
+                if !mine.contains(&id) || self.apertures[id].is_manually_overridden {
+                    continue; // nicht neu berechnet: Skizze ist dort schon vorhanden
+                }
+                let to_board = |p: &Pt| {
+                    let b = rules::pkg_to_frame((p.0 + off.0, p.1 + off.1), c.rotation, mirror);
+                    (c.cx + b.0, c.cy + b.1)
+                };
+                for g in self.freehand_geometry(pkg, s, Some(tpl_full[t].2), &tpl_full[t].3) {
+                    let pkg_pts = g.pts.clone().unwrap_or_else(|| vec![(g.cx - g.w / 2.0, g.cy - g.h / 2.0), (g.cx + g.w / 2.0, g.cy - g.h / 2.0), (g.cx + g.w / 2.0, g.cy + g.h / 2.0), (g.cx - g.w / 2.0, g.cy + g.h / 2.0)]);
+                    let pts: Vec<Pt> = pkg_pts.iter().map(to_board).collect();
+                    add.push((id, freehand_slice(&pts, Some(self.apertures[id].pin_number))));
+                }
+            }
+        }
+        for (id, s) in set {
+            self.apertures[id].custom_slices = Some(s);
+        }
+        for (id, s) in add {
+            // shortcut: Pad ohne Regelgeometrie (None = Kundenpaste) verliert hier die Kundenpaste; bei Bedarf Original als Slice übernehmen
+            self.apertures[id].custom_slices.get_or_insert_with(Vec::new).push(s);
+        }
     }
 
     /// Paste von Pads, die teilweise auf einem größeren Pad desselben Bauteils liegen, außerhalb davon abschneiden.
@@ -1090,8 +1158,54 @@ impl StencilEngine {
 
     /// Pads, wie der Editor sie zeichnet (Vorschau, Kupfermitten).
     fn template_pads(&self, pkg: &str) -> Vec<(f64, f64)> {
+        self.template_pins(pkg).into_iter().map(|p| (p.0, p.1)).collect()
+    }
+
+    /// Vorschau-Pads mit Pin und Richtung: (cx, cy, pin, facing).
+    fn template_pins(&self, pkg: &str) -> Vec<(f64, f64, i64, String)> {
         let v = self.get_package_preview_data(pkg);
-        v["pads"].as_array().map(|a| a.iter().filter_map(|p| Some((p["cx"].as_f64()?, p["cy"].as_f64()?))).collect()).unwrap_or_default()
+        v["pads"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|p| Some((p["cx"].as_f64()?, p["cy"].as_f64()?, p["pin"].as_i64().unwrap_or(0), p["facing"].as_str().unwrap_or("center").to_string()))).collect())
+            .unwrap_or_default()
+    }
+
+    /// Öffnungen einer Skizze im Package-Rahmen nach der Regel des Pins, an dem sie hängt:
+    /// Rechteck wie ein Pad (Eckenradius, Undersize, Teilung …), Vieleck mit Undersize (nur konvex) und Eckenradius.
+    /// Liefert die Regel nichts (z. B. Ignore), bleibt die Skizze wie gezeichnet.
+    pub(crate) fn freehand_geometry(&self, pkg: &PackageTemplate, s: &[Pt], pin: Option<i64>, facing: &str) -> Vec<Slice> {
+        let (base, _) = self.package_effective_rule(pkg);
+        let rule = match pin.and_then(|p| pkg.pad_overrides.get(&p)) {
+            Some(ov) => resolve_pin_rule(&base, ov),
+            None => base,
+        };
+        let (x0, y0, x1, y1) = geometry::bounds(s);
+        let on = |v: f64, a: f64, b: f64| (v - a).abs() < 1e-6 || (v - b).abs() < 1e-6;
+        let is_rect = s.len() == 4 && s.iter().all(|p| on(p.0, x0, x1) && on(p.1, y0, y1));
+        let tag = |mut g: Vec<Slice>| {
+            for x in g.iter_mut() {
+                (x.kind, x.pin) = (Some("freehand".into()), pin);
+            }
+            g
+        };
+        if is_rect {
+            let ctx = PadCtx { min_bridge: self.min_bridge_width, thickness: self.base_thickness, pin_count: pkg.pads_relative.len(), ..PadCtx::new(x1 - x0, y1 - y0, (x0 + x1) / 2.0, (y0 + y1) / 2.0, facing) };
+            if let Some(g) = generate_rule_aperture_geometry(&ctx, &rule).or_else(|| take_existing_rounded(&rule, true, ctx.cx, ctx.cy, ctx.w, ctx.h)).filter(|g| !g.is_empty()) {
+                return tag(g);
+            }
+        }
+        let mut pts = s.to_vec();
+        let us = rule.undersize_w.max(rule.undersize_h);
+        if !is_rect && us > 0.0 && geometry::convex_hull(&pts).len() == pts.len() {
+            let inset = geometry::inset_convex(&pts, us);
+            if inset.len() >= 3 {
+                pts = inset;
+            }
+        }
+        if rule.corner_radius > 0.0 {
+            pts = geometry::fillet_polygon(&pts, rule.corner_radius, 6);
+        }
+        vec![freehand_slice(&pts, pin)]
     }
 
     /// Versatz Instanz − Vorlage im Package-Rahmen: gleiche Padzahl → Schwerpunkte, sonst Median der nächsten Paare.
@@ -1156,6 +1270,9 @@ impl StencilEngine {
         let rel: Vec<(f64, f64, f64, f64)> = pads.iter().map(|p| (p.cx, p.cy, p.w, p.h)).collect();
         let mut paste = Vec::new();
         for (i, p) in pads.iter().enumerate() {
+            if pkg.is_ignored(p.cx, p.cy, 0.01) {
+                continue;
+            }
             let (rule, pw, ph) = match pkg.pad_overrides.get(&p.pin) {
                 Some(ov) => (resolve_pin_rule(&eff, ov), ov.get("w").and_then(val_f64).unwrap_or(p.w), ov.get("h").and_then(val_f64).unwrap_or(p.h)),
                 None => (eff.clone(), p.w, p.h),
@@ -1181,7 +1298,12 @@ impl StencilEngine {
                 paste.extend(g);
             }
         }
+        for s in &pkg.freehand {
+            let near = nearest_pad(&rel, geometry::centroid(s)).map(|i| &pads[i]);
+            paste.extend(self.freehand_geometry(pkg, s, near.map(|p| p.pin), near.map_or("center", |p| p.facing.as_str())));
+        }
         json!({
+            "freehand": pkg.freehand_json(),
             "name": pkg.name,
             "pin_count": pkg.pin_count,
             "pitch": pkg.pitch,
@@ -1243,8 +1365,8 @@ impl StencilEngine {
     /// Liefert Inhalt und Kundenname (aus der Datei, sonst Dateiname).
     pub fn read_library(&self, customer: &str, path: Option<&Path>) -> Result<(Value, String), String> {
         let file = path.map(Path::to_path_buf).unwrap_or_else(|| self.libraries_dir().join(format!("{}.json", sanitize_file_name(customer))));
-        let text = std::fs::read_to_string(&file).map_err(|e| format!("Bibliothek nicht lesbar ({}): {e}", file.display()))?;
-        let data: Value = serde_json::from_str(&text).map_err(|_| format!("Bibliothek {} ist kein gültiges JSON", file.display()))?;
+        let text = std::fs::read_to_string(&file).map_err(|e| format!("Library not readable ({}): {e}", file.display()))?;
+        let data: Value = serde_json::from_str(&text).map_err(|_| format!("Library {} is not valid JSON", file.display()))?;
         let fallback = path.and_then(|p| p.file_stem()).and_then(|s| s.to_str()).unwrap_or(customer);
         let name = data.get("customer").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).unwrap_or(fallback).to_string();
         Ok((data, name))
@@ -1257,7 +1379,7 @@ impl StencilEngine {
         let lib_pkgs = data.get("packages").and_then(Value::as_object);
         let lib_pins = data.get("pin_overrides").and_then(Value::as_object);
         let lookup = |m: Option<&Map<String, Value>>, name: &str| m.and_then(|m| m.iter().find(|(k, _)| self.resolve_alias(k) == name).map(|(_, v)| v.clone()));
-        let pins_text = |ov: &BTreeMap<i64, Map<String, Value>>| if ov.is_empty() { String::new() } else { format!(" · {} Pin-Regel(n)", ov.len()) };
+        let pins_text = |ov: &BTreeMap<i64, Map<String, Value>>| if ov.is_empty() { String::new() } else { format!(" · {} pin rule(s)", ov.len()) };
         let mut out = Vec::new();
         for (name, pkg) in &self.packages {
             if pkg.group == "Library" {
@@ -1271,12 +1393,18 @@ impl StencilEngine {
             if let Some(Value::Object(ov)) = lookup(lib_pins, name) {
                 pins = ov.iter().filter_map(|(k, v)| Some((k.parse::<i64>().ok()?, v.as_object()?.clone()))).collect();
             }
-            if rule.to_json() != pkg.rule.to_json() || pins != pkg.pad_overrides {
-                let txt = |r: &PackageRule, ov: &BTreeMap<i64, Map<String, Value>>| {
-                    let base = if r.rule_type == "inherit" { "Inherit (Gruppenregel)".to_string() } else { report::rule_summary(r) };
-                    format!("{base}{}", pins_text(ov))
+            let mut fh = if switching { PackageTemplate::new(name, 0, 0.0, 0.0, 0.0) } else { pkg.clone() };
+            if let Some(v) = lookup(data.get("freehand").and_then(Value::as_object), name) {
+                fh.set_freehand(&v);
+            }
+            let fh_changed = fh.freehand_json() != pkg.freehand_json();
+            if rule.to_json() != pkg.rule.to_json() || pins != pkg.pad_overrides || fh_changed {
+                let txt = |r: &PackageRule, ov: &BTreeMap<i64, Map<String, Value>>, f: &PackageTemplate| {
+                    let base = if r.rule_type == "inherit" { "Inherit (group rule)".to_string() } else { report::rule_summary(r) };
+                    let free = if f.ignored_pads.is_empty() && f.freehand.is_empty() { String::new() } else { format!(" · Freehand ({} off, {} sketch(es))", f.ignored_pads.len(), f.freehand.len()) };
+                    format!("{base}{}{free}", pins_text(ov))
                 };
-                out.push(json!({"key": name, "label": name, "current": txt(&pkg.rule, &pkg.pad_overrides), "library": txt(&rule, &pins)}));
+                out.push(json!({"key": name, "label": name, "current": txt(&pkg.rule, &pkg.pad_overrides, pkg), "library": txt(&rule, &pins, &fh)}));
             }
         }
         let defaults = rulesets::default_group_rules();
@@ -1287,7 +1415,7 @@ impl StencilEngine {
                 next.apply_map(r);
             }
             if next.to_json() != cur.to_json() {
-                out.push(json!({"key": format!("group:{g}"), "label": format!("Gruppe {}", rulesets::group_label(g)), "current": report::rule_summary(cur), "library": report::rule_summary(&next)}));
+                out.push(json!({"key": format!("group:{g}"), "label": format!("Group {}", rulesets::group_label(g)), "current": report::rule_summary(cur), "library": report::rule_summary(&next)}));
             }
         }
         out
@@ -1295,14 +1423,15 @@ impl StencilEngine {
 
     /// Bibliothek anwenden; Einträge in `keep` (Package-Name bzw. "group:<Gruppe>") behalten den jetzigen Stand.
     pub fn apply_library_keep(&mut self, data: &Value, customer: &str, keep: &[String]) {
-        let saved_pkgs: Vec<(String, PackageRule, BTreeMap<i64, Map<String, Value>>)> =
-            keep.iter().filter_map(|k| self.packages.get(k).map(|p| (k.clone(), p.rule.clone(), p.pad_overrides.clone()))).collect();
+        let saved_pkgs: Vec<(String, PackageRule, BTreeMap<i64, Map<String, Value>>, Value)> =
+            keep.iter().filter_map(|k| self.packages.get(k).map(|p| (k.clone(), p.rule.clone(), p.pad_overrides.clone(), p.freehand_json()))).collect();
         let saved_groups: Vec<(String, PackageRule)> =
             keep.iter().filter_map(|k| k.strip_prefix("group:")).filter_map(|g| self.group_rules.get(g).map(|r| (g.to_string(), r.clone()))).collect();
         self.apply_library(data, customer);
-        for (k, r, ov) in saved_pkgs {
+        for (k, r, ov, fh) in saved_pkgs {
             if let Some(p) = self.packages.get_mut(&k) {
                 (p.rule, p.pad_overrides) = (r, ov);
+                p.set_freehand(&fh);
             }
         }
         for (g, r) in saved_groups {
@@ -1318,6 +1447,7 @@ impl StencilEngine {
             for p in self.packages.values_mut().filter(|p| p.group != "Library") {
                 p.rule = PackageRule::with("inherit", "Inherit");
                 p.pad_overrides.clear();
+                (p.ignored_pads, p.freehand) = (Vec::new(), Vec::new());
             }
             self.package_aliases.clear();
             self.group_rules = rulesets::default_group_rules();
@@ -1340,6 +1470,14 @@ impl StencilEngine {
                     if let (Ok(pin), Some(m)) = (pin.parse::<i64>(), m.as_object()) {
                         pkg.pad_overrides.insert(pin, m.clone());
                     }
+                }
+            }
+        }
+        if let Some(fh) = data.get("freehand").and_then(|v| v.as_object()) {
+            for (name, v) in fh {
+                let real = self.resolve_alias(name);
+                if let Some(pkg) = self.packages.get_mut(&real) {
+                    pkg.set_freehand(v);
                 }
             }
         }
@@ -1372,29 +1510,37 @@ impl StencilEngine {
 
     pub fn save_customer_library(&mut self, customer: &str) -> Result<String, String> {
         let dir = self.libraries_dir();
-        std::fs::create_dir_all(&dir).map_err(|e| format!("Bibliotheksordner nicht anlegbar: {e}"))?;
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create library folder: {e}"))?;
         let name = sanitize_file_name(customer);
         if name.is_empty() {
-            return Err("Kundenname darf nicht leer sein".into());
+            return Err("Customer name must not be empty".into());
         }
         let file = dir.join(format!("{name}.json"));
         // Vorhandene Einträge behalten: die Bibliothek enthält auch Packages anderer Jobs dieses Kunden
         // Unlesbare Bibliothek nicht überschreiben, sonst gingen die Regeln aller anderen Jobs verloren
         let old: Value = match std::fs::read_to_string(&file) {
             Ok(t) => serde_json::from_str(t.trim_start_matches('\u{feff}'))
-                .map_err(|e| format!("Bibliothek {} ist beschädigt und wird nicht überschrieben ({e}). Bitte Datei prüfen.", file.display()))?,
+                .map_err(|e| format!("Library {} is corrupt and will not be overwritten ({e}). Please check the file.", file.display()))?,
             Err(_) => Value::Null,
         };
         let obj = |k: &str| old.get(k).and_then(|v| v.as_object()).cloned().unwrap_or_default();
         let mut packages = obj("packages");
         let mut pins = obj("pin_overrides");
         let mut aliases = obj("aliases");
-        for (n, p) in self.packages.iter().filter(|(_, p)| p.category != "Other") {
+        let mut freehand = obj("freehand");
+        // "Other" nur, wenn bearbeitet (sonst gingen Regeln z. B. von TPSM365R6 beim Speichern verloren)
+        let edited = |p: &PackageTemplate| p.rule.rule_type != "inherit" || !p.pad_overrides.is_empty() || !p.ignored_pads.is_empty() || !p.freehand.is_empty();
+        for (n, p) in self.packages.iter().filter(|(_, p)| p.category != "Other" || edited(p)) {
             packages.insert(n.clone(), p.rule.to_json());
             if p.pad_overrides.is_empty() {
                 pins.remove(n);
             } else {
                 pins.insert(n.clone(), p.overrides_json());
+            }
+            if p.ignored_pads.is_empty() && p.freehand.is_empty() {
+                freehand.remove(n);
+            } else {
+                freehand.insert(n.clone(), p.freehand_json());
             }
         }
         for (k, v) in &self.package_aliases {
@@ -1405,6 +1551,7 @@ impl StencilEngine {
             "version": "1.2",
             "packages": packages,
             "pin_overrides": pins,
+            "freehand": freehand,
             "groups": self.group_rules,
             "aliases": aliases,
         });
@@ -1437,9 +1584,9 @@ impl StencilEngine {
 
 fn write_file(path: &Path, content: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("Konnte Zielverzeichnis nicht erstellen: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("Could not create target directory: {e}"))?;
     }
-    std::fs::write(path, content).map_err(|e| format!("Fehler beim Schreiben von {}: {e}", path.display()))
+    std::fs::write(path, content).map_err(|e| format!("Error writing {}: {e}", path.display()))
 }
 
 /// Liegt eine Pad-Instanz gegenüber dem Template um 90° gedreht? (Vergleich der Ausrichtung,
@@ -1473,6 +1620,17 @@ fn pad_contains(p: &PadRel, (x, y, w, h): (f64, f64, f64, f64)) -> bool {
 }
 
 /// Versatz b − a zweier Padlisten: gleiche Anzahl → Schwerpunktdifferenz, sonst Median der nächsten Paare (a → b).
+/// Index des Pads (cx, cy, w, h), dessen Mitte `p` am nächsten liegt.
+fn nearest_pad(pads: &[(f64, f64, f64, f64)], p: Pt) -> Option<usize> {
+    (0..pads.len()).min_by(|&a, &b| (pads[a].0 - p.0).hypot(pads[a].1 - p.1).total_cmp(&(pads[b].0 - p.0).hypot(pads[b].1 - p.1)))
+}
+
+/// Skizzierte Öffnung als Polygon-Slice.
+fn freehand_slice(pts: &[Pt], pin: Option<i64>) -> Slice {
+    let (x0, y0, x1, y1) = geometry::bounds(pts);
+    Slice { cx: r4((x0 + x1) / 2.0), cy: r4((y0 + y1) / 2.0), w: r4(x1 - x0), h: r4(y1 - y0), shape: Some("polygon".into()), kind: Some("freehand".into()), pts: Some(round_pts(pts)), pin, ..Default::default() }
+}
+
 pub fn offset_between(a: &[(f64, f64)], b: &[(f64, f64)]) -> (f64, f64) {
     if a.is_empty() || b.is_empty() {
         return (0.0, 0.0);

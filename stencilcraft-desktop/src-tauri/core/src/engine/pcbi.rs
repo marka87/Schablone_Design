@@ -102,25 +102,25 @@ pub fn parse_xml(src: &str) -> Result<XmlNode, String> {
         }
         let rest = &src[i..];
         if rest.starts_with("<?") {
-            i += rest.find("?>").ok_or("unvollständige XML-Deklaration")? + 2;
+            i += rest.find("?>").ok_or("incomplete XML declaration")? + 2;
         } else if rest.starts_with("<!--") {
-            i += rest.find("-->").ok_or("unvollständiger Kommentar")? + 3;
+            i += rest.find("-->").ok_or("incomplete comment")? + 3;
         } else if rest.starts_with("<![CDATA[") {
-            let e = rest.find("]]>").ok_or("unvollständiger CDATA-Block")?;
+            let e = rest.find("]]>").ok_or("incomplete CDATA block")?;
             if let Some(top) = stack.last_mut() {
                 top.text.push_str(&rest[9..e]);
             }
             i += e + 3;
         } else if rest.starts_with("<!") {
-            i += rest.find('>').ok_or("unvollständige Deklaration")? + 1;
+            i += rest.find('>').ok_or("incomplete declaration")? + 1;
         } else if rest.starts_with("</") {
-            let e = rest.find('>').ok_or("unvollständiges End-Tag")?;
+            let e = rest.find('>').ok_or("incomplete end tag")?;
             let name = rest[2..e].trim();
-            let node = stack.pop().filter(|_| !stack.is_empty()).ok_or("unerwartetes End-Tag")?;
+            let node = stack.pop().filter(|_| !stack.is_empty()).ok_or("unexpected end tag")?;
             if node.name != name {
-                return Err(format!("End-Tag </{name}> passt nicht zu <{}>", node.name));
+                return Err(format!("End tag </{name}> does not match <{}>", node.name));
             }
-            stack.last_mut().ok_or("Strukturfehler")?.children.push(node);
+            stack.last_mut().ok_or("structure error")?.children.push(node);
             i += e + 1;
         } else {
             // Start-Tag; Attributwerte können '>' enthalten
@@ -138,7 +138,7 @@ pub fn parse_xml(src: &str) -> Result<XmlNode, String> {
                 e += 1;
             }
             if e >= rest.len() {
-                return Err("unvollständiges Start-Tag".into());
+                return Err("incomplete start tag".into());
             }
             let inner = &rest[1..e];
             let self_closing = inner.ends_with('/');
@@ -146,7 +146,7 @@ pub fn parse_xml(src: &str) -> Result<XmlNode, String> {
             let name = inner.split(|c: char| c.is_whitespace()).next().unwrap_or("").to_string();
             let node = XmlNode { name, ..Default::default() };
             if self_closing {
-                stack.last_mut().ok_or("Strukturfehler")?.children.push(node);
+                stack.last_mut().ok_or("structure error")?.children.push(node);
             } else {
                 stack.push(node);
             }
@@ -154,9 +154,9 @@ pub fn parse_xml(src: &str) -> Result<XmlNode, String> {
         }
     }
     if stack.len() != 1 {
-        return Err(format!("Element <{}> nicht geschlossen", stack.last().map_or("", |n| n.name.as_str())));
+        return Err(format!("Element <{}> not closed", stack.last().map_or("", |n| n.name.as_str())));
     }
-    stack.pop().and_then(|d| d.children.into_iter().next()).ok_or_else(|| "leeres XML-Dokument".into())
+    stack.pop().and_then(|d| d.children.into_iter().next()).ok_or_else(|| "empty XML document".into())
 }
 
 // ---------------------------------------------------------------------------
@@ -551,7 +551,7 @@ fn raw_block(src: &str, name: &str) -> Option<String> {
 pub fn parse_rule_tree(src: &str) -> Result<RuleTree, String> {
     let root = parse_xml(src)?;
     if root.name != "RuleTreeManager" {
-        return Err(format!("Keine PCB-Investigator-Kundenbibliothek (Wurzel <{}> statt <RuleTreeManager>)", root.name));
+        return Err(format!("Not a PCB-Investigator customer library (root <{}> instead of <RuleTreeManager>)", root.name));
     }
     let mut t = RuleTree::default();
     let note = |t: &mut RuleTree, used: &str, known: bool| {
@@ -561,7 +561,7 @@ pub fn parse_rule_tree(src: &str) -> Result<RuleTree, String> {
     };
     let entries: Vec<&XmlNode> = root.child("AllRuleTrees").map(|a| a.children_named("RuleTreeEntry").collect()).unwrap_or_default();
     if entries.len() > 1 {
-        t.warnings.push(format!("{} Regelbäume (Steps) in der Datei – alle werden zusammengeführt", entries.len()));
+        t.warnings.push(format!("{} rule trees (steps) in the file – all will be merged", entries.len()));
     }
     for e in entries {
         if let Some(pp) = e.child("PackageRules") {
@@ -583,7 +583,7 @@ pub fn parse_rule_tree(src: &str) -> Result<RuleTree, String> {
                 let Some(name) = p.text_of("ComponentOrPackageName").filter(|n| !n.is_empty()) else { continue };
                 let Some(idx) = p.f64_of("PinIndex") else { continue };
                 if block == "PinComponentRules" {
-                    t.warnings.push(format!("Pin-Regel für Bauteil {name} (Pin {}) wird als Package-Pin-Regel nicht unterstützt", idx as i64 + 1));
+                    t.warnings.push(format!("Pin rule for component {name} (pin {}) is not supported as a package pin rule", idx as i64 + 1));
                     continue;
                 }
                 // PCB-I zählt Pins ab 0, StencilCraft (ODB++-Toeprints) ab 1
@@ -600,12 +600,12 @@ pub fn parse_rule_tree(src: &str) -> Result<RuleTree, String> {
                     Some(n) => {
                         t.components.insert(n.to_string(), rule);
                     }
-                    None => t.warnings.push("Bauteilregel ohne Bauteilnamen übersprungen".into()),
+                    None => t.warnings.push("Component rule without component name skipped".into()),
                 }
             }
         }
         if e.child("ZoneRules").is_some_and(|z| !z.children.is_empty()) {
-            t.warnings.push("Zonenregeln aus PCB-I werden noch nicht übernommen (Zonen bitte im Zonen-Editor anlegen)".into());
+            t.warnings.push("Zone rules from PCB-I are not imported yet (please create zones in the zone editor)".into());
         }
     }
     if let Some(gp) = root.child("PackageGroupParents") {
@@ -842,7 +842,7 @@ impl StencilEngine {
         let mut skipped = Vec::new();
         let mut check = |what: String, r: &PackageRule| {
             if r.rule_type != "inherit" && rule_to_pcbi(r).is_none() {
-                skipped.push(format!("{what}: Regel \"{}\" hat keine PCB-I-Entsprechung", r.rule_type));
+                skipped.push(format!("{what}: rule \"{}\" has no PCB-I equivalent", r.rule_type));
             }
         };
         for (name, pkg) in &self.packages {
@@ -861,12 +861,12 @@ impl StencilEngine {
             }
         }
         for (c, r) in &self.component_rules {
-            check(format!("Bauteil {c}"), r);
+            check(format!("Component {c}"), r);
             t.components.insert(c.clone(), r.clone());
         }
         for (g, r) in &self.group_rules {
             if group_name(g).is_some() {
-                check(format!("Gruppe {g}"), r);
+                check(format!("Group {g}"), r);
                 t.groups.insert(g.clone(), r.clone());
             }
         }

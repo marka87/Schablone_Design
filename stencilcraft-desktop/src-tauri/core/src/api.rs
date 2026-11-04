@@ -111,19 +111,19 @@ pub fn dispatch(engine: &Mutex<StencilEngine>, method: &str, url: &str, body: &V
     match (method, path) {
         ("POST", "/api/open_windows_file_dialog") => {
             let Some(files) = dialogs.pick_files().filter(|f| !f.is_empty()) else {
-                return ok(json!({"status": "cancelled", "message": "Keine Datei ausgewählt"}));
+                return ok(json!({"status": "cancelled", "message": "No file selected"}));
             };
             let paths: Vec<String> = files.iter().map(|p| p.to_string_lossy().to_string()).collect();
-            let name = if paths.len() == 1 { base(&paths[0]) } else { format!("Importiert ({} Dateien)", paths.len()) };
+            let name = if paths.len() == 1 { base(&paths[0]) } else { format!("Imported ({} files)", paths.len()) };
             let mut e = lock(engine);
             import_response(&mut e, &paths, Body(body_map), name, None)
         }
         ("POST", "/api/open_windows_folder_dialog") => {
             let Some(folder) = dialogs.pick_folder() else {
-                return ok(json!({"status": "cancelled", "message": "Kein Ordner ausgewählt"}));
+                return ok(json!({"status": "cancelled", "message": "No folder selected"}));
             };
             let f = folder.to_string_lossy().to_string();
-            let name = format!("Ordner ({})", base(&f));
+            let name = format!("Folder ({})", base(&f));
             let mut e = lock(engine);
             import_response(&mut e, &[f.clone()], Body(body_map), name, Some(f))
         }
@@ -371,7 +371,7 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
             let dir = e.data_root.join("Bsp").join("test_extracted");
             let paste = dir.join(format!("stencilOutput_{side}_panel_120.ger"));
             if !paste.exists() {
-                return err(404, format!("Demo-Datensatz nicht gefunden: {}", paste.display()));
+                return err(404, format!("Demo dataset not found: {}", paste.display()));
             }
             let zone = dir.join(format!("stencilOutput_{side}_zones_{}.ger", if side == "top" { "top" } else { "bottom" }));
             let profile = dir.join(format!("stencilOutput_{side}_profile.ger"));
@@ -461,17 +461,17 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
                 }
                 "slice" => ids.iter().map(|&i| e.apply_thermal_slicing(i, b.i("grid_x", 2), b.i("grid_y", 2), b.f("web_width", 0.25), b.f("edge_reduction", 0.05), false)).sum(),
                 "elongate" => ids.iter().map(|&i| e.apply_elongated_narrowing(i, b.f("width_reduction", 20.0), b.f("length_usage", 95.0), b.f("corner_radius", 0.08), false)).sum(),
-                _ => return err(404, format!("Unbekannte Bearbeitung: {op}")),
+                _ => return err(404, format!("Unknown edit: {op}")),
             };
             if n == 0 {
-                return ok(json!({"status": "error", "message": "Keine gültige Öffnung gewählt", "modified_count": 0}));
+                return ok(json!({"status": "error", "message": "No valid aperture selected", "modified_count": 0}));
             }
             let new_ids: Vec<usize> = if *op == "duplicate" { ((e.apertures.len() - n)..e.apertures.len()).collect() } else { Vec::new() };
             ok(json!({"status": "ok", "modified_count": n, "new_ids": new_ids, "stats": stats(e)}))
         }
         ("POST", ["api", "opening", "add"]) => match e.add_opening_shape(&b.s("shape").unwrap_or_else(|| "rectangle".into()), b.f("cx", 0.0), b.f("cy", 0.0), b.f("w", 0.0), b.f("h", b.f("w", 0.0))) {
             Some(id) => ok(json!({"status": "ok", "id": id, "stats": stats(e)})),
-            None => ok(json!({"status": "error", "message": "Breite und Höhe müssen größer als 0 sein"})),
+            None => ok(json!({"status": "error", "message": "Width and height must be greater than 0"})),
         },
         // Stencil-Analyse: Tabelle aller Öffnungen und CSV-Export
         ("GET" | "POST", ["api", "analysis"]) | ("POST", ["api", "analysis", "csv"]) => {
@@ -514,14 +514,14 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
         ("POST", ["api", "ipc", "class"]) => {
             let c = b.f("class", 2.0) as u8;
             if !e.set_ipc_class(c) {
-                return err(400, format!("Unbekannte IPC-Klasse {c}"));
+                return err(400, format!("Unknown IPC class {c}"));
             }
             ok(json!({"status": "ok", "profiles": e.ipc_profiles_json(), "stats": stats(e)}))
         }
         ("POST", ["api", "ipc", "profile", c]) => {
-            let Ok(c) = c.parse::<u8>() else { return err(400, "Klasse fehlt") };
+            let Ok(c) = c.parse::<u8>() else { return err(400, "Class missing") };
             if !e.update_ipc_profile(c, body) {
-                return err(404, format!("Kein Profil für Klasse {c}"));
+                return err(404, format!("No profile for class {c}"));
             }
             ok(json!({"status": "ok", "profiles": e.ipc_profiles_json(), "stats": stats(e)}))
         }
@@ -552,14 +552,14 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
                 let f = |k: &str| z.get(k).and_then(val_f64);
                 Some([f("x0")?, f("y0")?, f("x1")?, f("y1")?])
             }).collect()).unwrap_or_default();
-            let n = e.create_zones(&rects, b.f("thickness", 0.10), &b.s("name").unwrap_or_else(|| "Stufe".into()));
+            let n = e.create_zones(&rects, b.f("thickness", 0.10), &b.s("name").unwrap_or_else(|| "Step".into()));
             ok(json!({"status": "ok", "created": n, "stats": stats(e)}))
         }
         ("POST", ["api", "zone", "around_component"]) => {
             let refdes = b.s("component").unwrap_or_default();
             match e.add_zone_around_component(&refdes, b.f("thickness", 0.10)) {
                 Some(z) => ok(json!({"status": "ok", "zone": z.to_json(), "stats": stats(e)})),
-                None => err(404, format!("Bauteil {refdes} hat keine Öffnungen")),
+                None => err(404, format!("Component {refdes} has no apertures")),
             }
         }
         ("POST", ["api", "zone"]) => {
@@ -593,7 +593,7 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
         }
         ("POST", ["api", "load_zip"]) => {
             let Some(p) = b.s("path").filter(|p| !p.is_empty()) else {
-                return err(400, "Kein Pfad angegeben");
+                return err(400, "No path specified");
             };
             let side = b.s("side").unwrap_or_else(|| "top".into());
             match e.import_files_or_zip(&[p.clone()], &side, true) {
@@ -608,9 +608,9 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
         ("POST", ["api", "import_paths"]) => {
             let paths: Vec<String> = body.get("paths").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
             if paths.is_empty() {
-                return err(400, "Keine Dateien hochgeladen");
+                return err(400, "No files uploaded");
             }
-            let name = if paths.len() == 1 { base(&paths[0]) } else { format!("Importiert ({} Dateien)", paths.len()) };
+            let name = if paths.len() == 1 { base(&paths[0]) } else { format!("Imported ({} files)", paths.len()) };
             import_response(e, &paths, b, name, None)
         }
         ("GET", ["api", "layers"]) => ok(json!({"status": "ok", "dataset_name": e.dataset_name, "layers": e.layers_summary()})),
@@ -634,7 +634,7 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
                     l.visible = vis.unwrap_or(!l.visible);
                     ok(json!({"status": "ok", "layer_id": id, "visible": l.visible}))
                 }
-                None => err(404, "Layer nicht gefunden"),
+                None => err(404, "Layer not found"),
             }
         }
         ("POST", ["api", "layer", id, "update"]) => {
@@ -734,6 +734,14 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
             e.mark_packages([name.to_string()], "done");
             ok(json!({"status": "ok", "preview": e.get_package_preview_data(name)}))
         }
+        // Freihand im Editor: ausgeblendete Pads und skizzierte Öffnungen (ganze Liste ersetzen)
+        ("POST", ["api", "package", name, "freehand"]) => {
+            let target = e.resolve_alias(name);
+            let Some(p) = e.packages.get_mut(&target) else { return err(404, "Package not found") };
+            p.set_freehand(&Value::Object(body.clone()));
+            e.mark_packages([name.to_string()], "done");
+            ok(json!({"status": "ok", "preview": e.get_package_preview_data(name)}))
+        }
         ("POST", ["api", "package", name, "generate"]) => {
             let n = e.apply_package_rule(name, body);
             e.mark_packages([name.to_string()], "done");
@@ -752,7 +760,7 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
             ok(json!({"status": "ok", "dataset_name": NO_DATASET, "layers": e.layers_summary(), "stats": stats(e)}))
         }
         (m @ ("POST" | "DELETE"), ["api", "package", name, "pin", pin, "override"]) => {
-            let Ok(pin) = pin.parse::<i64>() else { return err(400, "Ungültige Pin-Nummer") };
+            let Ok(pin) = pin.parse::<i64>() else { return err(400, "Invalid pin number") };
             let s = if m == "POST" { e.override_package_pin(name, pin, body.clone()) } else { e.reset_package_pin(name, pin) };
             e.mark_packages([name.to_string()], "done");
             ok(json!({"status": if s { "ok" } else { "error" }, "preview": e.get_package_preview_data(name), "stats": stats(e)}))
@@ -781,7 +789,7 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
         ("POST", ["api", "package", name, "rename"]) => {
             let new = b.s("new_name").unwrap_or_default().trim().to_string();
             if new.is_empty() {
-                return err(400, "Neuer Name darf nicht leer sein");
+                return err(400, "New name must not be empty");
             }
             let s = e.rename_package(name, &new);
             ok(json!({"status": if s { "ok" } else { "error" }, "old_name": name, "new_name": new, "packages": e.packages.values().map(|p| p.to_json()).collect::<Vec<_>>()}))
@@ -905,7 +913,7 @@ fn route(e: &mut StencilEngine, method: &str, seg: &[&str], body: &Map<String, V
             }
             ok(json!({"status": "ok", "base_thickness": e.base_thickness, "stats": stats(e)}))
         }
-        _ => err(404, format!("Unbekannte API-Route: {method} /{}", seg.join("/"))),
+        _ => err(404, format!("Unknown API route: {method} /{}", seg.join("/"))),
     }
 }
 
@@ -980,14 +988,17 @@ mod tests {
     use crate::engine::StencilEngine;
 
     fn engine_with_chips() -> StencilEngine {
-        let mut e = StencilEngine::new(0.12, std::env::temp_dir().join("stencilcraft_test_root"));
+        // eigener Ordner und eigene Datei je Aufruf: parallele Tests überschrieben sonst dieselbe Gerber-Datei halb geschrieben
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let tag = format!("{}_{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        let mut e = StencilEngine::new(0.12, std::env::temp_dir().join(format!("stencilcraft_test_root_{tag}")));
         let mut g = String::from("%FSLAX46Y46*%%MOMM*%%ADD10R,1.2X1.3*%%ADD11R,4.5X4.5*%D10*\n");
         for i in 0..5 {
             let x = 10.0 + i as f64 * 5.0;
             g.push_str(&format!("X{}Y{}D03*\nX{}Y{}D03*\n", ((x - 0.851) * 1e6) as i64, 10_000_000, ((x + 0.851) * 1e6) as i64, 10_000_000));
         }
         g.push_str("D11*X50000000Y50000000D03*M02*");
-        let path = std::env::temp_dir().join("stencilcraft_test_top_paste.ger");
+        let path = std::env::temp_dir().join(format!("stencilcraft_test_top_paste_{tag}.ger"));
         std::fs::write(&path, g).unwrap();
         e.import_files_or_zip(&[path.to_string_lossy().to_string()], "top", true).unwrap();
         e
@@ -1014,6 +1025,47 @@ mod tests {
         // Bibliothek übernehmen
         post(&mut e, "/api/library/load", json!({"path": path}));
         assert_eq!(e.packages[&name].rule.rule_type, "house_builder");
+    }
+
+    #[test]
+    fn freehand_ignores_pad_and_adds_sketch_on_board_and_library() {
+        use crate::engine::types::{ComponentItem, PackageTemplate, PadRel};
+        let mut e = engine_with_chips();
+        let empty = Map::new();
+        for a in e.apertures.iter_mut().filter(|a| (a.cx - 10.0).abs() < 1.0 && (a.cy - 10.0).abs() < 1.0) {
+            (a.component_id, a.package_name) = ("C1".into(), "CHIP".into());
+        }
+        e.components.push(ComponentItem { refdes: "C1".into(), package: "CHIP".into(), cx: 10.0, cy: 10.0, width: 2.0, height: 1.0, rotation: 0.0, side: "TOP".into(), outline: vec![], pin1: None, pins: vec![] });
+        let mut p = PackageTemplate::new("CHIP", 2, 1.702, 1.2, 1.3);
+        p.pads_relative = vec![PadRel::new(1, -0.851, 0.0, 1.2, 1.3, "right"), PadRel::new(2, 0.851, 0.0, 1.2, 1.3, "left")];
+        e.packages.insert("CHIP".into(), p);
+        // Pad 2 aus, Skizze 0,2 × 0,2 bei (−0,851 | 1,0) gehört zu Pad 1
+        let sq = json!([[-0.951, 0.9], [-0.751, 0.9], [-0.751, 1.1], [-0.951, 1.1]]);
+        let v = handle(&mut e, "POST", "/api/package/CHIP/freehand", json!({"ignored": [[0.851, 0.0]], "shapes": [sq]}).as_object().unwrap(), &empty).1;
+        let paste = v["preview"]["paste"].as_array().unwrap();
+        assert_eq!(paste.len(), 2, "1 Pad + 1 Skizze: {paste:?}");
+        assert!(paste.iter().any(|s| s["type"] == "freehand" && s["pin"] == 1));
+        handle(&mut e, "POST", "/api/generate_all", &empty, &empty);
+        let at = |e: &StencilEngine, x: f64| e.apertures.iter().find(|a| (a.cx - x).abs() < 0.01 && (a.cy - 10.0).abs() < 0.01).unwrap().custom_slices.clone().unwrap();
+        assert!(at(&e, 10.851).is_empty(), "ausgeblendetes Pad hat Paste");
+        let s1 = at(&e, 9.149);
+        let f = s1.iter().find(|s| s.kind.as_deref() == Some("freehand")).expect("Skizze fehlt auf der Platine");
+        assert!((f.cx - 9.149).abs() < 1e-3 && (f.cy - 11.0).abs() < 1e-3, "Skizze bei ({}, {})", f.cx, f.cy);
+        // Skizze folgt der Regel ihres Pins: Undersize 0,05 mm je Seite, Eckenradius 0,03
+        e.packages.get_mut("CHIP").unwrap().rule = crate::engine::types::PackageRule { undersize_w: 0.05, undersize_h: 0.05, corner_radius: 0.03, ..crate::engine::types::PackageRule::with("undersize", "Undersize") };
+        let v = handle(&mut e, "GET", "/api/package/CHIP", &empty, &empty).1;
+        let f = v["paste"].as_array().unwrap().iter().find(|s| s["type"] == "freehand").unwrap().clone();
+        assert!(f["w"].as_f64().unwrap() < 0.19 && f["radius"].as_f64().unwrap_or(0.0) > 0.0, "Regel nicht auf Skizze angewendet: {f}");
+        handle(&mut e, "POST", "/api/generate_all", &empty, &empty);
+        // zweimal generieren: Skizze nicht doppelt
+        handle(&mut e, "POST", "/api/generate_all", &empty, &empty);
+        assert_eq!(at(&e, 9.149).iter().filter(|s| s.kind.as_deref() == Some("freehand")).count(), 1);
+        // Bibliothek: speichern, leeren, laden
+        e.save_customer_library("FreihandTest").unwrap();
+        e.packages.get_mut("CHIP").unwrap().set_freehand(&json!({}));
+        let (data, _) = e.read_library("FreihandTest", None).unwrap();
+        e.apply_library(&data, "FreihandTest");
+        assert_eq!((e.packages["CHIP"].ignored_pads.len(), e.packages["CHIP"].freehand.len()), (1, 1));
     }
 
     #[test]
@@ -1094,7 +1146,7 @@ mod tests {
         assert_eq!(v["modified_count"], 3);
         let v = post(&mut e, "/api/openings/rotate", json!({"ids": [3], "deg": 90}));
         assert_eq!(v["modified_count"], 1);
-        assert_eq!(e.history_json()["undo_labels"][0], "1 Öffnung(en) gedreht");
+        assert_eq!(e.history_json()["undo_labels"][0], "1 aperture(s) rotated");
 
         // Ungültige Auswahl und leere Größe: Fehler, kein neuer Schritt
         let before = e.history_json()["undo_count"].clone();

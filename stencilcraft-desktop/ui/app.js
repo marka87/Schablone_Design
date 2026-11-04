@@ -103,10 +103,10 @@ window.addEventListener("DOMContentLoaded", async () => {
         await refreshApertureData();
         await refreshHistory();
         if (typeof pkgInitialized !== "undefined" && pkgInitialized && pkgState.activePkgName) await refreshActivePackage();
-        showToast(`Grund-Blechdicke ${um} µm`, 1800);
+        showToast(`Base stencil thickness ${um} µm`, 1800);
     });
     document.getElementById("selectRuleLayout")?.addEventListener("change", (e) => applyRuleLayout(e.target.value));
-    applyRuleLayout(localStorage.getItem("sc.ruleLayout") || "top");
+    applyRuleLayout("right"); // Eigenschaften fest rechts wie PCB-I
     await loadLayers();
     await refreshApertureData();
     fitToScreen();
@@ -238,7 +238,7 @@ function setupPackageHighlight() {
         const d = await (await fetch("/api/zones/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json();
         await refreshApertureData();
         await refreshHistory();
-        showToast(d.merged ? `${d.merged} Zone(n) mit überlappenden gleicher Dicke verbunden (Strg+Z rückgängig)` : "Keine überlappenden Stufenzonen gleicher Dicke");
+        showToast(d.merged ? `${d.merged} zone(s) of equal thickness merged (Ctrl+Z to undo)` : "No overlapping step zones of equal thickness");
     });
 }
 
@@ -271,10 +271,10 @@ async function updateStepProposal(thicknessUm = null) {
     const foreign = d.zones.reduce((n, z) => n + z.foreign_pads, 0);
     const overl = d.zones.filter(z => z.overlaps_zone).length;
     const base = Math.round((state.stats?.base_thickness || 0.12) * 1000);
-    const need = d.needed ? `Empfehlung ${Math.round(d.t_step * 1000)} µm (Grundblech ${base} µm)` : `Pads passen bis ${Math.round(d.t_step * 1000)} µm – Stufe nicht nötig, Dicke frei wählbar`;
-    document.getElementById("stepInfo").innerHTML = `${d.zones.length} Zone(n) für ${comps} Bauteil(e) · ${need}`
-        + (foreign ? `<br><span class="warn">${foreign} Pads anderer Bauteile liegen mit in den Zonen und werden ebenfalls dünner.</span>` : "")
-        + (overl ? `<br><span class="warn">${overl} Zone(n) überschneiden bestehende Stufenzonen.</span>` : "");
+    const need = d.needed ? `Recommended ${Math.round(d.t_step * 1000)} µm (base ${base} µm)` : `Pads OK up to ${Math.round(d.t_step * 1000)} µm – no step needed, any thickness`;
+    document.getElementById("stepInfo").innerHTML = `${d.zones.length} zone(s) for ${comps} component(s) · ${need}`
+        + (foreign ? `<br><span class="warn">${foreign} pads of other components are inside the zones and will also be thinner.</span>` : "")
+        + (overl ? `<br><span class="warn">${overl} zone(s) overlap existing step zones.</span>` : "");
     render();
 }
 
@@ -282,13 +282,13 @@ async function createProposedZones() {
     if (!state.zoneProposals?.length) return;
     const um = parseFloat(document.getElementById("stepThick").value);
     const d = await (await fetch("/api/zones/create", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ zones: state.zoneProposals, thickness: um / 1000, name: `Stufe ${state.stepPkg} ${um}µm` }) })).json();
+        body: JSON.stringify({ zones: state.zoneProposals, thickness: um / 1000, name: `Step ${state.stepPkg} ${um}µm` }) })).json();
     const pkg = state.stepPkg;
     closeStepPanel();
     await refreshApertureData();
     await refreshHistory();
     document.querySelector('.tab-btn[data-tab="tabZones"]')?.click();
-    showToast(`${d.created} Stufenzone(n) ${um} µm für ${pkg} angelegt (Strg+Z rückgängig)`);
+    showToast(`${d.created} step zone(s) ${um} µm for ${pkg} created (Ctrl+Z to undo)`);
 }
 
 // Vorschläge für alle Packages, die bei der Grunddicke nicht reichen
@@ -296,13 +296,13 @@ async function suggestZones() {
     const d = await (await fetch("/api/zones/suggest")).json();
     const box = document.getElementById("zoneSuggestList");
     box.innerHTML = "";
-    if (!d.suggestions.length) { box.innerHTML = `<p class="empty-state" style="padding:6px">Alle Pads außerhalb von Zonen passen zur Grunddicke.</p>`; return; }
+    if (!d.suggestions.length) { box.innerHTML = `<p class="empty-state" style="padding:6px">All pads outside zones fit the base thickness.</p>`; return; }
     for (const s of d.suggestions) {
         const row = document.createElement("div");
         row.className = "sug";
         const um = Math.round(s.thickness * 1000);
-        row.innerHTML = `<div><strong>${escapeHtml(s.package)}</strong> → ${um} µm<div class="meta">${s.zones.length} Zone(n), zulässig ≤ ${Math.round(s.t_max * 1000)} µm</div></div>
-            <button class="btn btn-xs btn-secondary">Vorschau</button>`;
+        row.innerHTML = `<div><strong>${escapeHtml(s.package)}</strong> → ${um} µm<div class="meta">${s.zones.length} zone(s), allowed ≤ ${Math.round(s.t_max * 1000)} µm</div></div>
+            <button class="btn btn-xs btn-secondary">Preview</button>`;
         row.querySelector("button").addEventListener("click", async () => {
             setPackageHighlight(s.package, null);
             await openStepPanel(s.package, um);
@@ -469,15 +469,15 @@ async function refreshApertureData() {
 
 // IPC-Klassenprofile: Grenzwerte je Klasse anzeigen und bearbeiten
 const IPC_FIELDS = [
-    ["name", "Bezeichnung", "text"],
-    ["min_ar", "Area Ratio ≥", "number", 0.01, "Öffnungsfläche / Wandfläche"],
-    ["min_aspect", "Aspect Ratio ≥", "number", 0.05, "kleinste Breite / Blechdicke"],
-    ["warn_margin_pct", "Warnband (%)", "number", 1, "darunter kritisch"],
-    ["balls_rect", "Körner rechteckig", "number", 0.5, "x Korndurchmesser über kleinste Breite"],
-    ["balls_round", "Körner rund", "number", 0.5, ""],
-    ["min_bridge", "Mindeststeg (mm)", "number", 0.01, "Stegbreite im Blech"],
-    ["squeegee_clearance", "Stufenabstand Rakel (mm)", "number", 0.1, "in Rakelrichtung"],
-    ["transverse_clearance", "Stufenabstand quer (mm)", "number", 0.1, "quer zur Rakelrichtung"],
+    ["name", "Name", "text"],
+    ["min_ar", "Area Ratio ≥", "number", 0.01, "aperture area / wall area"],
+    ["min_aspect", "Aspect Ratio ≥", "number", 0.05, "min. width / stencil thickness"],
+    ["warn_margin_pct", "Warning band (%)", "number", 1, "below: critical"],
+    ["balls_rect", "Grains rectangular", "number", 0.5, "x grain diameter across min. width"],
+    ["balls_round", "Grains round", "number", 0.5, ""],
+    ["min_bridge", "Min. web (mm)", "number", 0.01, "web width in stencil"],
+    ["squeegee_clearance", "Step clearance squeegee (mm)", "number", 0.1, "in squeegee direction"],
+    ["transverse_clearance", "Step clearance transverse (mm)", "number", 0.1, "across squeegee direction"],
 ];
 
 function renderIpcProfileTable(data) {
@@ -485,13 +485,13 @@ function renderIpcProfileTable(data) {
     const profiles = data.profiles || [];
     const defaults = Object.fromEntries((data.defaults || []).map(p => [p.class, p]));
     const act = (p) => p.class === data.active_class ? "active" : "";
-    let html = `<tr><th></th>${profiles.map(p => `<th class="${act(p)}">Klasse ${p.class}${p.class === data.active_class ? " ✓" : ""}</th>`).join("")}</tr>`;
+    let html = `<tr><th></th>${profiles.map(p => `<th class="${act(p)}">Class ${p.class}${p.class === data.active_class ? " ✓" : ""}</th>`).join("")}</tr>`;
     for (const [key, label, type, step, hint] of IPC_FIELDS) {
         html += `<tr><td>${label}${hint ? `<span class="hint">${hint}</span>` : ""}</td>` + profiles.map(p => {
             const def = defaults[p.class]?.[key];
             const changed = type === "number" && def !== undefined && Math.abs(def - p[key]) > 1e-9;
             return `<td class="${act(p)}"><input type="${type}" data-class="${p.class}" data-key="${key}" ${type === "number" ? `step="${step}"` : ""}
-                value="${escapeHtml(String(p[key]))}" title="${def !== undefined ? `Vorschlag: ${def}` : ""}" ${changed ? 'style="border-color:#f59e0b"' : ""}></td>`;
+                value="${escapeHtml(String(p[key]))}" title="${def !== undefined ? `Default: ${def}` : ""}" ${changed ? 'style="border-color:#f59e0b"' : ""}></td>`;
         }).join("") + "</tr>";
     }
     t.innerHTML = html;
@@ -548,11 +548,11 @@ async function saveIpcProfiles() {
     for (const [c, vals] of Object.entries(byClass)) {
         await fetch(`/api/ipc/profile/${c}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(vals) });
     }
-    let msg = "IPC-Profile übernommen";
+    let msg = "IPC profiles applied";
     if (document.getElementById("chkIpcSaveLib").checked) {
         const cust = document.getElementById("lblIpcCustomer").innerText || "Standard";
         const r = await fetch("/api/library/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customer: cust }) });
-        msg += r.ok ? ` und in „${cust}“ gespeichert` : " (Speichern in der Bibliothek fehlgeschlagen)";
+        msg += r.ok ? ` and saved to "${cust}"` : " (saving to library failed)";
     }
     document.getElementById("ipcProfileModal").classList.add("hidden");
     await refreshApertureData();
@@ -576,9 +576,9 @@ async function updateStats() {
     document.getElementById("statOk").innerText = state.stats.ok_count.toLocaleString();
     document.getElementById("statWarn").innerText = state.stats.warn_count.toLocaleString();
     const wp = document.getElementById("warnPill");
-    if (wp) wp.title = `Grenzwertig (Pastenauslösung schwankend)
-Vias im Pad: ${state.stats.via_in_pad_count ?? 0}
-Schmale Öffnungen quer zur Rakel: ${state.stats.squeegee_slot_count ?? 0}`;
+    if (wp) wp.title = `Marginal (paste release unstable)
+Vias in pad: ${state.stats.via_in_pad_count ?? 0}
+Narrow apertures across squeegee: ${state.stats.squeegee_slot_count ?? 0}`;
     document.getElementById("statCrit").innerText = state.stats.crit_count.toLocaleString();
     document.getElementById("zonesCount").innerText = state.stats.zones_count;
     document.getElementById("lblMinAr").innerText = state.stats.ipc_min_ar.toFixed(2);
@@ -674,20 +674,20 @@ function pkgScreenToWorld(clientX, clientY) {
 
 // Fangpunkte eines Elements: Zentrum, Ecken, Kantenmitten bzw. Polygon-Eckpunkte
 function snapCandidates(cx, cy, w, h, pts, round) {
-    const out = [{ x: cx, y: cy, kind: "Mitte" }];
+    const out = [{ x: cx, y: cy, kind: "Center" }];
     if (pts && pts.length >= 3 && pts.length <= 64) {
-        for (const p of pts) out.push({ x: p[0], y: p[1], kind: "Ecke" });
+        for (const p of pts) out.push({ x: p[0], y: p[1], kind: "Corner" });
         for (let i = 0; i < pts.length; i++) {
             const a = pts[i], b = pts[(i + 1) % pts.length];
-            out.push({ x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, kind: "Kante" });
+            out.push({ x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, kind: "Edge" });
         }
     } else if (w && h) {
         const hw = w / 2, hh = h / 2;
-        out.push({ x: cx - hw, y: cy, kind: "Kante" }, { x: cx + hw, y: cy, kind: "Kante" },
-                 { x: cx, y: cy - hh, kind: "Kante" }, { x: cx, y: cy + hh, kind: "Kante" });
+        out.push({ x: cx - hw, y: cy, kind: "Edge" }, { x: cx + hw, y: cy, kind: "Edge" },
+                 { x: cx, y: cy - hh, kind: "Edge" }, { x: cx, y: cy + hh, kind: "Edge" });
         if (!round) {
-            out.push({ x: cx - hw, y: cy - hh, kind: "Ecke" }, { x: cx + hw, y: cy - hh, kind: "Ecke" },
-                     { x: cx + hw, y: cy + hh, kind: "Ecke" }, { x: cx - hw, y: cy + hh, kind: "Ecke" });
+            out.push({ x: cx - hw, y: cy - hh, kind: "Corner" }, { x: cx + hw, y: cy - hh, kind: "Corner" },
+                     { x: cx + hw, y: cy + hh, kind: "Corner" }, { x: cx - hw, y: cy + hh, kind: "Corner" });
         }
     }
     return out;
@@ -716,7 +716,7 @@ function nearestEdgeSnap(items, wx, wy, maxDist) {
         const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
         const t = l2 > 0 ? Math.max(0, Math.min(1, ((wx - ax) * dx + (wy - ay) * dy) / l2)) : 0;
         const x = ax + t * dx, y = ay + t * dy, d = Math.hypot(x - wx, y - wy);
-        if (d < bestD) { bestD = d; best = { x, y, label: `${label} · Linie` }; }
+        if (d < bestD) { bestD = d; best = { x, y, label: `${label} · Line` }; }
     };
     for (const it of items) {
         const reach = Math.max(it.w || 0, it.h || 0) / 2 + maxDist;
@@ -731,7 +731,7 @@ function nearestEdgeSnap(items, wx, wy, maxDist) {
             const r = it.w / 2, d0 = Math.hypot(wx - it.cx, wy - it.cy);
             if (d0 > 0 && Math.abs(d0 - r) < bestD) {
                 bestD = Math.abs(d0 - r);
-                best = { x: it.cx + (wx - it.cx) * r / d0, y: it.cy + (wy - it.cy) * r / d0, label: `${it.label} · Linie` };
+                best = { x: it.cx + (wx - it.cx) * r / d0, y: it.cy + (wy - it.cy) * r / d0, label: `${it.label} · Line` };
             }
         } else {
             const x0 = it.cx - it.w / 2, x1 = it.cx + it.w / 2, y0 = it.cy - it.h / 2, y1 = it.cy + it.h / 2;
@@ -753,7 +753,7 @@ function findSnapPointBoard(wx, wy) {
         items.push({ cx: ap.cx, cy: ap.cy, w: ap.w, h: ap.h, pts: ap.pts, round: ap.shape === "circle", label });
     }
     for (const c of state.components || []) {
-        items.push({ cx: c.cx, cy: c.cy, w: 0, h: 0, label: c.refdes || "Bauteil" });
+        items.push({ cx: c.cx, cy: c.cy, w: 0, h: 0, label: c.refdes || "Component" });
     }
     return nearestSnap(items, wx, wy, snapDistMm);
 }
@@ -993,7 +993,7 @@ function toggleMeasureTool(forceState = null) {
         bannerPkg?.classList.remove("hidden");
         boardContainer?.classList.add("measuring-mode");
         pkgContainerEl?.classList.add("measuring-mode");
-        showToast("Messwerkzeug aktiv: 1. Punkt klicken, 2. Zielpunkt klicken");
+        showToast("Measure tool active: click 1st point, then 2nd point");
     } else {
         btnBoard?.classList.remove("active");
         btnPkg?.classList.remove("active");
@@ -1026,7 +1026,7 @@ function clearMeasurements() {
     measureState.startPoint = null;
     measureState.currentPoint = null;
     updateMeasureButtonsVisibility();
-    showToast("Messungen gelöscht");
+    showToast("Measurements cleared");
     render();
     renderPkgPreview();
 }
@@ -1034,7 +1034,8 @@ function clearMeasurements() {
 function fitToScreen() {
     const rect = container.getBoundingClientRect();
     let [minX, minY, maxX, maxY] = state.bounds || [0, 0, 0, 0];
-    if (minX === 0 && maxX === 0 && state.apertures && state.apertures.length > 0) {
+    // Auf die Pastenöffnungen einpassen: Zeichnungslagen (Bemaßung, Schriftfeld) machen die Gesamtgrenzen oft viel größer
+    if (state.apertures && state.apertures.length > 0) {
         minX = Math.min(...state.apertures.map(a => a.cx - a.w / 2));
         maxX = Math.max(...state.apertures.map(a => a.cx + a.w / 2));
         minY = Math.min(...state.apertures.map(a => a.cy - a.h / 2));
@@ -1094,11 +1095,11 @@ function renderFrame(rect) {
         ctx.fillStyle = "rgba(148, 163, 184, 0.75)";
         ctx.font = "bold 18px Inter, sans-serif";
         ctx.textAlign = "center";
-        ctx.fillText("SMT StencilCraft bereit", rect.width / 2, rect.height / 2 - 15);
+        ctx.fillText("SMT StencilCraft ready", rect.width / 2, rect.height / 2 - 15);
 
         ctx.fillStyle = "rgba(100, 116, 139, 0.9)";
         ctx.font = "14px Inter, sans-serif";
-        ctx.fillText("Klicken Sie oben auf 'ODB++ / Gerber öffnen' oder ziehen Sie eine Datei / ZIP hierher.", rect.width / 2, rect.height / 2 + 18);
+        ctx.fillText("Click 'Open ODB++ / Gerber' above or drop a file / ZIP here.", rect.width / 2, rect.height / 2 + 18);
         ctx.restore();
         updateCoordsDisplay();
         return;
@@ -1662,7 +1663,7 @@ function renderZoneDrawingPreview() {
 function updateCoordsDisplay() {
     const el = document.getElementById("coordsDisplay");
     const zPct = Math.round(state.zoom * 100 / 3.0);
-    el.innerText = `Zoom: ${zPct}% | Aperturen: ${state.apertures.length}`;
+    el.innerText = `Zoom: ${zPct}% | Apertures: ${state.apertures.length}`;
 }
 
 // -------------------------------------------------------------
@@ -1696,15 +1697,15 @@ function updateThicknessRecommendation(ap) {
     const cur = Math.round(ap.ipc.effective_thickness * 1000);
     const bad = cur > tMax;
     box.classList.toggle("bad", bad);
-    document.getElementById("thickRecVal").innerText = tMax >= 1000 ? "unkritisch" : `≤ ${tMax} µm → ${step} µm`;
+    document.getElementById("thickRecVal").innerText = tMax >= 1000 ? "not critical" : `≤ ${tMax} µm → ${step} µm`;
     document.getElementById("thickRecNote").innerText = bad
-        ? `Bei ${cur} µm fehlen ${cur - tMax} µm (Area/Aspect Ratio unter Grenzwert). Abhilfe: Stufenzone ${step} µm, dünneres Grundblech oder größere Öffnung.`
-        : `Passt: ${cur} µm ≤ ${tMax} µm (Reserve ${tMax - cur} µm).`;
+        ? `At ${cur} µm, ${cur - tMax} µm too thick (Area/Aspect Ratio below limit). Fix: step zone ${step} µm, thinner base stencil or larger aperture.`
+        : `OK: ${cur} µm ≤ ${tMax} µm (margin ${tMax - cur} µm).`;
     const btn = document.getElementById("btnZoneAroundComp");
     const canZone = bad && ap.comp_id && step < cur;
     btn.classList.toggle("hidden", !canZone);
     if (canZone) {
-        btn.innerText = `▣ Stufenzone ${step} µm um ${ap.comp_id}`;
+        btn.innerText = `▣ Step zone ${step} µm around ${ap.comp_id}`;
         btn.onclick = async () => {
             const res = await fetch("/api/zone/around_component", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ component: ap.comp_id, thickness: step / 1000 }) });
             const d = await res.json();
@@ -1712,7 +1713,7 @@ function updateThicknessRecommendation(ap) {
             await refreshApertureData();
             await refreshHistory();
             if (state.selectedApertureId != null) await selectAperture(state.selectedApertureId);
-            showToast(`Stufenzone ${step} µm um ${ap.comp_id} angelegt (Rückgängig mit Strg+Z)`);
+            showToast(`Step zone ${step} µm around ${ap.comp_id} created (Ctrl+Z to undo)`);
         };
     }
 }
@@ -1726,15 +1727,15 @@ async function openThicknessOverview() {
     const cur = Math.round(d.current * 1000), rec = Math.round(d.recommended_ok * 1000), noCrit = Math.round(d.recommended * 1000);
     const rows = d.steps.map(s => {
         const t = Math.round(s.t * 1000);
-        return `<tr class="${t === cur ? "cur" : ""} ${t === rec ? "rec" : ""}" data-t="${t}" style="cursor:pointer" title="${t} µm übernehmen">
+        return `<tr class="${t === cur ? "cur" : ""} ${t === rec ? "rec" : ""}" data-t="${t}" style="cursor:pointer" title="Apply ${t} µm">
             <td>${t} µm</td><td>${s.ok}</td><td>${s.warn}</td><td class="${s.crit ? "crit" : ""}">${s.crit}</td></tr>`;
     }).join("");
     const lim = (d.limiting || []).slice(0, 6).map(l => `<div><span>${escapeHtml(l.package)}</span><span>≤ ${Math.round(l.t_max * 1000)} µm · ${l.pads_below}/${l.pads} Pads</span></div>`).join("");
-    pop.innerHTML = `<div><strong>Grund-Blechdicke</strong> – ${d.pads} Pads außerhalb von Stufenzonen</div>
-        <table><tr><th>Dicke</th><th><span class="dot ok"></span></th><th><span class="dot warn"></span></th><th><span class="dot crit"></span></th></tr>${rows}</table>
-        <div>★ Empfehlung (alle Pads grün): <strong>${rec} µm</strong>${noCrit > rec ? ` · höchstens ${noCrit} µm ohne rote Pads` : ""}</div>
-        <div style="opacity:.75">Zeile anklicken, um die Dicke zu übernehmen</div>
-        ${lim ? `<div class="lim"><div><strong>Begrenzende Packages bei ${cur} µm</strong></div>${lim}<div>→ Für diese besser Stufenzonen statt dünnerem Grundblech</div></div>` : ""}`;
+    pop.innerHTML = `<div><strong>Base Stencil Thickness</strong> – ${d.pads} pads outside step zones</div>
+        <table><tr><th>Thickness</th><th><span class="dot ok"></span></th><th><span class="dot warn"></span></th><th><span class="dot crit"></span></th></tr>${rows}</table>
+        <div>★ Recommended (all pads green): <strong>${rec} µm</strong>${noCrit > rec ? ` · max. ${noCrit} µm without red pads` : ""}</div>
+        <div style="opacity:.75">Click a row to apply the thickness</div>
+        ${lim ? `<div class="lim"><div><strong>Limiting packages at ${cur} µm</strong></div>${lim}<div>→ Better use step zones for these than a thinner base stencil</div></div>` : ""}`;
     pop.querySelectorAll("tr[data-t]").forEach(tr => tr.addEventListener("click", (e) => {
         e.stopPropagation();
         const el = document.getElementById("inputBaseThickness");
@@ -1754,9 +1755,9 @@ function updateInspectorUI(ap) {
     document.getElementById("padPos").innerText = `X: ${ap.cx.toFixed(2)} | Y: ${ap.cy.toFixed(2)}`;
 
     const thickUm = Math.round(ap.ipc.effective_thickness * 1000);
-    const zoneText = ap.ipc.zone_id ? ` (Zone)` : ` (Basis)`;
+    const zoneText = ap.ipc.zone_id ? ` (Zone)` : ` (base)`;
     document.getElementById("padThick").innerText = `${thickUm} µm${zoneText}`;
-    document.getElementById("padIdentical").innerText = `${ap.identical_count} auf Platine`;
+    document.getElementById("padIdentical").innerText = `${ap.identical_count} on board`;
     document.querySelectorAll(".lblIdenticalCount").forEach(el => el.innerText = ap.identical_count);
 
     const badge = document.getElementById("padStatusBadge");
@@ -1784,7 +1785,7 @@ function updateInspectorUI(ap) {
         if (ap.ipc && ap.ipc.grain_warn) {
             grAlert.classList.remove("hidden");
             const msgEl = document.getElementById("grainAlertMsg");
-            if (msgEl) msgEl.innerText = ap.ipc.grain_msg || "Mindest-Aperturbreite für Pastentyp unterschritten!";
+            if (msgEl) msgEl.innerText = ap.ipc.grain_msg || "Aperture narrower than minimum for paste type!";
         } else {
             grAlert.classList.add("hidden");
         }
@@ -1837,11 +1838,11 @@ function renderCalculatorResults(data) {
                     <span>${hVal}</span>
                 </div>
                 <div class="calc-excel-row">
-                    <span>Fläche:</span>
+                    <span>Area:</span>
                     <span>${areaStr}</span>
                 </div>
                 <div class="calc-excel-row">
-                    <span>Wandfläche:</span>
+                    <span>Wall area:</span>
                     <span>${wallStr}</span>
                 </div>
                 <div class="calc-excel-row highlight-ar ${arClass}">
@@ -1849,7 +1850,7 @@ function renderCalculatorResults(data) {
                     <span>${r.area_ratio.toFixed(2)}</span>
                 </div>
                 <div class="calc-excel-row">
-                    <span>Volumen:</span>
+                    <span>Volume:</span>
                     <span>${volStr}</span>
                 </div>
             </div>
@@ -1886,19 +1887,24 @@ async function loadLayers() {
 
 // Gruppen im Lagen-Manager (Reihenfolge = Anzeige). Dielektrika/Aufbau sind standardmäßig eingeklappt.
 const LAYER_GROUPS = [
-    { key: "assembly", label: "Bestückung & Paste", test: (l) => ["component", "paste", "paste_orig", "zone", "fiducial"].includes(l.type) },
-    { key: "copper", label: "Kupfer", test: (l) => l.type === "copper" },
-    { key: "mask", label: "Lötstopp / Maske", test: (l) => l.type === "mask" },
-    { key: "silk", label: "Bestückungsdruck", test: (l) => l.type === "silk" },
-    { key: "drill", label: "Bohrungen", test: (l) => l.type === "drill" },
-    { key: "profile", label: "Kontur", test: (l) => l.type === "profile" },
-    { key: "stackup", label: "Dielektrika & Aufbau", collapsed: true, test: (l) => /dielectric|polyimide|prepreg|core|coverlay|cover(top|bottom)|stiffener|bend_area|flex_area|rigid_area/i.test(`${l.name} ${l.filename || ""}`) },
-    { key: "other", label: "Sonstige", test: () => true },
+    { key: "paste", label: "Paste / Stencil", test: (l) => ["paste", "paste_orig", "zone"].includes(l.type) || isOdbStencil(l) },
+    { key: "assembly", label: "Components", test: (l) => ["component", "fiducial"].includes(l.type) },
+    { key: "copper", label: "Copper", test: (l) => l.type === "copper" },
+    { key: "mask", label: "Solder Mask", test: (l) => l.type === "mask" },
+    { key: "silk", label: "Silkscreen", test: (l) => l.type === "silk" },
+    { key: "drill", label: "Drills", test: (l) => l.type === "drill" },
+    { key: "profile", label: "Outline", test: (l) => l.type === "profile" },
+    { key: "stackup", label: "Stackup", collapsed: true, test: (l) => /dielectric|polyimide|prepreg|core|coverlay|cover(top|bottom)|stiffener|bend_area|flex_area|rigid_area/i.test(`${l.name} ${l.filename || ""}`) },
+    { key: "copies", label: "Copies", collapsed: true, test: (l) => /_copy$/i.test(l.name) },
+    { key: "other", label: "Other", test: () => true },
 ];
+// Stencil-Lage aus dem ODB (nicht unsere top_stencil / bot_stencil)
+const isOdbStencil = (l) => l.type !== "paste" && /stencil/i.test(l.name) && !/_copy$/i.test(l.name);
 const layerUi = { search: "", filter: "all", collapsed: null };
 
 function layerGroupOf(layer) {
     // Aufbau-Lagen zuerst prüfen, damit Coverlay/Stiffener nicht unter "Sonstige" landen
+    if (/_copy$/i.test(layer.name)) return LAYER_GROUPS.find(g => g.key === "copies");
     const stack = LAYER_GROUPS.find(g => g.key === "stackup");
     if (!["copper", "paste", "paste_orig", "component", "profile", "drill"].includes(layer.type) && stack.test(layer)) return stack;
     return LAYER_GROUPS.find(g => g.key !== "stackup" && g.test(layer));
@@ -1918,7 +1924,8 @@ function layerMatchesFilter(layer) {
 
 function setupLayerFilters() {
     try { layerUi.collapsed = JSON.parse(localStorage.getItem("sc.layerGroups") || "null"); } catch (e) { layerUi.collapsed = null; }
-    if (!layerUi.collapsed) layerUi.collapsed = Object.fromEntries(LAYER_GROUPS.map(g => [g.key, Boolean(g.collapsed)]));
+    // neue Gruppen bekommen ihren Standard (eingeklappt/offen), gespeicherte bleiben
+    layerUi.collapsed = { ...Object.fromEntries(LAYER_GROUPS.map(g => [g.key, Boolean(g.collapsed)])), ...(layerUi.collapsed || {}) };
     document.getElementById("layerSearch")?.addEventListener("input", (e) => { layerUi.search = e.target.value; renderLayerTable(); });
     document.querySelectorAll("#layerFilterChips button[data-f]").forEach(btn => btn.addEventListener("click", () => {
         layerUi.filter = btn.dataset.f;
@@ -1926,6 +1933,26 @@ function setupLayerFilters() {
         renderLayerTable();
     }));
     document.querySelectorAll("#layerFilterChips button[data-side]").forEach(btn => btn.addEventListener("click", () => switchLayerSide(btn.dataset.side)));
+}
+
+// Generator-Schalter ↔ Lagen der aktiven Seite (Bohrungen beidseitig)
+const PREVIEW_LAYERS = {
+    chkPrevCopper: l => l.type === "copper",
+    chkPrevPaste: l => l.type === "paste",
+    chkPrevMask: l => l.type === "mask",
+    chkPrevCustomer: l => l.type === "paste_orig",
+    chkPrevComponent: l => l.type === "component" && /^comp/i.test(l.name),
+    chkPrevDrills: l => l.type === "drill",
+};
+const previewSideLayers = (test) => state.layers.filter(l => test(l) && (l.side === (state.side || "top") || (l.type === "drill" && l.side === "both")));
+function syncPreviewFromLayers() {
+    for (const [id, test] of Object.entries(PREVIEW_LAYERS)) {
+        const chk = document.getElementById(id);
+        const ls = previewSideLayers(test);
+        if (!chk || !ls.length) continue;
+        const on = ls.some(l => l.visible !== false);
+        if (chk.checked !== on) { chk.checked = on; chk.dispatchEvent(new Event("change")); }
+    }
 }
 
 // TOP/BOT-Schnellschalter: nur Sichtbarkeit von COMP, Stencil (unsere Paste) und Solder; keine Ansicht, kein Spiegeln
@@ -1963,6 +1990,7 @@ function renderLayerTable() {
     const countBadge = document.getElementById("layerCountBadge");
     if (countBadge) countBadge.innerText = state.layers.length;
     updateSideSwitch();
+    syncPreviewFromLayers();
 
     // Bei Suche/Filter alle passenden Gruppen aufgeklappt zeigen
     const filtering = layerUi.search.trim() !== "" || layerUi.filter !== "all";
@@ -1979,8 +2007,8 @@ function renderLayerTable() {
         gr.innerHTML = `<td colspan="5"><div class="layer-group-head">
             <span class="grp-caret">${collapsed ? "▸" : "▾"}</span>
             <span>${g.label}</span>
-            <span class="grp-count">${members.length}${visibleCount ? ` · ${visibleCount} sichtbar` : ""}</span>
-            <button class="grp-eye" title="${visibleCount ? "Alle Lagen der Gruppe ausblenden" : "Alle Lagen der Gruppe einblenden"}">${visibleCount ? icon("eye-closed") : icon("eye")}</button>
+            <span class="grp-count">${members.length}${visibleCount ? ` · ${visibleCount} visible` : ""}</span>
+            <button class="grp-eye" title="${visibleCount ? "Hide all layers of group" : "Show all layers of group"}">${visibleCount ? icon("eye-closed") : icon("eye")}</button>
         </div></td>`;
         gr.addEventListener("click", () => {
             layerUi.collapsed[g.key] = !layerUi.collapsed[g.key];
@@ -2003,12 +2031,12 @@ function renderLayerTable() {
     if (shown === 0 && state.layers.length > 0) {
         const tr = document.createElement("tr");
         tr.className = "layer-empty-row";
-        tr.innerHTML = `<td colspan="5">Keine Lage passt zu Suche/Filter</td>`;
+        tr.innerHTML = `<td colspan="5">No layer matches search/filter</td>`;
         tbody.appendChild(tr);
     }
 }
 
-const LAYER_TYPE_LABEL = { paste: "Paste", paste_orig: "Paste (Kunde)", component: "Component", copper: "Copper", mask: "Mask", drill: "Drill", zone: "Zone", fiducial: "Fiducial", profile: "Profile", silk: "Silk", other: "Misc" };
+const LAYER_TYPE_LABEL = { paste: "Paste", paste_orig: "Paste (Customer)", component: "Component", copper: "Copper", mask: "Mask", drill: "Drill", zone: "Zone", fiducial: "Fiducial", profile: "Profile", silk: "Silk", other: "Misc" };
 
 function layerRow(layer) {
         const tr = document.createElement("tr");
@@ -2020,15 +2048,15 @@ function layerRow(layer) {
 
         tr.innerHTML = `
             <td class="col-chk">
-                <input type="checkbox" class="layer-chk-input" data-layer-id="${layer.id}" ${isVisible ? 'checked' : ''} title="Lage ein-/ausblenden (Haken)">
+                <input type="checkbox" class="layer-chk-input" data-layer-id="${layer.id}" ${isVisible ? 'checked' : ''} title="Show/hide layer">
             </td>
             <td class="col-color">
-                <input type="color" class="layer-color-picker" data-layer-id="${layer.id}" value="${color}" title="Farbe ändern">
+                <input type="color" class="layer-color-picker" data-layer-id="${layer.id}" value="${color}" title="Change color">
             </td>
-            <td class="layer-name-cell" title="${escapeHtml(layer.name)} (${escapeHtml(layer.filename || '')})">${escapeHtml(layer.name)}</td>
+            <td class="layer-name-cell" title="${escapeHtml(layer.name)} (${escapeHtml(layer.filename || '')})">${escapeHtml(layer.name)}${isOdbStencil(layer) ? ' <span class="layer-src" title="Stencil layer from the ODB++ job, not generated here">ODB</span>' : ""}</td>
             <td class="col-info">${escapeHtml([layer.info, layer.count ? `Obj: ${layer.count.toLocaleString()}` : "", LAYER_TYPE_LABEL[typeBadge] || layer.type || ""].filter(Boolean).join("; "))}</td>
             <td class="col-del">
-                <button class="layer-del-btn" data-layer-id="${layer.id}" title="Lage entfernen">✕</button>
+                <button class="layer-del-btn" data-layer-id="${layer.id}" title="Remove layer">✕</button>
             </td>
         `;
 
@@ -2061,7 +2089,7 @@ function layerRow(layer) {
         const delBtn = tr.querySelector(".layer-del-btn");
         delBtn.addEventListener("click", async (e) => {
             e.stopPropagation();
-            if (confirm(`Möchten Sie die Lage "${layer.name}" wirklich entfernen?`)) {
+            if (confirm(`Remove layer "${layer.name}"?`)) {
                 await fetch(`/api/layer/${layer.id}`, { method: "DELETE" });
                 delete state.layerPrimitives[layer.id];
                 state.layers = state.layers.filter(l => l.id !== layer.id);
@@ -2079,9 +2107,9 @@ async function saveLibrary(customer) {
         const res = await fetch("/api/library/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ customer }) });
         const d = await res.json();
         if (res.ok && d.status === "ok") return true;
-        showToast(`Bibliothek „${customer}“ nicht gespeichert: ${d.message || res.status}`, 8000);
+        showToast(`Library "${customer}" not saved: ${d.message || res.status}`, 8000);
     } catch (e) {
-        showToast(`Bibliothek „${customer}“ nicht gespeichert: ${e}`, 8000);
+        showToast(`Library "${customer}" not saved: ${e}`, 8000);
     }
     return false;
 }
@@ -2112,7 +2140,7 @@ function showToast(msg, durationMs = 3500) {
 
 async function promptCloseBeforeLoad() {
     // Nur bei ungespeicherten Änderungen nachfragen
-    return guardUnsaved("einen neuen Datensatz laden");
+    return guardUnsaved("loading a new dataset");
 }
 
 // Windows Dialog Triggers
@@ -2120,7 +2148,7 @@ async function triggerWindowsFileDialog(clearPrevious = true) {
     if (clearPrevious) {
         if (!await promptCloseBeforeLoad()) return;
     }
-    const toast = showToast("Windows-Dateiauswahl geöffnet... Bitte wählen Sie Dateien im Explorer.", 0);
+    const toast = showToast("Windows file dialog open... Please select files in Explorer.", 0);
     try {
         const res = await fetch("/api/open_windows_file_dialog", {
             method: "POST",
@@ -2130,25 +2158,25 @@ async function triggerWindowsFileDialog(clearPrevious = true) {
         toast.remove();
         const data = await res.json();
         if (data.status === "ok") {
-            showToast(`${data.count} Lage(n) erfolgreich importiert!`);
+            showToast(`${data.count} layer(s) imported successfully!`);
             await loadLayers();
             await refreshApertureData();
             fitToScreen();
             document.getElementById("zipModal")?.classList.add("hidden");
         } else if (data.status === "cancelled") {
-            showToast("Dateiauswahl abgebrochen");
+            showToast("File selection cancelled");
         } else {
-            showToast(`Fehler: ${data.message || 'Unbekannt'}`);
+            showToast(`Error: ${data.message || 'Unknown'}`);
         }
     } catch (e) {
         toast.remove();
-        showToast("Fehler beim Aufruf der Windows-Dateiauswahl");
+        showToast("Error opening Windows file dialog");
     }
 }
 
 async function triggerWindowsFolderDialog() {
     if (!await promptCloseBeforeLoad()) return;
-    const toast = showToast("Windows-Ordnerauswahl geöffnet... Bitte wählen Sie einen Ordner im Explorer.", 0);
+    const toast = showToast("Windows folder dialog open... Please select a folder in Explorer.", 0);
     try {
         const res = await fetch("/api/open_windows_folder_dialog", {
             method: "POST",
@@ -2158,26 +2186,26 @@ async function triggerWindowsFolderDialog() {
         toast.remove();
         const data = await res.json();
         if (data.status === "ok") {
-            showToast(`Ordner importiert (${data.count} Lagen)!`);
+            showToast(`Folder imported (${data.count} layers)!`);
             await loadLayers();
             await refreshApertureData();
             fitToScreen();
             document.getElementById("zipModal")?.classList.add("hidden");
         } else if (data.status === "cancelled") {
-            showToast("Ordnerauswahl abgebrochen");
+            showToast("Folder selection cancelled");
         } else {
-            showToast(`Fehler: ${data.message || 'Unbekannt'}`);
+            showToast(`Error: ${data.message || 'Unknown'}`);
         }
     } catch (e) {
         toast.remove();
-        showToast("Fehler beim Aufruf der Windows-Ordnerauswahl");
+        showToast("Error opening Windows folder dialog");
     }
 }
 
 async function uploadFilesFromBrowser(files) {
     if (!files || files.length === 0) return;
     if (!await promptCloseBeforeLoad()) return;
-    const toast = showToast(`Lade ${files.length} Datei(en) hoch...`, 0);
+    const toast = showToast(`Uploading ${files.length} file(s)...`, 0);
     try {
         const formData = new FormData();
         for (let i = 0; i < files.length; i++) {
@@ -2192,16 +2220,16 @@ async function uploadFilesFromBrowser(files) {
         toast.remove();
         const data = await res.json();
         if (data.status === "ok") {
-            showToast(`${data.count} Lage(n) importiert!`);
+            showToast(`${data.count} layer(s) imported!`);
             await loadLayers();
             await refreshApertureData();
             fitToScreen();
         } else {
-            showToast(`Fehler: ${data.message}`);
+            showToast(`Error: ${data.message}`);
         }
     } catch (e) {
         toast.remove();
-        showToast("Upload fehlgeschlagen");
+        showToast("Upload failed");
     }
 }
 
@@ -2423,7 +2451,7 @@ function setupEventListeners() {
         }
         if (targetPkg) {
             switchWorkspace("package", targetPkg, targetRot);
-            showToast(`Package "${targetPkg}" im Stencil Generator geöffnet (${targetRot}°)`);
+            showToast(`Package "${targetPkg}" opened in Stencil Generator (${targetRot}°)`);
             if (targetPin !== null && targetPin !== undefined) {
                 setTimeout(() => {
                     if (pkgState.activePackageData && pkgState.activePackageData.pads) {
@@ -2464,6 +2492,18 @@ function setupEventListeners() {
         }
         if (currentWorkspaceMode === "board" && handleSelectionKey(e)) {
             e.preventDefault();
+            return;
+        }
+        // Stencil Generator: Pfeil rechts klappt die Pins des Packages auf, links wieder zu (wie im Explorer)
+        if (currentWorkspaceMode !== "board" && (e.key === "ArrowRight" || e.key === "ArrowLeft") && !e.defaultPrevented && pkgState.activePkgName) {
+            const open = e.key === "ArrowRight";
+            if (pkgState.pinsExpanded !== open) {
+                e.preventDefault();
+                if (!open && pkgState.pinBarMode !== "all") openAllPinsBar();
+                pkgState.pinsExpanded = open;
+                localStorage.setItem("sc.pinsOpen", open ? "1" : "0");
+                renderPkgTree();
+            }
             return;
         }
         // Stencil Generator: Pfeil hoch/runter geht in der Package-Liste zum vorigen/nächsten Package
@@ -2661,7 +2701,7 @@ function setupEventListeners() {
 
     document.getElementById("btnRefreshLayers")?.addEventListener("click", async () => {
         await loadLayers();
-        showToast("Lagen aktualisiert");
+        showToast("Layers updated");
     });
 
     document.getElementById("layerGlobalOpacity")?.addEventListener("input", (e) => {
@@ -2922,7 +2962,7 @@ function setupEventListeners() {
             });
             const data = await res.json();
             state.pasteType = data.paste_type;
-            showToast(`Pastentyp gewechselt auf ${data.paste_type.toUpperCase()} (5-Ball-Regel aktiv)`);
+            showToast(`Paste type changed to ${data.paste_type.toUpperCase()} (5-ball rule active)`);
             await refreshApertureData();
         } catch (err) {
             console.error("Fehler beim Wechsel des Pastentyps:", err);
@@ -2948,9 +2988,9 @@ function setupEventListeners() {
         if (pipModal) {
             pipModal.classList.remove("hidden");
             if (state.selectedAperture) {
-                document.getElementById("pipTargetInfo").innerText = `Ziel: Apertur #${state.selectedAperture.id} (${state.selectedAperture.width.toFixed(2)} × ${state.selectedAperture.height.toFixed(2)} mm)`;
+                document.getElementById("pipTargetInfo").innerText = `Target: aperture #${state.selectedAperture.id} (${state.selectedAperture.width.toFixed(2)} × ${state.selectedAperture.height.toFixed(2)} mm)`;
             } else {
-                document.getElementById("pipTargetInfo").innerText = `Hinweis: Kein Pad gewählt (Vorschau-Modus)`;
+                document.getElementById("pipTargetInfo").innerText = `Note: no pad selected (preview mode)`;
             }
             calculatePip();
         }
@@ -2963,7 +3003,7 @@ function setupEventListeners() {
         const gH = document.getElementById("groupPipPinH");
         if (gH) gH.style.display = isRect ? "block" : "none";
         const lbl = document.getElementById("lblPipPinDim");
-        if (lbl) lbl.innerText = isRect ? "Pin-Breite (mm):" : "Pin-Ø (mm):";
+        if (lbl) lbl.innerText = isRect ? "Pin width (mm):" : "Pin-Ø (mm):";
         calculatePip();
     });
 
@@ -2984,7 +3024,7 @@ function setupEventListeners() {
 
     document.getElementById("btnApplyPipAperture")?.addEventListener("click", async () => {
         if (state.selectedApertureId === null) {
-            alert("Bitte wählen Sie zuerst eine Apertur / ein Pad auf der Platine aus!");
+            alert("Please select an aperture / pad on the board first!");
             return;
         }
         await applyPipToAperture();
@@ -3013,9 +3053,9 @@ function setupEventListeners() {
             await loadLayers();
             await refreshApertureData();
             fitToScreen();
-            showToast("ZIP-Datensatz geladen!");
+            showToast("ZIP dataset loaded!");
         } else {
-            alert("Fehler beim Laden der ZIP: " + data.message);
+            alert("Error loading ZIP: " + data.message);
         }
     });
 
@@ -3025,7 +3065,7 @@ function setupEventListeners() {
 
     // Datensatz schließen (mit Abfrage bei ungespeicherten Änderungen)
     document.getElementById("btnCloseDataset")?.addEventListener("click", async () => {
-        if (!(await guardUnsaved("den Datensatz schließen"))) return;
+        if (!(await guardUnsaved("closing the dataset"))) return;
         await fetch("/api/project/discard_recovery", { method: "POST" });
         await closeCurrentDataset();
     });
@@ -3035,7 +3075,7 @@ async function triggerExport() {
     try {
         const res = await fetch("/api/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
         const data = await res.json();
-        showToast("Gerber-Dateien exportiert!");
+        showToast("Gerber files exported!");
         return data;
     } catch (e) {
         console.error("Fehler beim Export:", e);
@@ -3058,7 +3098,7 @@ async function closeCurrentDataset() {
         await loadLayers();
         await refreshApertureData();
         fitToScreen();
-        showToast("✕ Datensatz geschlossen");
+        showToast("✕ Dataset closed");
         if (currentWorkspaceMode === "package") {
             await loadPackagesList();
             selectPackage("0805");
@@ -3122,7 +3162,7 @@ function renderZonesList() {
     list.innerHTML = "";
 
     if (!state.zones || state.zones.length === 0) {
-        list.innerHTML = `<p class="empty-state">Keine Stufenzonen definiert.</p>`;
+        list.innerHTML = `<p class="empty-state">No step zones defined.</p>`;
         return;
     }
 
@@ -3133,18 +3173,18 @@ function renderZonesList() {
         card.innerHTML = `
             <div class="zone-card-info">
                 <h4>${escapeHtml(z.name)}</h4>
-                <div class="zone-card-meta">${z.width} x ${z.height} mm | Dicke: <strong>${thickUm} µm</strong></div>
+                <div class="zone-card-meta">${z.width} x ${z.height} mm | Thickness: <strong>${thickUm} µm</strong></div>
             </div>
             <div style="display: flex; gap: 6px;">
-                <button class="btn btn-sm btn-secondary btn-edit-thick" data-id="${z.id}" data-thick="${thickUm}">Dicke</button>
-                <button class="btn btn-sm btn-danger btn-del-zone" data-id="${z.id}">Löschen</button>
+                <button class="btn btn-sm btn-secondary btn-edit-thick" data-id="${z.id}" data-thick="${thickUm}">Thickness</button>
+                <button class="btn btn-sm btn-danger btn-del-zone" data-id="${z.id}">Delete</button>
             </div>
         `;
 
         card.querySelector(".btn-edit-thick").addEventListener("click", async (e) => {
             e.stopPropagation();
             const cur = card.querySelector(".btn-edit-thick").dataset.thick;
-            const neu = prompt(`Neue Zonendicke für "${z.name}" in µm eingeben:`, cur);
+            const neu = prompt(`New zone thickness for "${z.name}" in µm:`, cur);
             if (neu && !isNaN(parseFloat(neu))) {
                 await fetch(`/api/zone/${z.id}`, {
                     method: "POST",
@@ -3167,19 +3207,19 @@ function renderZonesList() {
             const f = (v) => (+v).toFixed(3);
             const ed = document.createElement("div");
             ed.className = "zone-edit";
-            ed.innerHTML = `<label>Dicke µm<input type="number" data-k="t" step="5" value="${thickUm}"></label>
-                <label>Breite mm<input type="number" data-k="w" step="0.1" value="${f(z.x1 - z.x0)}"></label>
-                <label>Höhe mm<input type="number" data-k="h" step="0.1" value="${f(z.y1 - z.y0)}"></label>
-                <label>Mitte X/Y<input type="text" data-k="c" value="${f((z.x0 + z.x1) / 2)} / ${f((z.y0 + z.y1) / 2)}"></label>
-                <div class="full"><button class="btn btn-xs btn-primary">Übernehmen</button></div>`;
+            ed.innerHTML = `<label>Thickness µm<input type="number" data-k="t" step="5" value="${thickUm}"></label>
+                <label>Width mm<input type="number" data-k="w" step="0.1" value="${f(z.x1 - z.x0)}"></label>
+                <label>Height mm<input type="number" data-k="h" step="0.1" value="${f(z.y1 - z.y0)}"></label>
+                <label>Center X/Y<input type="text" data-k="c" value="${f((z.x0 + z.x1) / 2)} / ${f((z.y0 + z.y1) / 2)}"></label>
+                <div class="full"><button class="btn btn-xs btn-primary">Apply</button></div>`;
             ed.addEventListener("click", (e) => e.stopPropagation());
             ed.querySelector("button").addEventListener("click", async () => {
                 const v = (k) => ed.querySelector(`[data-k="${k}"]`).value;
                 const [cx, cy] = v("c").split("/").map(s => parseFloat(s.replace(",", ".")));
                 const w = parseFloat(v("w")), h = parseFloat(v("h")), t = parseFloat(v("t"));
-                if (![cx, cy, w, h, t].every(Number.isFinite) || w <= 0 || h <= 0) { showToast("Ungültige Werte"); return; }
+                if (![cx, cy, w, h, t].every(Number.isFinite) || w <= 0 || h <= 0) { showToast("Invalid values"); return; }
                 await saveZoneGeometry({ id: z.id, x0: cx - w / 2, y0: cy - h / 2, x1: cx + w / 2, y1: cy + h / 2, thickness: t / 1000 });
-                showToast(`${z.name} geändert`);
+                showToast(`${z.name} changed`);
             });
             card.appendChild(ed);
         }
@@ -3188,7 +3228,7 @@ function renderZonesList() {
 }
 
 // Grabstein-Risiko: Liste, Übernehmen, Einstellungen
-const TOMB_SHAPES = { inverted_house_builder: "Haus, Spitze nach außen", house_builder: "Haus, Spitze zum Bauteil", simple_rect: "Rechteck (verkleinert)" };
+const TOMB_SHAPES = { inverted_house_builder: "House, tip outward", house_builder: "House, tip to component", simple_rect: "Rectangle (reduced)" };
 let tombState = null;
 
 async function refreshTombstones() {
@@ -3203,7 +3243,7 @@ function renderTombstones() {
     if (!d) return;
     const badge = document.getElementById("tombTabBadge");
     if (badge) { badge.textContent = d.open; badge.classList.toggle("hidden", !d.open); }
-    document.getElementById("tombCount").textContent = `${d.open} offen / ${d.candidates.length}`;
+    document.getElementById("tombCount").textContent = `${d.open} open / ${d.candidates.length}`;
     document.getElementById("tombRuleLabel").textContent = TOMB_SHAPES[d.config.rule.rule_type] || d.config.rule.rule_type;
     document.getElementById("chkTombAuto").checked = d.config.auto_apply;
     const c = d.config;
@@ -3213,23 +3253,23 @@ function renderTombstones() {
     const list = document.getElementById("tombList");
     list.innerHTML = "";
     if (!d.candidates.length) {
-        list.innerHTML = `<p class="empty-state" style="padding:8px">${d.copper_data ? "Keine 2-Pin-Chips mit ungleicher Kupferanbindung gefunden." : "Keine Kupferdaten (nur bei ODB++ mit Außenlagen verfügbar)."}</p>`;
+        list.innerHTML = `<p class="empty-state" style="padding:8px">${d.copper_data ? "No 2-pin chips with unequal copper connection found." : "No copper data (only available for ODB++ with outer layers)."}</p>`;
         return;
     }
     for (const t of d.candidates) {
         const row = document.createElement("div");
         row.className = `tomb-row ${t.has_rule ? "done" : ""} ${state.focusComp === t.component ? "focused" : ""}`;
-        row.title = "Anklicken: auf dem Board zeigen";
-        const pinInfo = t.pins.map(p => `Pin ${p.pin}${p.pin === t.weak_pin ? " (schwach)" : ""}: ${p.pour_area > 0 ? `Fläche ${p.pour_area.toFixed(1)} mm²` : `${p.traces} Bahn(en) ${p.trace_w.toFixed(2)} mm${p.vias ? `, ${p.vias} Via` : ""}`}`).join(" · ");
+        row.title = "Click: show on board";
+        const pinInfo = t.pins.map(p => `Pin ${p.pin}${p.pin === t.weak_pin ? " (weak)" : ""}: ${p.pour_area > 0 ? `Pour ${p.pour_area.toFixed(1)} mm²` : `${p.traces} trace(s) ${p.trace_w.toFixed(2)} mm${p.vias ? `, ${p.vias} Via` : ""}`}`).join(" · ");
         const shapes = [...new Set(t.pins.map(p => shapeLabel(p.shape)))].join(" / ");
         row.innerHTML = `<div class="t-head">${escapeHtml(t.component)}<span class="pkg">${escapeHtml(t.package)}</span></div>
             <div class="t-btns">
                 ${t.has_rule
-                    ? `<span class="ok-tag">${icon("check")} Regel aktiv</span><button class="btn btn-xs btn-ghost" data-act="revert" title="Bauteilregel entfernen – Öffnungen wieder wie das Package">Rückgängig</button>`
-                    : '<button class="btn btn-xs btn-secondary" data-act="apply">Übernehmen</button>'}
+                    ? `<span class="ok-tag">${icon("check")} Rule active</span><button class="btn btn-xs btn-ghost" data-act="revert" title="Remove component rule – apertures back to package rule">Undo</button>`
+                    : '<button class="btn btn-xs btn-secondary" data-act="apply">Apply</button>'}
             </div>
             <div class="t-reason">${escapeHtml(t.reason)}<br>${escapeHtml(pinInfo)}</div>
-            <div class="t-shape">Öffnung: <strong>${escapeHtml(shapes)}</strong></div>`;
+            <div class="t-shape">Aperture: <strong>${escapeHtml(shapes)}</strong></div>`;
         row.addEventListener("click", () => focusComponent(t));
         row.querySelector('[data-act="apply"]')?.addEventListener("click", (e) => { e.stopPropagation(); applyTombstone([t.component], t); });
         row.querySelector('[data-act="revert"]')?.addEventListener("click", (e) => { e.stopPropagation(); revertTombstone([t.component], t); });
@@ -3240,11 +3280,11 @@ function renderTombstones() {
 // Lesbare Bezeichnung der erzeugten Öffnungsform
 function shapeLabel(kind) {
     const k = String(kind || "original");
-    if (k.includes("inverted_house")) return "Haus, Spitze nach außen";
-    if (k.includes("house")) return "Haus, Spitze zum Bauteil";
-    if (k.includes("simple_rect") || k.includes("package_group_rect")) return "Rechteck";
-    if (k.includes("bga")) return "Rund";
-    if (k === "original") return "Original (Kunde)";
+    if (k.includes("inverted_house")) return "House, tip outward";
+    if (k.includes("house")) return "House, tip to component";
+    if (k.includes("simple_rect") || k.includes("package_group_rect")) return "Rectangle";
+    if (k.includes("bga")) return "Round";
+    if (k === "original") return "Original (Customer)";
     return k.replace(/_/g, " ");
 }
 
@@ -3269,10 +3309,10 @@ async function applyTombstone(components, focus = null) {
     if (focus) {
         const t = tombState.candidates.find(c => c.component === focus.component) || focus;
         await focusComponent(t);
-        showToast(`${t.component}: Öffnungen jetzt „${shapeLabel(t.pins[0].shape)}“ (Rückgängig in der Liste oder Strg+Z)`);
+        showToast(`${t.component}: apertures now "${shapeLabel(t.pins[0].shape)}" (undo in list or Ctrl+Z)`);
     } else {
         renderTombstones();
-        showToast(`Grabstein-Schutz für ${d.applied} Bauteil(e) übernommen (Strg+Z rückgängig)`);
+        showToast(`Tombstoning protection applied to ${d.applied} component(s) (Ctrl+Z to undo)`);
     }
 }
 
@@ -3284,7 +3324,7 @@ async function revertTombstone(components, focus = null) {
     if (focus) {
         const t = tombState.candidates.find(c => c.component === focus.component) || focus;
         await focusComponent(t);
-        showToast(`${t.component}: Bauteilregel entfernt, Öffnungen wieder „${shapeLabel(t.pins[0].shape)}“`);
+        showToast(`${t.component}: component rule removed, apertures back to "${shapeLabel(t.pins[0].shape)}"`);
     } else {
         renderTombstones();
     }
@@ -3321,7 +3361,7 @@ async function saveTombstoneConfig(extra = {}) {
         min_pour_area: num("tombPour"), trace_ratio: num("tombRatio"),
         rule: {
             rule_type: document.getElementById("tombShape").value,
-            name: `Grabstein-Schutz (${TOMB_SHAPES[document.getElementById("tombShape").value]})`,
+            name: `Tombstoning protection (${TOMB_SHAPES[document.getElementById("tombShape").value]})`,
             house_cut_pct: num("tombCut"), undersize_w: num("tombUndersize"), undersize_h: num("tombUndersize"), corner_radius: num("tombRadius"),
         },
         ...extra,
@@ -3331,9 +3371,9 @@ async function saveTombstoneConfig(extra = {}) {
     renderTombstones();
     if (document.getElementById("chkTombSaveLib").checked) {
         const cust = (await (await fetch("/api/libraries")).json()).current_customer || "Standard";
-        if (await saveLibrary(cust)) showToast(`Grabstein-Einstellungen in „${cust}“ gespeichert`);
+        if (await saveLibrary(cust)) showToast(`Tombstoning settings saved to "${cust}"`);
     } else {
-        showToast("Grabstein-Einstellungen übernommen");
+        showToast("Tombstoning settings applied");
     }
 }
 
@@ -3343,7 +3383,7 @@ function renderCriticalList() {
     list.innerHTML = "";
 
     if (!state.stats || !state.stats.top_critical_packages || state.stats.top_critical_packages.length === 0) {
-        list.innerHTML = `<p class="empty-state">Keine IPC-Verletzungen gefunden! Alle Aperturen lösen sicher aus. </p>`;
+        list.innerHTML = `<p class="empty-state">No IPC violations found! All apertures release reliably. </p>`;
         return;
     }
 
@@ -3353,9 +3393,9 @@ function renderCriticalList() {
         card.innerHTML = `
             <div class="crit-header">
                 <span>Package: ${p.group} mm</span>
-                <span class="badge crit">${p.crit_count} kritisch</span>
+                <span class="badge crit">${p.crit_count} critical</span>
             </div>
-            <div class="crit-meta">Insgesamt ${p.total} Pads auf dem Panel. Klicken zum Anspringen.</div>
+            <div class="crit-meta">${p.total} pads total on the panel. Click to jump.</div>
         `;
         card.addEventListener("click", () => {
             const target = state.apertures.find(a => a.pkg === p.group && a.status === "CRIT");
@@ -3541,6 +3581,8 @@ function setupPkgCanvas() {
             return;
         }
 
+        if (!pkgState.spaceDown && sketchMouseDown(e, mmX, mmY)) return;
+
         // Prüfe ob Pad geklickt wurde
         let clickedPad = null;
         if (pkgState.activePackageData && pkgState.activePackageData.pads) {
@@ -3591,6 +3633,7 @@ function setupPkgCanvas() {
     });
 
     window.addEventListener("mousemove", (e) => {
+        if (currentWorkspaceMode === "package" && !pkgState.isDragging && sketchMouseMove(e)) return;
         if (pkgState.box && pkgCanvas) {
             const r = pkgCanvas.getBoundingClientRect();
             pkgState.box.x1 = e.clientX - r.left;
@@ -3616,6 +3659,7 @@ function setupPkgCanvas() {
 
     window.addEventListener("mouseup", () => {
         pkgState.isDragging = false;
+        if (sketchMouseUp()) return;
         const b = pkgState.box;
         if (!b) return;
         pkgState.box = null;
@@ -3642,12 +3686,15 @@ function setupPkgCanvas() {
             e.preventDefault();
             clearMeasurements();
             if (measureState.active) toggleMeasureTool(false);
+            return;
         }
+        if (e.target === pkgCanvas) sketchContextMenu(e);
     });
 
     // Doppelklick auf Pad im Package-Modus -> Pin auswählen und Eingabe fokussieren
     pkgContainer.addEventListener("dblclick", (e) => {
-        if (e.target !== pkgCanvas || measureState.active) return;
+        if (sk.tool === "poly") { finishPoly(); return; }
+        if (e.target !== pkgCanvas || measureState.active || sk.tool) return;
         const { x: mmX, y: mmY } = pkgScreenToWorld(e.clientX, e.clientY);
 
         if (pkgState.activePackageData && pkgState.activePackageData.pads) {
@@ -3713,12 +3760,12 @@ function renderLibHeader() {
     }
     list.insertAdjacentHTML("beforeend", '<div class="dropdown-sep"></div>');
     const pc = document.createElement("button");
-    pc.textContent = "Vom PC laden…";
+    pc.textContent = "Load from PC…";
     pc.className = "desktop-only";
     pc.addEventListener("click", () => loadLibraryFlow({ pick: true }));
     if (window.__TAURI__) list.appendChild(pc);
     const nb = document.createElement("button");
-    nb.textContent = "＋ Neue Bibliothek…";
+    nb.textContent = "＋ New Library…";
     nb.addEventListener("click", () => document.getElementById("newLibModal").classList.remove("hidden"));
     list.appendChild(nb);
 }
@@ -3741,7 +3788,7 @@ function openLibAsk() {
         const b = document.createElement("button");
         b.className = "btn btn-secondary";
         b.textContent = lib === "Standard" ? "Standard (Inhouse)" : lib;
-        if (lib === pkgState.currentCustomer) b.textContent += " (aktiv)";
+        if (lib === pkgState.currentCustomer) b.textContent += " (active)";
         b.addEventListener("click", () => { m.classList.add("hidden"); loadLibraryFlow({ customer: lib }); });
         list.appendChild(b);
     }
@@ -3757,7 +3804,7 @@ async function loadLibraryFlow(src) {
     if (pkgState.libEdited) {
         const d = await post("/api/library/diff", src);
         if (d.status === "cancelled") return;
-        if (d.status !== "ok") { showToast(d.error || d.message || "Bibliothek nicht lesbar", 5000); return; }
+        if (d.status !== "ok") { showToast(d.error || d.message || "Library not readable", 5000); return; }
         source = d.path ? { path: d.path } : { customer: d.customer };
         if (d.changes.length) {
             keep = await chooseLibDiff(d.customer, d.changes);
@@ -3766,14 +3813,14 @@ async function loadLibraryFlow(src) {
     }
     const r = await post("/api/library/load", { ...source, keep });
     if (r.status === "cancelled") return;
-    if (r.status !== "ok") { showToast(r.error || r.message || "Laden fehlgeschlagen", 5000); return; }
+    if (r.status !== "ok") { showToast(r.error || r.message || "Load failed", 5000); return; }
     pkgState.libEdited = keep.length > 0;
     pkgState.libAsked = true;
     await loadLibraries();
     await loadPackagesList();
     if (pkgState.activePkgName) selectPackage(pkgState.activePkgName);
     refreshHistory();
-    showToast(`Bibliothek „${r.customer}“ geladen${keep.length ? ` – ${keep.length} eigene Stände behalten` : ""}`);
+    showToast(`Library "${r.customer}" loaded${keep.length ? ` – ${keep.length} own versions kept` : ""}`);
 }
 
 // Dialog: je Änderung "mein Stand" oder "Bibliothek"; liefert die Liste "behalten" oder null (Abbrechen)
@@ -3817,7 +3864,7 @@ const PKG_GROUPS = [
     { key: "THT", label: "THT Packages" },
     { key: "Other", label: "Other Packages" },
     { key: "Fiducial", label: "Fiducials" },
-    { key: "Library", label: "Bibliothek (nicht auf Platine)" }
+    { key: "Library", label: "Library (not on board)" }
 ];
 
 function renderPkgTree() {
@@ -3843,13 +3890,13 @@ function renderPkgTree() {
         header.className = "pkg-group-header";
         const isActive = pkgState.ruleTarget?.kind === "group" && pkgState.ruleTarget.id === g.key;
         header.className = `pkg-group-header ${isActive ? "active" : ""}`;
-        header.innerHTML = `<span class="caret">${collapsed ? "▸" : "▾"}</span><span class="grp-label" title="Gruppenregel bearbeiten">${g.label}</span><span class="pkg-group-count">${members.length}</span>`;
+        header.innerHTML = `<span class="caret">${collapsed ? "▸" : "▾"}</span><span class="grp-label" title="Edit group rule">${g.label}</span><span class="pkg-group-count">${members.length}</span>`;
         header.querySelector(".caret").addEventListener("click", (e) => {
             e.stopPropagation();
             pkgState.collapsedGroups[g.key] = !pkgState.collapsedGroups[g.key];
             renderPkgTree();
         });
-        header.addEventListener("contextmenu", (e) => showTreeMenu(e, [[`Nur ${g.label} generieren`, () => generateTarget("group", g.key)]]));
+        header.addEventListener("contextmenu", (e) => showTreeMenu(e, [[`Generate ${g.label} only`, () => generateTarget("group", g.key)]]));
         header.querySelector(".grp-label").addEventListener("click", (e) => {
             e.stopPropagation();
             selectGroupRule(g.key);
@@ -3865,8 +3912,8 @@ function renderPkgTreeItem(list, p) {
         const item = document.createElement("div");
         const inherits = p.rule?.rule_type === "inherit";
         item.className = `pkg-tree-item ${p.name === pkgState.activePkgName && pkgState.ruleTarget?.kind === "package" ? 'active' : ''} ${inherits ? 'inherits' : ''} ${p.review ? `review-${p.review}` : ""}`;
-        const reviewText = { open: "Offen – noch nichts erzeugt", auto: "Automatisch erzeugt – noch nicht bearbeitet", done: "Bearbeitet / erledigt" }[p.review] || "";
-        item.title = `${inherits ? "Regel von der Gruppe geerbt" : `Eigene Regel: ${p.rule?.rule_type}`}${reviewText ? `
+        const reviewText = { open: "Open – nothing generated yet", auto: "Auto-generated – not edited yet", done: "Edited / done" }[p.review] || "";
+        item.title = `${inherits ? "Rule inherited from group" : `Own rule: ${p.rule?.rule_type}`}${reviewText ? `
 ${reviewText}` : ""}`;
         
         let pkgIcon = icon("package");
@@ -3878,11 +3925,11 @@ ${reviewText}` : ""}`;
             <div class="pkg-item-main">
                 <span class="pkg-item-icon">${pkgIcon}</span>
                 <span class="pkg-item-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>${inherits ? "" : '<span class="own-rule-dot">●</span>'}
-                ${p.name === pkgState.activePkgName && pkgState.activePackageData?.pads?.length ? `<button class="pkg-pin-toggle" title="Pins ein-/ausklappen">${pkgState.pinsExpanded ? "−" : "+"}</button>` : ""}
+                ${p.name === pkgState.activePkgName && pkgState.activePackageData?.pads?.length ? `<button class="pkg-pin-toggle" title="Expand/collapse pins">${pkgState.pinsExpanded ? "−" : "+"}</button>` : ""}
             </div>
             <div class="pkg-item-badges">
                 ${p.pitch > 0 ? `<span class="pkg-badge-pitch">${p.pitch}mm</span>` : ''}
-                ${p.component_count > 0 ? `<span class="pkg-badge-count" title="${p.component_count}x auf Platine">${p.component_count}x</span>` : ''}
+                ${p.component_count > 0 ? `<span class="pkg-badge-count" title="${p.component_count}x on board">${p.component_count}x</span>` : ''}
                 ${p.sides && p.sides.bot > 0 ? `<span class="pkg-badge-side" title="TOP ${p.sides.top}× · BOT ${p.sides.bot}×">${p.sides.top}/${p.sides.bot}</span>` : ""}
             </div>
         `;
@@ -3894,8 +3941,8 @@ ${reviewText}` : ""}`;
             selectPackage(p.name);
         });
         item.addEventListener("contextmenu", (e) => showTreeMenu(e, [
-            [`Nur ${p.name} generieren`, () => generateTarget("package", p.name)],
-            [`Ganze Gruppe ${(PKG_GROUPS.find(g => g.key === (p.group || "SMD")) || {}).label || p.group} generieren`, () => generateTarget("group", p.group || "SMD")]
+            [`Generate ${p.name} only`, () => generateTarget("package", p.name)],
+            [`Generate whole group ${(PKG_GROUPS.find(g => g.key === (p.group || "SMD")) || {}).label || p.group}`, () => generateTarget("group", p.group || "SMD")]
         ]));
         item.querySelector(".pkg-pin-toggle")?.addEventListener("click", (e) => {
             e.stopPropagation();
@@ -3915,8 +3962,9 @@ ${reviewText}` : ""}`;
             data.pads.forEach((pad, idx) => {
                 const pi = document.createElement("div");
                 const hasOv = ovs[pad.pin] || ovs[String(pad.pin)];
-                pi.className = `pkg-pin-item ${isPinSelected(pad.pin) ? "active" : ""}`;
-                pi.innerHTML = `<span>${pad.pin}(${idx})</span><span>${pad.w}×${pad.h}${pad.drill ? ` ⌀${pad.drill}` : ""}</span>${hasOv ? `<span class="pin-ov">${icon("edit")}</span>` : ""}`;
+                const hidden = isPadIgnored(pad);
+                pi.className = `pkg-pin-item ${isPinSelected(pad.pin) ? "active" : ""} ${hidden ? "pin-hidden" : ""}`;
+                pi.innerHTML = `<span>${pad.pin}(${idx})</span><span>${pad.w}×${pad.h}${pad.drill ? ` ⌀${pad.drill}` : ""}${hidden ? " hidden" : ""}</span>${hasOv ? `<span class="pin-ov">${icon("edit")}</span>` : ""}`;
                 pi.addEventListener("click", (e) => {
                     e.stopPropagation();
                     if (e.ctrlKey || e.shiftKey) {
@@ -3928,6 +3976,13 @@ ${reviewText}` : ""}`;
                     renderPkgTree();
                 });
                 pins.appendChild(pi);
+            });
+            sketchEntries().forEach((t, i) => {
+                const si = document.createElement("div");
+                si.className = `pkg-pin-item pin-sketch ${sk.sel === i ? "active" : ""}`;
+                si.textContent = t;
+                si.addEventListener("click", (e) => { e.stopPropagation(); sk.sel = i; renderPkgTree(); renderPkgPreview(); });
+                pins.appendChild(si);
             });
             list.appendChild(pins);
         }
@@ -3949,8 +4004,8 @@ ${reviewText}` : ""}`;
 async function checkPreviewAgainstBoard() {
     const d = await (await fetch("/api/check/preview")).json();
     const bad = (d.items || []).filter(x => x.deviation_mm > 0.05 || x.origin_offset_mm > 0.05);
-    const lines = bad.slice(0, 30).map(x => `${x.package} (${x.side.toUpperCase()}): Form ${x.deviation_mm.toFixed(3)} mm · Ursprung versetzt ${x.origin_offset_mm.toFixed(3)} mm · Pads Editor/Platine ${x.pads}/${x.board_pads}`);
-    const text = bad.length ? `${bad.length} von ${(d.items || []).length} Packages weichen ab:\n${lines.join("\n")}` : `Alle ${(d.items || []).length} Packages stimmen mit der Platine überein (≤ 0,05 mm).`;
+    const lines = bad.slice(0, 30).map(x => `${x.package} (${x.side.toUpperCase()}): shape ${x.deviation_mm.toFixed(3)} mm · origin offset ${x.origin_offset_mm.toFixed(3)} mm · pads editor/board ${x.pads}/${x.board_pads}`);
+    const text = bad.length ? `${bad.length} of ${(d.items || []).length} packages differ:\n${lines.join("\n")}` : `All ${(d.items || []).length} packages match the board (≤ 0.05 mm).`;
     console.log(text);
     alert(text);
 }
@@ -3967,53 +4022,53 @@ const inGenerator = fn => async () => {
     fn();
 };
 const APP_MENUS = [
-    ["Datei", [
-        ["Datensatz öffnen…", "#btnOpenDataset", "Strg+O"],
-        ["Projekt öffnen…", '#projectMenuList [data-act="open"]'],
-        ["Projekt speichern", '#projectMenuList [data-act="save"]', "Strg+S"],
-        ["Projekt speichern unter…", '#projectMenuList [data-act="saveas"]', "Strg+⇧+S"],
+    ["File", [
+        ["Open Dataset…", "#btnOpenDataset", "Ctrl+O"],
+        ["Open Project…", '#projectMenuList [data-act="open"]'],
+        ["Save Project", '#projectMenuList [data-act="save"]', "Ctrl+S"],
+        ["Save Project As…", '#projectMenuList [data-act="saveas"]', "Ctrl+Shift+S"],
         "-",
-        ["Bibliothek laden…", null, null, inGenerator(() => { document.getElementById("btnLibLoad")?.click(); })],
-        ["Bibliothek speichern", "#btnSaveCurrentLib"],
-        ["PCB-I-Regeln importieren…", "#btnPcbiImport"],
-        ["PCB-I-Regeln exportieren…", "#btnPcbiExport"],
+        ["Load Library…", null, null, inGenerator(() => { document.getElementById("btnLibLoad")?.click(); })],
+        ["Save Library", "#btnSaveCurrentLib"],
+        ["Import PCB-I Rules…", "#btnPcbiImport"],
+        ["Export PCB-I Rules…", "#btnPcbiExport"],
         "-",
-        ["Gerber-Export…", "#btnExport", "Strg+E"],
+        ["Gerber Export…", "#btnExport", "Ctrl+E"],
         "-",
-        ["Datensatz schließen", "#btnCloseDataset"],
+        ["Close Dataset", "#btnCloseDataset"],
     ]],
-    ["Bearbeiten", [
-        ["Rückgängig", "#btnUndo", "Strg+Z"],
-        ["Wiederholen", "#btnRedo", "Strg+Y"],
-        ["Verlauf…", "#btnHistory"],
+    ["Edit", [
+        ["Undo", "#btnUndo", "Ctrl+Z"],
+        ["Redo", "#btnRedo", "Ctrl+Y"],
+        ["History…", "#btnHistory"],
         "-",
-        ["Öffnung hinzufügen", "#btnAddOpening"],
-        ["Stufenzone aufziehen", "#btnNewZone"],
-        ["Messen", null, "M", () => toggleMeasureTool()],
-    ]],
-    ["Ansicht", [
-        ["Board View", "#btnViewBoard"],
-        ["Stencil Generator", "#btnViewPackage"],
-        ["Stencil Generator in eigenem Fenster", "#btnDetachGenerator"],
-        "-",
-        ["Hell / Dunkel umschalten", "#btnTheme"],
-        ["Schrift kleiner", null, null, () => stepUiScale(-1)],
-        ["Schrift größer", null, null, () => stepUiScale(1)],
+        ["Add Aperture", "#btnAddOpening"],
+        ["Draw Step Zone", "#btnNewZone"],
+        ["Measure", null, "M", () => toggleMeasureTool()],
     ]],
     ["Extras", [
-        ["Auto-Klassifizierung", null, null, inGenerator(clickEl("#btnAutoClassify"))],
-        ["Fehlende Paste aus Kupfer…", null, null, inGenerator(clickEl("#btnAddMissingPaste"))],
-        ["Vorschau ↔ Platine prüfen", "#btnCheckPreview"],
+        ["Auto Classification", null, null, inGenerator(clickEl("#btnAutoClassify"))],
+        ["Missing Paste from Copper…", null, null, inGenerator(clickEl("#btnAddMissingPaste"))],
+        ["Check Preview ↔ Board", "#btnCheckPreview"],
         "-",
-        ["Stegprüfung", "#btnCheckBridges"],
-        ["Stencil-Analyse", "#btnAnalysis"],
-        ["IPC-Grenzwerte…", "#btnIpcProfiles"],
+        ["Web Check", "#btnCheckBridges"],
+        ["Stencil Analysis", "#btnAnalysis"],
+        ["IPC Limits…", "#btnIpcProfiles"],
         "-",
         ["Pin-in-Paste…", "#btnOpenPipModal"],
-        ["Auslösekalkulator…", "#btnOpenCalculator"],
+        ["Release Calculator…", "#btnOpenCalculator"],
     ]],
-    ["Hilfe", [
-        ["Tastenkürzel", null, null, () => alert("Strg+O  Datensatz öffnen\nStrg+S  Projekt speichern\nStrg+E  Gerber-Export\nStrg+Z / Strg+Y  Rückgängig / Wiederholen\nM  Messen\nPfeil hoch/runter  Package wechseln (Stencil Generator)\nRechte Maus ziehen  Ansicht verschieben\nStrg+A, Entf, R, Strg+D  Öffnungen im Board")],
+    ["View", [
+        ["Board View", "#btnViewBoard"],
+        ["Stencil Generator", "#btnViewPackage"],
+        ["Stencil Generator in Separate Window", "#btnDetachGenerator"],
+        "-",
+        ["Toggle Light / Dark", "#btnTheme"],
+        ["Smaller Font", null, null, () => stepUiScale(-1)],
+        ["Larger Font", null, null, () => stepUiScale(1)],
+    ]],
+    ["Help", [
+        ["Keyboard Shortcuts", null, null, () => alert("Ctrl+O  Open Dataset\nCtrl+S  Save Project\nCtrl+E  Gerber Export\nCtrl+Z / Ctrl+Y  Undo / Redo\nM  Measure\nArrow Up/Down  Switch package (Stencil Generator)\nRight mouse drag  Pan view\nCtrl+A, Del, R, Ctrl+D  Apertures on board")],
     ]],
 ];
 
@@ -4083,9 +4138,9 @@ async function generateTarget(kind, id) {
     const isActive = kind === "package" && id === pkgState.activePkgName && pkgState.ruleTarget?.kind === "package";
     const res = await fetch(`/api/${kind}/${encodeURIComponent(id)}/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: isActive ? JSON.stringify(collectRuleFromInputs()) : "{}" });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.status === "error") { showToast(`Generate fehlgeschlagen (${id})`, 5000); return; }
+    if (!res.ok || data.status === "error") { showToast(`Generate failed (${id})`, 5000); return; }
     await afterGenerate();
-    showToast(`${data.modified_count ?? 0} Pads erzeugt: ${id}`);
+    showToast(`${data.modified_count ?? 0} pads generated: ${id}`);
 }
 
 function showTreeMenu(e, items) {
@@ -4105,6 +4160,310 @@ function showTreeMenu(e, items) {
     document.body.appendChild(m);
     setTimeout(() => document.addEventListener("click", () => m.remove(), { once: true }), 0);
 }
+
+// -------------------------------------------------------------
+// Freihand im Stencil Generator: Pads ausblenden (Rechtsklick) und eigene Öffnungen skizzieren.
+// Gespeichert im Package (Bibliothek), "Generate" überträgt es auf alle Bauteile des Packages.
+// -------------------------------------------------------------
+const sk = { tool: null, start: null, cur: null, pts: [], sel: -1, drag: null };
+
+function pkgFreehand() {
+    const f = pkgState.activePackageData?.freehand || {};
+    return { ignored: (f.ignored || []).map(p => [...p]), shapes: (f.shapes || []).map(s => s.map(p => [...p])) };
+}
+
+async function saveFreehand(fh) {
+    const name = pkgState.activePkgName;
+    if (!name || !pkgState.activePackageData) return;
+    pkgState.activePackageData.freehand = fh;
+    renderPkgPreview();
+    const res = await fetch(`/api/package/${encodeURIComponent(name)}/freehand`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(fh) });
+    const data = await res.json();
+    if (data.preview && pkgState.activePkgName === name) {
+        pkgState.activePackageData = data.preview;
+        populatePinDropdown(data.preview.pads, data.preview.pad_overrides);
+        renderPkgTree();
+        renderPkgPreview();
+    }
+    noteRuleEdit();
+    loadPackagesList();
+}
+
+// Kleinstes Pad unter dem Punkt (Finger liegen auf großen Pads)
+function pkgPadAt(x, y) {
+    let best = null;
+    for (const p of pkgState.activePackageData?.pads || []) {
+        if (Math.abs(x - p.cx) <= p.w / 2 && Math.abs(y - p.cy) <= p.h / 2 && (!best || p.w * p.h < best.w * best.h)) best = p;
+    }
+    return best;
+}
+const isPadIgnored = (p) => pkgFreehand().ignored.some(q => Math.hypot(q[0] - p.cx, q[1] - p.cy) < 0.01);
+
+function pointInPoly(x, y, pts) {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const [xi, yi] = pts[i], [xj, yj] = pts[j];
+        if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+}
+function sketchAt(x, y) {
+    const shapes = pkgFreehand().shapes;
+    for (let i = shapes.length - 1; i >= 0; i--) if (pointInPoly(x, y, shapes[i])) return i;
+    return -1;
+}
+
+// Fangen: Ecke vor Kantenmitte vor Kante (Lotfußpunkt), ca. 10 px Reichweite; sonst 0,01-mm-Raster; Umschalt = frei
+function sketchOutlines() {
+    const data = pkgState.activePackageData || {};
+    const rect = (cx, cy, w, h) => [[cx - w / 2, cy - h / 2], [cx + w / 2, cy - h / 2], [cx + w / 2, cy + h / 2], [cx - w / 2, cy + h / 2]];
+    const out = [];
+    for (const p of data.pads || []) {
+        out.push({ pts: rect(p.cx, p.cy, p.w, p.h), label: `Pad ${p.pin}` });
+        if (p.mask_w && p.mask_h) out.push({ pts: rect(p.cx, p.cy, p.mask_w, p.mask_h), label: `Mask ${p.pin}` });
+    }
+    for (const s of data.paste || []) if (s.type !== "freehand") out.push({ pts: s.pts && s.pts.length <= 64 ? s.pts : rect(s.cx, s.cy, s.w, s.h), label: `Paste ${s.pin ?? ""}` });
+    pkgFreehand().shapes.forEach((s, i) => { if (!(sk.drag && sk.sel === i)) out.push({ pts: s, label: `Sketch ${i + 1}` }); });
+    return out;
+}
+function sketchSnapPoint(x, y) {
+    const reach = 10 / pkgState.zoom;
+    let best = null;
+    const take = (px, py, kind, label, prio) => {
+        const d = Math.hypot(px - x, py - y);
+        if (d > reach) return;
+        if (!best || prio < best.prio || (prio === best.prio && d < best.d)) best = { x: px, y: py, kind, label, prio, d };
+    };
+    for (const o of sketchOutlines()) {
+        const n = o.pts.length;
+        for (let i = 0; i < n; i++) {
+            const [ax, ay] = o.pts[i], [bx, by] = o.pts[(i + 1) % n];
+            take(ax, ay, "corner", o.label, 0);
+            take((ax + bx) / 2, (ay + by) / 2, "mid", o.label, 1);
+            const vx = bx - ax, vy = by - ay, L = vx * vx + vy * vy;
+            if (L > 1e-12) {
+                const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / L));
+                take(ax + t * vx, ay + t * vy, "edge", o.label, 2);
+            }
+        }
+    }
+    return best;
+}
+function sketchSnap(x, y, free) {
+    sk.snap = free ? null : sketchSnapPoint(x, y);
+    if (sk.snap) return [sk.snap.x, sk.snap.y];
+    const g = (v) => Math.round(v * 100) / 100;
+    return free ? [x, y] : [g(x), g(y)];
+}
+
+function setSketchTool(tool) {
+    sk.tool = sk.tool === tool ? null : tool;
+    sk.start = sk.cur = null;
+    sk.pts = [];
+    if (sk.tool && measureState.active) toggleMeasureTool(false);
+    document.getElementById("btnSketchRect")?.classList.toggle("active", sk.tool === "rect");
+    document.getElementById("btnSketchPoly")?.classList.toggle("active", sk.tool === "poly");
+    if (pkgCanvas) pkgCanvas.style.cursor = sk.tool ? "crosshair" : "";
+    renderPkgPreview();
+}
+
+function finishPoly() {
+    const pts = sk.pts.filter((p, i, a) => i === 0 || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 1e-4);
+    sk.pts = [];
+    if (pts.length < 3) { renderPkgPreview(); return; }
+    const fh = pkgFreehand();
+    fh.shapes.push(pts);
+    sk.sel = fh.shapes.length - 1;
+    saveFreehand(fh);
+}
+
+// true = Klick gehört dem Freihand-Werkzeug
+function sketchMouseDown(e, x, y) {
+    if (e.button !== 0) return false;
+    const [sx, sy] = sketchSnap(x, y, e.shiftKey);
+    if (sk.tool === "rect") {
+        sk.start = sk.cur = [sx, sy];
+        return true;
+    }
+    if (sk.tool === "poly") {
+        const first = sk.pts[0];
+        if (first && sk.pts.length >= 3 && Math.hypot(first[0] - sx, first[1] - sy) < 6 / pkgState.zoom) finishPoly();
+        else { sk.pts.push([sx, sy]); renderPkgPreview(); }
+        return true;
+    }
+    const shapes = pkgFreehand().shapes;
+    if (sk.sel >= 0 && shapes[sk.sel]) {
+        const vi = shapes[sk.sel].findIndex(p => Math.hypot(p[0] - x, p[1] - y) < 6 / pkgState.zoom);
+        if (vi >= 0) { sk.drag = { kind: "vertex", i: vi, orig: shapes[sk.sel].map(p => [...p]), moved: false }; return true; }
+    }
+    const hit = sketchAt(x, y);
+    if (hit >= 0) {
+        sk.sel = hit;
+        sk.drag = { kind: "move", from: [sx, sy], orig: shapes[hit].map(p => [...p]), moved: false };
+        renderPkgPreview();
+        return true;
+    }
+    if (sk.sel >= 0) { sk.sel = -1; renderPkgPreview(); }
+    return false;
+}
+
+function sketchMouseMove(e) {
+    if (!sk.tool && !sk.drag) return false;
+    const { x, y } = pkgScreenToWorld(e.clientX, e.clientY);
+    const [sx, sy] = sketchSnap(x, y, e.shiftKey);
+    sk.cur = [sx, sy];
+    const d = sk.drag;
+    if (d) {
+        const fh = pkgState.activePackageData.freehand;
+        let s = d.orig.map(p => [...p]);
+        if (d.kind === "move") {
+            s = s.map(p => [p[0] + sx - d.from[0], p[1] + sy - d.from[1]]);
+        } else {
+            // Ecke ziehen; achsparalleles Rechteck bleibt Rechteck
+            const [ox, oy] = d.orig[d.i];
+            if (s.length === 4) for (const p of s) { if (p[0] === ox) p[0] = sx; if (p[1] === oy) p[1] = sy; }
+            s[d.i] = [sx, sy];
+        }
+        fh.shapes[sk.sel] = s;
+        d.moved = true;
+    }
+    renderPkgPreview();
+    return true;
+}
+
+function sketchMouseUp() {
+    if (sk.tool === "rect" && sk.start && sk.cur) {
+        const [x0, y0] = sk.start, [x1, y1] = sk.cur;
+        sk.start = null;
+        if (Math.abs(x1 - x0) > 0.02 && Math.abs(y1 - y0) > 0.02) {
+            const fh = pkgFreehand();
+            fh.shapes.push([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]);
+            sk.sel = fh.shapes.length - 1;
+            saveFreehand(fh);
+        } else renderPkgPreview();
+        return true;
+    }
+    if (sk.drag) {
+        const moved = sk.drag.moved;
+        sk.drag = null;
+        if (moved) saveFreehand(pkgFreehand());
+        return true;
+    }
+    return false;
+}
+
+function sketchKey(e) {
+    if (currentWorkspaceMode !== "package") return;
+    const tag = (document.activeElement?.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "select" || tag === "textarea") return;
+    if (e.key === "Escape" && (sk.tool || sk.sel >= 0)) {
+        if (sk.pts.length || sk.start) { sk.pts = []; sk.start = null; renderPkgPreview(); }
+        else if (sk.tool) setSketchTool(sk.tool);
+        else { sk.sel = -1; renderPkgPreview(); }
+    } else if (e.key === "Enter" && sk.tool === "poly") {
+        finishPoly();
+    } else if ((e.key === "Delete" || e.key === "Backspace") && sk.sel >= 0) {
+        const fh = pkgFreehand();
+        fh.shapes.splice(sk.sel, 1);
+        sk.sel = -1;
+        saveFreehand(fh);
+        e.preventDefault();
+    }
+}
+
+function sketchContextMenu(e) {
+    const { x, y } = pkgScreenToWorld(e.clientX, e.clientY);
+    const items = [];
+    const hit = sketchAt(x, y);
+    if (hit >= 0) items.push(["Delete Sketch", () => { const fh = pkgFreehand(); fh.shapes.splice(hit, 1); sk.sel = -1; saveFreehand(fh); }]);
+    const pad = pkgPadAt(x, y);
+    if (pad) {
+        const off = isPadIgnored(pad);
+        items.push([off ? `Pad (pin ${pad.pin}) with paste again` : `Hide pad (pin ${pad.pin}) – no paste`, () => {
+            const fh = pkgFreehand();
+            fh.ignored = off ? fh.ignored.filter(q => Math.hypot(q[0] - pad.cx, q[1] - pad.cy) >= 0.01) : [...fh.ignored, [pad.cx, pad.cy]];
+            saveFreehand(fh);
+        }]);
+    }
+    items.push(["Sketch Rectangle", () => setSketchTool("rect")], ["Sketch Polygon", () => setSketchTool("poly")]);
+    const fh = pkgFreehand();
+    if (fh.ignored.length || fh.shapes.length) items.push([`Reset Freehand (${fh.ignored.length} off, ${fh.shapes.length} sketch(es))`, () => { sk.sel = -1; saveFreehand({ ignored: [], shapes: [] }); }]);
+    showTreeMenu(e, items);
+}
+
+// Zeichnen im Package-Rahmen (innerhalb der Vorschau-Transformation)
+function drawFreehandOverlay(ctx, data, zoom) {
+    const fh = data.freehand || {};
+    ctx.lineWidth = 1.5 / zoom;
+    ctx.strokeStyle = "#ef4444";
+    ctx.setLineDash([4 / zoom, 3 / zoom]);
+    for (const p of data.pads || []) {
+        if (!(fh.ignored || []).some(q => Math.hypot(q[0] - p.cx, q[1] - p.cy) < 0.01)) continue;
+        const [x0, y0, x1, y1] = [p.cx - p.w / 2, p.cy - p.h / 2, p.cx + p.w / 2, p.cy + p.h / 2];
+        ctx.strokeRect(x0, y0, p.w, p.h);
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.moveTo(x0, y1); ctx.lineTo(x1, y0); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    const sel = (fh.shapes || [])[sk.sel];
+    if (sel) {
+        ctx.strokeStyle = "#facc15";
+        ctx.beginPath(); sel.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath(); ctx.stroke();
+        ctx.fillStyle = "#facc15";
+        const hs = 4 / zoom;
+        for (const p of sel) ctx.fillRect(p[0] - hs, p[1] - hs, hs * 2, hs * 2);
+    }
+    ctx.strokeStyle = "#22d3ee";
+    ctx.setLineDash([5 / zoom, 3 / zoom]);
+    if (sk.tool === "rect" && sk.start && sk.cur) {
+        ctx.strokeRect(Math.min(sk.start[0], sk.cur[0]), Math.min(sk.start[1], sk.cur[1]), Math.abs(sk.cur[0] - sk.start[0]), Math.abs(sk.cur[1] - sk.start[1]));
+    } else if (sk.tool === "poly" && sk.pts.length) {
+        ctx.beginPath();
+        sk.pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+        if (sk.cur) ctx.lineTo(sk.cur[0], sk.cur[1]);
+        ctx.stroke();
+    }
+    ctx.setLineDash([]);
+}
+
+// Fangmarke: Quadrat = Ecke, Dreieck = Kantenmitte, Kreuz = Kante
+function drawSnapMarker(ctx) {
+    if (!sk.snap || !(sk.tool || sk.drag)) return;
+    const p = pkgWorldToScreen(sk.snap.x, sk.snap.y);
+    ctx.save();
+    resetToCssPixels(ctx);
+    ctx.strokeStyle = "#22d3ee";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    if (sk.snap.kind === "corner") ctx.rect(p.x - 5, p.y - 5, 10, 10);
+    else if (sk.snap.kind === "mid") { ctx.moveTo(p.x, p.y - 6); ctx.lineTo(p.x + 6, p.y + 5); ctx.lineTo(p.x - 6, p.y + 5); ctx.closePath(); }
+    else { ctx.moveTo(p.x - 5, p.y - 5); ctx.lineTo(p.x + 5, p.y + 5); ctx.moveTo(p.x + 5, p.y - 5); ctx.lineTo(p.x - 5, p.y + 5); }
+    ctx.stroke();
+    ctx.font = "11px sans-serif";
+    ctx.fillStyle = "#22d3ee";
+    ctx.fillText(`${{ corner: "Corner", mid: "Midpoint", edge: "Edge" }[sk.snap.kind]} ${sk.snap.label}`, p.x + 9, p.y + 14);
+    ctx.restore();
+}
+
+// Maße beim Aufziehen (Bildschirm-Pixel)
+function drawSketchLabel(ctx) {
+    drawSnapMarker(ctx);
+    if (!sk.cur || !((sk.tool === "rect" && sk.start) || (sk.tool === "poly" && sk.pts.length))) return;
+    const a = sk.tool === "rect" ? sk.start : sk.pts[sk.pts.length - 1];
+    const txt = sk.tool === "rect" ? `${Math.abs(sk.cur[0] - a[0]).toFixed(3)} × ${Math.abs(sk.cur[1] - a[1]).toFixed(3)} mm` : `${Math.hypot(sk.cur[0] - a[0], sk.cur[1] - a[1]).toFixed(3)} mm`;
+    const sp = pkgWorldToScreen(sk.cur[0], sk.cur[1]);
+    ctx.save();
+    resetToCssPixels(ctx);
+    ctx.font = "12px sans-serif";
+    ctx.fillStyle = "#22d3ee";
+    ctx.fillText(txt, sp.x + 12, sp.y - 10);
+    ctx.restore();
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    document.getElementById("btnSketchRect")?.addEventListener("click", () => setSketchTool("rect"));
+    document.getElementById("btnSketchPoly")?.addEventListener("click", () => setSketchTool("poly"));
+    window.addEventListener("keydown", sketchKey);
+});
 
 // Platinenumgebung der ersten Instanz (Kupfer + Schablone der Nachbarn) für die Vorschau
 async function loadPkgBoardContext() {
@@ -4213,15 +4572,37 @@ async function selectPackage(pkgName) {
 function populatePinDropdown(pads, overrides = {}) {
     const select = document.getElementById("selectPinDropdown");
     if (!select) return;
-    select.innerHTML = `<option value="all">Alle Pins (Ganzes Package)</option>`;
+    select.innerHTML = `<option value="all">All Pins (whole package)</option>`;
     if (!pads || pads.length === 0) return;
     for (const p of pads) {
         const opt = document.createElement("option");
         opt.value = p.pin;
         const hasOv = overrides && (overrides[p.pin] || overrides[String(p.pin)]);
-        opt.textContent = `Pin ${p.pin} (${p.w}x${p.h}mm)${hasOv ? " (angepasst)" : ""}`;
+        const hidden = isPadIgnored(p);
+        opt.textContent = `Pin ${p.pin} (${p.w}x${p.h}mm)${hasOv ? " (modified)" : ""}${hidden ? " – hidden" : ""}`;
+        if (hidden) opt.style.color = "#dc2626";
         select.appendChild(opt);
     }
+    sketchEntries().forEach((t, i) => {
+        const opt = document.createElement("option");
+        opt.value = `sketch:${i}`;
+        opt.textContent = t;
+        opt.style.color = "#d97706";
+        select.appendChild(opt);
+    });
+}
+
+// "Sketch 1 (0.30x0.20mm) → Pin 4" je Skizze (Pin = nächstes Pad, wie in der Engine)
+function sketchEntries() {
+    const data = pkgState.activePackageData;
+    return pkgFreehand().shapes.map((s, i) => {
+        const xs = s.map(p => p[0]), ys = s.map(p => p[1]);
+        const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys);
+        const cx = xs.reduce((a, b) => a + b, 0) / xs.length, cy = ys.reduce((a, b) => a + b, 0) / ys.length;
+        let near = null;
+        for (const p of data?.pads || []) if (!near || Math.hypot(p.cx - cx, p.cy - cy) < Math.hypot(near.cx - cx, near.cy - cy)) near = p;
+        return `Sketch ${i + 1} (${w.toFixed(2)}x${h.toFixed(2)}mm)${near ? ` → Pin ${near.pin}` : ""}`;
+    });
 }
 
 function autoFitPackagePreview(data) {
@@ -4310,21 +4691,21 @@ function populateRuleInputs(rule) {
 
 // Beschreibung der Regeln (wie im PCB Investigator unter der Parameterliste)
 const RULE_DESCRIPTIONS = {
-    package_group: "Wählt die Öffnung je Pad automatisch: BGA-Pads 1:1, große Flächen als Array-Felder (Mindestfeldgröße, Feldabstand, Flächennutzung), 2-Pin-Chips als HouseBuilder (kleine als Inverted House), sonst Rechteck mit Undersize und Eckradius.",
-    simple_rect: "Create one surface with fix size and offset away from the center. Optional mit Stegen (Bridge Count) und fester Größe.",
-    house_builder: "Hausform: Spitze zum Bauteilkörper, verhindert Tombstoning und Lotperlen bei Chip-Bauteilen.",
-    inverted_house_builder: "Create pads in form of small inverted houses. Spitze nach außen; Öffnungen über Max Size of one Element werden geteilt.",
-    elongated_pitch: "Länglich & Schmal: verschmälert quer zum Pitch (Pastenabstand = Faktor × Öffnungsbreite), verlängert im Verhältnis zur Verschmälerung und versetzt die Öffnung nach außen.",
-    array_slicing: "Teilt die Fläche in Felder mit Stegen (Bridge Count / Width), optional 45° gedreht.",
-    donut: "Create donut for each pin pad. Ring mit Count Bridges Stegen (Bridge Width = Size Bridge), Außen-Ø in % der Padgröße, Innen-Ø in % (oder fest / Bohrung + 0,1 mm), drehbar.",
-    array_pads: "Create array pads, they are cutted by mask opening. Felder aus Mindestfeldgröße, Feldabstand und Ausnutzung oder mit fester Feldgröße.",
-    array_fix: "Create array pads, with fix count in x and y direction. Zu kleine Felder (unter Minimum Array Field Size) senken die Anzahl.",
-    undersize: "Create undersize for each pin pad. Öffnungen über Max Size of one Element werden mit Steg for Big Elements geteilt.",
-    pin_mask: "Use the component pins and mask to create free areas as stencil pads: Pad ∩ Maskenöffnung, dann Undersize.",
-    take_existing: "Übernimmt die Pastenöffnungen unverändert aus dem Kundendatensatz.",
-    inherit: "Inherit: Das Package übernimmt die Regel seiner Gruppe (SMD/THT/Other/Fiducials). Änderungen an einem Parameter erzeugen eine eigene Package-Regel.",
-    pin_in_paste: "Pin-in-Paste: Öffnung je THT-Pin aus Bohrung (ODB++), Leiterplattendicke, Metallanteil und Blechdicke (IPC-7525, +20 % Meniskus); begrenzt durch max. Größe bzw. Pitch − Mindeststeg.",
-    ignore: "Für dieses Package werden keine Pastenöffnungen erzeugt."
+    package_group: "Chooses the aperture per pad automatically: BGA pads 1:1, large areas as array fields (min. field size, field distance, area utilization), 2-pin chips as HouseBuilder (small ones as Inverted House), otherwise rectangle with undersize and corner radius.",
+    simple_rect: "Create one surface with fix size and offset away from the center. Optional with webs (Bridge Count) and fixed size.",
+    house_builder: "House shape: tip toward component body, prevents tombstoning and solder balls on chip components.",
+    inverted_house_builder: "Create pads in form of small inverted houses. Tip outward; apertures above Max Size of one Element are split.",
+    elongated_pitch: "Elongated & narrow: narrows across the pitch (paste gap = factor × aperture width), lengthens in proportion and shifts the aperture outward.",
+    array_slicing: "Splits the area into fields with webs (Bridge Count / Width), optionally rotated 45°.",
+    donut: "Create donut for each pin pad. Ring with Count Bridges webs (Bridge Width = Size Bridge), outer Ø in % of pad size, inner Ø in % (or fixed / drill + 0.1 mm), rotatable.",
+    array_pads: "Create array pads, they are cutted by mask opening. Fields from min. field size, field distance and utilization, or with fixed field size.",
+    array_fix: "Create array pads, with fix count in x and y direction. Fields that are too small (below Minimum Array Field Size) reduce the count.",
+    undersize: "Create undersize for each pin pad. Apertures above Max Size of one Element are split with Steg for Big Elements.",
+    pin_mask: "Use the component pins and mask to create free areas as stencil pads: pad ∩ mask opening, then undersize.",
+    take_existing: "Takes the paste apertures unchanged from the customer dataset.",
+    inherit: "Inherit: The package uses the rule of its group (SMD/THT/Other/Fiducials). Changing a parameter creates an own package rule.",
+    pin_in_paste: "Pin-in-Paste: aperture per THT pin from drill (ODB++), board thickness, metal content and stencil thickness (IPC-7525, +20 % meniscus); limited by max. size or pitch − min. web.",
+    ignore: "No paste apertures are generated for this package."
 };
 
 // Nur die zur gewählten Regel gehörenden Parameter anzeigen
@@ -4556,10 +4937,10 @@ function renderPkgMissingPaste() {
     const pins = pkgState.activePackageData?.missing_paste_pins || [];
     box.classList.toggle("hidden", pins.length === 0);
     document.getElementById("pkgMissingPasteText").textContent =
-        `Pin ${pins.join(", ")} ohne Kundenpaste – auf dem Board gibt es dort keine Öffnung, Regeln wirken nicht.`;
+        `Pin ${pins.join(", ")} without customer paste – no aperture on the board there, rules have no effect.`;
     // Markierte Kupferpads (Klick / Strg+Klick / Rahmen) nur diese übernehmen, sonst alle
     const sel = selectedMissingPins();
-    document.getElementById("btnPkgAddMissing").textContent = sel.length ? `Pin ${sel.join(", ")} als Paste übernehmen` : "Alle als Paste übernehmen";
+    document.getElementById("btnPkgAddMissing").textContent = sel.length ? `Add pin ${sel.join(", ")} as paste` : "Add all as paste";
 }
 
 function selectedMissingPins() {
@@ -4576,7 +4957,7 @@ document.getElementById("btnPkgAddMissing")?.addEventListener("click", async () 
     await refreshApertureData();
     await selectPackage(name);
     refreshHistory();
-    showToast(`${d.added} Öffnungen für ${name} aus dem Kupfer erzeugt`);
+    showToast(`${d.added} apertures for ${name} generated from copper`);
 });
 
 function renderPkgPreview() {
@@ -4672,6 +5053,7 @@ function renderPkgPreview() {
         pkgCtx.lineWidth = 2.0 / pkgState.zoom;
 
         for (const ap of data.paste) {
+            pkgCtx.strokeStyle = ap.type === "freehand" ? "#f59e0b" : "#c084fc"; // Skizzen orange umrandet
             if (ap.pts && ap.pts.length >= 3) {
                 // Polygon (z. B. HouseBuilder, Rounded Rect, Notched)
                 pkgCtx.beginPath();
@@ -4732,8 +5114,11 @@ function renderPkgPreview() {
         pkgCtx.stroke();
     }
 
+    drawFreehandOverlay(pkgCtx, data, pkgState.zoom);
+
     // 6. Pin Labels (falls aktiviert)
     pkgCtx.restore();
+    drawSketchLabel(pkgCtx);
 
     if (pkgState.showPinLabels && data.pads) {
         pkgCtx.save();
@@ -4785,7 +5170,7 @@ function openAllPinsBar() {
     bar.classList.remove("hidden");
     const pads = data.pads || [];
     document.getElementById("lblPinBarPrefix").textContent = "";
-    document.getElementById("lblSelectedPin").textContent = `Alle Pins (${pads.length})`;
+    document.getElementById("lblSelectedPin").textContent = `All Pins (${pads.length})`;
     document.getElementById("btnApplyPinToAll")?.classList.add("hidden");
     const dropdown = document.getElementById("selectPinDropdown");
     if (dropdown) dropdown.value = "all";
@@ -4802,8 +5187,8 @@ function openAllPinsBar() {
     const [sw, sh] = sizeForScreen(cw, ch);
     inpW.value = sw ?? "";
     inpH.value = sh ?? "";
-    inpW.placeholder = sw === null ? "versch." : "B (mm)";
-    inpH.placeholder = sh === null ? "versch." : "H (mm)";
+    inpW.placeholder = sw === null ? "mixed" : "B (mm)";
+    inpH.placeholder = sh === null ? "mixed" : "H (mm)";
     document.getElementById("inputPadOffX").value = 0;
     document.getElementById("inputPadOffY").value = 0;
     updatePinBarMode();
@@ -4855,7 +5240,7 @@ function selectPkgPins(pins) {
     state.highlightPin = null;
     document.getElementById("singlePadBar").classList.remove("hidden");
     document.getElementById("lblPinBarPrefix").textContent = "";
-    document.getElementById("lblSelectedPin").textContent = `${pins.length} Pins ausgewählt`;
+    document.getElementById("lblSelectedPin").textContent = `${pins.length} pins selected`;
     document.getElementById("btnApplyPinToAll")?.classList.add("hidden");
     const dd = document.getElementById("selectPinDropdown");
     if (dd) dd.value = "all";
@@ -4867,7 +5252,7 @@ function selectPkgPins(pins) {
     const [sw, sh] = sizeForScreen(common(pads.map(p => +p.w.toFixed(3))), common(pads.map(p => +p.h.toFixed(3))));
     const inpW = document.getElementById("inputPadCustomW"), inpH = document.getElementById("inputPadCustomH");
     inpW.value = sw ?? ""; inpH.value = sh ?? "";
-    inpW.placeholder = sw === null ? "versch." : "B (mm)"; inpH.placeholder = sh === null ? "versch." : "H (mm)";
+    inpW.placeholder = sw === null ? "mixed" : "B (mm)"; inpH.placeholder = sh === null ? "mixed" : "H (mm)";
     updatePinBarMode();
     // Regelpanel rechts auf die Auswahl richten
     const base = d.rule?.rule_type === "inherit" ? d.effective_rule : d.rule;
@@ -4943,10 +5328,10 @@ function updatePinBarMode() {
     document.querySelectorAll(".pin-rule-only").forEach(el => el.classList.toggle("hidden", manual));
     const inpW = document.getElementById("inputPadCustomW");
     const inpH = document.getElementById("inputPadCustomH");
-    if (inpW && !inpW.placeholder.startsWith("versch")) inpW.placeholder = manual ? "Öffnung B" : "Pad B";
-    if (inpH && !inpH.placeholder.startsWith("versch")) inpH.placeholder = manual ? "Öffnung H" : "Pad H";
-    if (inpW) inpW.title = manual ? "Breite der Pastenöffnung (waagerecht wie angezeigt)" : "Padbreite, aus der die Regel die Öffnung berechnet (waagerecht wie angezeigt)";
-    if (inpH) inpH.title = manual ? "Höhe der Pastenöffnung (senkrecht wie angezeigt)" : "Padhöhe, aus der die Regel die Öffnung berechnet (senkrecht wie angezeigt)";
+    if (inpW && !inpW.placeholder.startsWith("mixed")) inpW.placeholder = manual ? "Aperture W" : "Pad W";
+    if (inpH && !inpH.placeholder.startsWith("mixed")) inpH.placeholder = manual ? "Aperture H" : "Pad H";
+    if (inpW) inpW.title = manual ? "Width of paste aperture (horizontal as shown)" : "Pad width from which the rule computes the aperture (horizontal as shown)";
+    if (inpH) inpH.title = manual ? "Height of paste aperture (vertical as shown)" : "Pad height from which the rule computes the aperture (vertical as shown)";
 }
 
 // Übersteuerung aus den Feldern (Package-Rahmen). Manuell = feste Öffnung mit Versatz.
@@ -5126,7 +5511,7 @@ function setupPkgEventListeners() {
     async function triggerAutoClassify(btnElement) {
         const orig = btnElement ? btnElement.innerHTML : "";
         if (btnElement) {
-            btnElement.innerHTML = `<span></span> Klassifiziere...`;
+            btnElement.innerHTML = `<span></span> Classifying...`;
             btnElement.disabled = true;
         }
         try {
@@ -5134,7 +5519,7 @@ function setupPkgEventListeners() {
             const data = await res.json();
             if (data.status === "ok") {
                 const c = data.classification;
-                showToast(`Auto-Klassifizierung abgeschlossen! ${c.chips} Chips, ${c.soic} SOIC, ${c.qfn} QFN, ${c.bga} BGA, ${c.tht} THT`);
+                showToast(`Auto classification done! ${c.chips} Chips, ${c.soic} SOIC, ${c.qfn} QFN, ${c.bga} BGA, ${c.tht} THT`);
                 await loadPackagesList();
                 await refreshApertureData();
                 if (pkgState.activePkgName) {
@@ -5187,6 +5572,11 @@ function setupPkgEventListeners() {
 
     // Measurement Tool in Stencil Generator
     document.getElementById("btnMeasurePkg")?.addEventListener("click", () => toggleMeasureTool());
+    // Zoom um die Mitte der Vorschau (Ansicht ist mittenbezogen: Pan skaliert mit)
+    const pkgZoom = (f) => { pkgState.zoom = Math.max(10, Math.min(400, pkgState.zoom * f)); pkgState.panX *= f; pkgState.panY *= f; renderPkgPreview(); };
+    document.getElementById("btnPkgZoomIn")?.addEventListener("click", () => pkgZoom(1.3));
+    document.getElementById("btnPkgZoomOut")?.addEventListener("click", () => pkgZoom(1 / 1.3));
+    document.getElementById("btnPkgFit")?.addEventListener("click", () => { if (pkgState.activePackageData) { autoFitPackagePreview(pkgState.activePackageData); renderPkgPreview(); } });
     document.getElementById("btnCancelMeasurePkg")?.addEventListener("click", () => toggleMeasureTool(false));
     document.getElementById("btnClearMeasurementsPkg")?.addEventListener("click", clearMeasurements);
     document.getElementById("btnClearMeasurePkg")?.addEventListener("click", clearMeasurements);
@@ -5199,7 +5589,7 @@ function setupPkgEventListeners() {
             const ovs = pkgState.activePackageData?.pad_overrides || {};
             if (pad) fillPinBarFromOverride(ovs[pad.pin] || ovs[String(pad.pin)] || null, pad);
         }
-        showToast(`⟳ Package gedreht: ${pkgState.rotation}°`);
+        showToast(`⟳ Package rotated: ${pkgState.rotation}°`);
         renderPkgPreview();
     });
 
@@ -5212,6 +5602,16 @@ function setupPkgEventListeners() {
     document.getElementById("chkPrevRuler").addEventListener("change", e => { pkgState.showRuler = e.target.checked; renderPkgPreview(); });
     document.getElementById("chkPrevPinLabels").addEventListener("change", e => { pkgState.showPinLabels = e.target.checked; renderPkgPreview(); });
     document.getElementById("chkPrevDrills")?.addEventListener("change", e => { pkgState.showDrills = e.target.checked; renderPkgPreview(); });
+    // Schalter ändern die Lagen der Seite mit (Board View und Lagenliste sehen dasselbe)
+    for (const [id, test] of Object.entries(PREVIEW_LAYERS)) {
+        document.getElementById(id)?.addEventListener("change", (e) => {
+            const ls = previewSideLayers(test);
+            if (!ls.length || ls.every(l => (l.visible !== false) === e.target.checked)) return;
+            for (const l of ls) setLayerVisible(l, e.target.checked);
+            renderLayerTable();
+            render();
+        });
+    }
     document.getElementById("chkPrevInfo")?.addEventListener("change", e => { pkgState.showInfo = e.target.checked; renderPkgPreview(); });
     setupRuleTargets();
 
@@ -5221,17 +5621,17 @@ function setupPkgEventListeners() {
         const btn = document.getElementById("btnGenerateStencilPads");
         const originalText = btn.innerHTML;
         btn.disabled = true;
-        btn.innerHTML = `<span></span> Generiere...`;
+        btn.innerHTML = `<span></span> Generating...`;
         try {
             await new Promise(r => setTimeout(r, 80)); // laufende Regel-Speicherung abwarten
             const res = await fetch("/api/generate_all", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             await afterGenerate();
-            showToast(`${data.modified_count} Pads auf TOP und BOT erzeugt (top_stencil / bot_stencil)`);
+            showToast(`${data.modified_count} pads generated on TOP and BOT (top_stencil / bot_stencil)`);
         } catch (e) {
             console.error("Fehler bei Generate Stencil Pads:", e);
-            showToast(`Generate fehlgeschlagen: ${e.message || e}`, 6000);
+            showToast(`Generate failed: ${e.message || e}`, 6000);
         } finally {
             btn.innerHTML = originalText;
             btn.disabled = false;
@@ -5244,7 +5644,7 @@ function setupPkgEventListeners() {
         if (await saveLibrary(cust)) {
             pkgState.libEdited = false;
             renderLibHeader();
-            showToast(`Kunden-Bibliothek „${cust}“ gespeichert`);
+            showToast(`Customer library "${cust}" saved`);
         }
     });
 
@@ -5274,16 +5674,16 @@ function setupPkgEventListeners() {
         const res = await fetch("/api/pcbi/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
         const d = await res.json();
         if (d.status === "cancelled") return;
-        if (!res.ok || d.status !== "ok") { showToast(`${d.message || d.error || "Export fehlgeschlagen"}`); return; }
-        let msg = `Gespeichert: ${d.path}
+        if (!res.ok || d.status !== "ok") { showToast(`${d.message || d.error || "Export failed"}`); return; }
+        let msg = `Saved: ${d.path}
 
-${d.packages} Package-Regeln, ${d.pin_rules} Pin-Regeln, ${d.groups} Gruppen, ${d.components} Bauteilregeln.`;
+${d.packages} package rules, ${d.pin_rules} pin rules, ${d.groups} groups, ${d.components} component rules.`;
         if (d.skipped?.length) msg += `
 
-Ohne PCB-I-Entsprechung (nicht exportiert):
+No PCB-I equivalent (not exported):
 • ${d.skipped.slice(0, 12).join("\n• ")}${d.skipped.length > 12 ? `
-… und ${d.skipped.length - 12} weitere` : ""}`;
-        await askChoice("PCB-I-Bibliothek exportiert", msg, [{ label: "OK", value: "ok", cls: "btn-primary" }]);
+… and ${d.skipped.length - 12} more` : ""}`;
+        await askChoice("PCB-I library exported", msg, [{ label: "OK", value: "ok", cls: "btn-primary" }]);
     });
     document.getElementById("btnAddMissingPaste")?.addEventListener("click", () => offerMissingPaste(true));
 
@@ -5303,7 +5703,7 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
         pkgState.currentCustomer = name;
         pkgState.libEdited = false;
         renderLibHeader();
-        showToast(`Neue Bibliothek „${name}“ angelegt`);
+        showToast(`New library "${name}" created`);
     });
 
     // Pin Selector Dropdown
@@ -5311,6 +5711,12 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
     if (selectPinDropdown) {
         selectPinDropdown.addEventListener("change", (e) => {
             const val = e.target.value;
+            if (val.startsWith("sketch:")) {
+                sk.sel = +val.slice(7);
+                e.target.value = pkgState.selectedPin ?? "all";
+                renderPkgPreview();
+                return;
+            }
             if (val === "all") {
                 openAllPinsBar();
             } else {
@@ -5329,7 +5735,7 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
         btnRenamePackage.addEventListener("click", async () => {
             if (!pkgState.activePkgName) return;
             const oldName = pkgState.activePkgName;
-            const newName = prompt(`Neuen Namen für Package "${oldName}" eingeben:`, oldName);
+            const newName = prompt(`New name for package "${oldName}":`, oldName);
             if (!newName || newName.trim() === "" || newName.trim() === oldName) return;
 
             try {
@@ -5343,9 +5749,9 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
                     await loadPackagesList();
                     selectPackage(newName.trim());
                     await refreshApertureData();
-                    showToast(`Package umbenannt in "${newName.trim()}"`);
+                    showToast(`Package renamed to "${newName.trim()}"`);
                 } else {
-                    alert(data.message || "Fehler beim Umbenennen");
+                    alert(data.message || "Rename failed");
                 }
             } catch (e) {
                 console.error("Fehler beim Umbenennen:", e);
@@ -5364,7 +5770,7 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
                 delete override.w; delete override.h;
                 const pins = pkgState.selectedPins;
                 const data = await applyPinsBulk(override, manual ? NaN : built.w, manual ? NaN : built.h, null, pins);
-                if (data?.status === "ok") showToast(`${data.pins} ausgewählte Pins angepasst`);
+                if (data?.status === "ok") showToast(`${data.pins} selected pins modified`);
                 await refreshApertureData();
                 selectPkgPins(pins);
                 return;
@@ -5374,7 +5780,7 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
                 const manual = document.getElementById("selectPinRule")?.value === "manual";
                 const override = manual ? built : { rule_type: built.rule_type, undersize_w: built.undersize_w, undersize_h: built.undersize_h };
                 const data = await applyPinsBulk(override, manual ? NaN : built.w, manual ? NaN : built.h);
-                if (data?.status === "ok") showToast(`Alle ${data.pins} Pins angepasst`);
+                if (data?.status === "ok") showToast(`All ${data.pins} pins modified`);
                 await refreshApertureData();
                 return;
             }
@@ -5395,7 +5801,7 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
                     const dropdown = document.getElementById("selectPinDropdown");
                     if (dropdown) dropdown.value = pinNum;
                     renderPkgPreview();
-                    showToast(`Pin ${pinNum} erfolgreich angepasst!`);
+                    showToast(`Pin ${pinNum} modified!`);
                 }
                 await refreshApertureData();
             } catch (e) {
@@ -5432,7 +5838,7 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
                 if (dd) dd.value = pkgState.selectedPin;
                 renderPkgPreview();
             }
-            showToast(`Manuelle Öffnung von Pin ${pkgState.selectedPin} auf ${same.length} gleich große Pins übernommen (Versatz gespiegelt)`);
+            showToast(`Manual aperture of pin ${pkgState.selectedPin} applied to ${same.length} pins of equal size (offset mirrored)`);
             await refreshApertureData();
             return;
         }
@@ -5442,7 +5848,7 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
         const src = { ...(pinOverrideOf(pkgState.selectedPin) || {}), ...built };
         delete src.w; delete src.h;
         const data = await applyPinsBulk(src, built.w, built.h, null, same);
-        if (data?.status === "ok") showToast(`Einstellungen von Pin ${pkgState.selectedPin} auf ${data.pins} gleiche Pads übernommen`);
+        if (data?.status === "ok") showToast(`Settings of pin ${pkgState.selectedPin} applied to ${data.pins} identical pads`);
         await refreshApertureData();
     });
 
@@ -5454,7 +5860,7 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
                 if (d.preview) { pkgState.activePackageData = d.preview; populatePinDropdown(d.preview.pads, d.preview.pad_overrides); }
                 await refreshApertureData();
                 selectPkgPins(pins);
-                showToast(`${d.pins} Pins zurückgesetzt`);
+                showToast(`${d.pins} pins reset`);
                 return;
             }
             if (pkgState.pinBarMode === "all" && pkgState.activePkgName) {
@@ -5464,7 +5870,7 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
                     pkgState.activePackageData = data.preview;
                     populatePinDropdown(data.preview.pads, data.preview.pad_overrides);
                     openAllPinsBar();
-                    showToast("Alle Pin-Anpassungen zurückgesetzt");
+                    showToast("All pin modifications reset");
                 }
                 await refreshApertureData();
                 return;
@@ -5482,7 +5888,7 @@ Ohne PCB-I-Entsprechung (nicht exportiert):
                     const pad = data.preview.pads.find(p => p.pin === pinNum);
                     if (pad) selectPkgPin(pinNum, pad);
                     renderPkgPreview();
-                    showToast(`Pin ${pinNum} auf Standard zurückgesetzt`);
+                    showToast(`Pin ${pinNum} reset to default`);
                 }
                 await refreshApertureData();
             } catch (e) {
@@ -5582,7 +5988,7 @@ async function applyPipToAperture() {
         const data = await res.json();
         if (data.status === "ok") {
             document.getElementById("pipModal")?.classList.add("hidden");
-            showToast(`PiP Overprint (${shape}) auf Apertur #${state.selectedApertureId} angewendet!`);
+            showToast(`PiP Overprint (${shape}) applied to aperture #${state.selectedApertureId}!`);
             await refreshApertureData();
         }
     } catch (e) {
@@ -5611,10 +6017,10 @@ async function runBridgeCheck(minBridge = null) {
         const summary = document.getElementById("bridgeResultsSummary");
         if (summary) {
             if (data.count === 0) {
-                summary.innerHTML = `<strong>Perfekt:</strong> Keine Stegunterschreitungen unter ${data.min_bridge.toFixed(2)} mm gefunden! Schablone ist laser-fertigungsgerecht.`;
+                summary.innerHTML = `<strong>OK:</strong> No webs below ${data.min_bridge.toFixed(2)} mm found! Stencil is ready for laser cutting.`;
                 summary.style.color = "#4ade80";
             } else {
-                summary.innerHTML = `<strong>${data.count} Steg-Konflikte gefunden!</strong> Mindestabstand ${data.min_bridge.toFixed(2)} mm wird unterschritten (Kollisionsgefahr beim Laserschneiden).`;
+                summary.innerHTML = `<strong>${data.count} web conflicts found!</strong> Min. distance ${data.min_bridge.toFixed(2)} mm violated (collision risk in laser cutting).`;
                 summary.style.color = "#f87171";
             }
         }
@@ -5622,13 +6028,13 @@ async function runBridgeCheck(minBridge = null) {
         const tbody = document.getElementById("bridgeViolationsTableBody");
         if (tbody) {
             if (data.count === 0) {
-                tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding: 16px; color: var(--text-secondary);">Keine Stegunterschreitungen gefunden.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding: 16px; color: var(--text-secondary);">No web violations found.</td></tr>`;
             } else {
                 tbody.innerHTML = data.violations.map(v => `
                     <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
                         <td style="padding: 6px 10px;">
                             <span class="badge ${v.severity === 'CRIT' ? 'crit' : 'warn'}" style="font-size:0.7rem; padding: 2px 6px;">
-                                ${v.severity === 'CRIT' ? 'Kritisch' : 'Warn'}
+                                ${v.severity === 'CRIT' ? 'Critical' : 'Warn'}
                             </span>
                         </td>
                         <td style="padding: 6px 10px; font-weight: 700; color: ${v.severity === 'CRIT' ? '#f87171' : '#fbbf24'};">
@@ -5639,7 +6045,7 @@ async function runBridgeCheck(minBridge = null) {
                         </td>
                         <td style="padding: 6px 10px; text-align: right;">
                             <button class="btn btn-xs btn-secondary" data-x="${v.p1[0]}" data-y="${v.p1[1]}">
-                                Zu Stelle
+                                Go to
                             </button>
                         </td>
                     </tr>
@@ -5678,7 +6084,7 @@ window.zoomToBridgeViolation = function(x, y) {
     state.panX = rect.width / 2 - x * state.zoom;
     state.panY = rect.height / 2 - y * state.zoom;
     render();
-    showToast(`Fokussiert auf Steg bei X: ${x.toFixed(2)}, Y: ${y.toFixed(2)} mm`);
+    showToast(`Focused on web at X: ${x.toFixed(2)}, Y: ${y.toFixed(2)} mm`);
 };
 
 
@@ -5766,12 +6172,12 @@ function updateHistoryUI(h) {
     if (!h) return;
     projectState.history = h;
     const undo = document.getElementById("btnUndo"), redo = document.getElementById("btnRedo");
-    if (undo) { undo.disabled = !h.can_undo; undo.title = h.can_undo ? `Rückgängig: ${h.undo_label} (Strg+Z)` : "Rückgängig (Strg+Z)"; }
-    if (redo) { redo.disabled = !h.can_redo; redo.title = h.can_redo ? `Wiederholen: ${h.redo_label} (Strg+Y)` : "Wiederholen (Strg+Y)"; }
+    if (undo) { undo.disabled = !h.can_undo; undo.title = h.can_undo ? `Undo: ${h.undo_label} (Ctrl+Z)` : "Undo (Ctrl+Z)"; }
+    if (redo) { redo.disabled = !h.can_redo; redo.title = h.can_redo ? `Redo: ${h.redo_label} (Ctrl+Y)` : "Redo (Ctrl+Y)"; }
     const lbl = document.getElementById("lblProjectName");
     if (lbl) {
-        lbl.textContent = h.project_name || (h.dataset_loaded ? "Unbenanntes Projekt" : "–");
-        lbl.title = h.project_path || "Noch nicht gespeichert";
+        lbl.textContent = h.project_name || (h.dataset_loaded ? "Untitled Project" : "–");
+        lbl.title = h.project_path || "Not saved yet";
         lbl.classList.toggle("dirty", Boolean(h.dirty));
     }
     const base = document.body.classList.contains("view-package-only") ? "Stencil Generator" : "SMT StencilCraft";
@@ -5792,31 +6198,31 @@ async function refreshHistory() {
 async function offerMissingPaste(explicit) {
     const m = await (await fetch("/api/paste/missing")).json();
     if (!m.count) {
-        if (explicit) showToast("Alle Bauteilpins haben eine Pastenöffnung.");
+        if (explicit) showToast("All component pins have a paste aperture.");
         return 0;
     }
     const top = Object.entries(m.packages || {}).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([p, n]) => `${p}: ${n}`).join(", ");
-    const r = await askChoice("Pins ohne Kundenpaste",
-        `${m.count} Bauteilpins haben in der Pastenlage des Kunden keine Öffnung (${top}).
+    const r = await askChoice("Pins without Customer Paste",
+        `${m.count} component pins have no aperture in the customer paste layer (${top}).
 
 ` +
-        "PCB Investigator erzeugt dort bei \"Package Group\" Öffnungen aus dem Kupfer. Ergänzen? Die Regeln entscheiden danach je Package (\"Take Existing\"/\"Ignore\" → keine Öffnung). Rückgängig mit Strg+Z.",
-        [{ label: "Nicht ergänzen", value: "no", cls: "btn-ghost" }, { label: `${m.count} ergänzen`, value: "yes", cls: "btn-primary" }]);
+        "With \"Package Group\", PCB Investigator creates apertures from copper there. Add them? The rules then decide per package (\"Take Existing\"/\"Ignore\" → no aperture). Ctrl+Z to undo.",
+        [{ label: "Don't add", value: "no", cls: "btn-ghost" }, { label: `Add ${m.count}`, value: "yes", cls: "btn-primary" }]);
     if (r !== "yes") return 0;
     const d = await (await fetch("/api/paste/add_missing", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json();
     await refreshApertureData();
-    showToast(`✓ ${d.added} Öffnungen aus dem Kupfer ergänzt`);
+    showToast(`✓ ${d.added} apertures added from copper`);
     return d.added;
 }
 
 async function importPcbiLibrary() {
     const cust = pkgState.currentCustomer || "";
-    const how = await askChoice("PCB-Investigator-Kundenbibliothek",
-        "Regeln (Packages, Pins, Gruppen) aus einer PCB-I-Datei ruleTreeFile_*.xml auf den Datensatz anwenden.\n\n" +
-        `Zusätzlich in die StencilCraft-Bibliothek "${cust || "Standard"}" übernehmen (inkl. Packages, die in diesem Job nicht vorkommen)?`,
-        [{ label: "Abbrechen", value: "cancel", cls: "btn-ghost" },
-         { label: "Nur anwenden", value: "apply" },
-         { label: "Anwenden + speichern", value: "save", cls: "btn-primary" }]);
+    const how = await askChoice("PCB-Investigator Customer Library",
+        "Apply rules (packages, pins, groups) from a PCB-I file ruleTreeFile_*.xml to the dataset.\n\n" +
+        `Also save to StencilCraft library "${cust || "Standard"}" (incl. packages not in this job)?`,
+        [{ label: "Cancel", value: "cancel", cls: "btn-ghost" },
+         { label: "Apply Only", value: "apply" },
+         { label: "Apply + Save", value: "save", cls: "btn-primary" }]);
     if (how === "cancel") return;
     const res = await fetch("/api/pcbi/import", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -5824,31 +6230,31 @@ async function importPcbiLibrary() {
     });
     const d = await res.json();
     if (d.status === "cancelled") return;
-    if (!res.ok || d.status !== "ok") { showToast(`${d.message || d.error || "Import fehlgeschlagen"}`); return; }
+    if (!res.ok || d.status !== "ok") { showToast(`${d.message || d.error || "Import failed"}`); return; }
     await loadPackagesList();
     await refreshApertureData();
     const missing = d.missing_in_library || [];
-    let msg = `${d.matched.length} von ${d.library_packages} Bibliotheks-Packages im Datensatz gefunden, ${d.pin_rules} Pin-Regeln, Gruppen: ${(d.group_rules || []).join(", ")}.`;
+    let msg = `${d.matched.length} of ${d.library_packages} library packages found in dataset, ${d.pin_rules} pin rules, groups: ${(d.group_rules || []).join(", ")}.`;
     msg += `
-${d.modified_count ?? 0} Öffnungen neu berechnet.`;
+${d.modified_count ?? 0} apertures recalculated.`;
     if (missing.length) msg += `
 
-Ohne Bibliothekseintrag (${missing.length}) – erben von ihrer Gruppe:
+No library entry (${missing.length}) – inherit from their group:
 ${missing.slice(0, 15).map(p => p.name).join(", ")}${missing.length > 15 ? " …" : ""}`;
     if (d.not_in_dataset?.length) msg += `
 
-In der Bibliothek, aber nicht im Job: ${d.not_in_dataset.length}`;
+In library but not in job: ${d.not_in_dataset.length}`;
     const unknown = Object.keys(d.unknown_rules || {});
     if (unknown.length) msg += `
 
-Unbekannte PCB-I-Skripte (als „Original übernehmen“ geführt): ${unknown.join(", ")}`;
+Unknown PCB-I scripts (treated as "Take Existing"): ${unknown.join(", ")}`;
     if (d.warnings?.length) msg += `
 
 ${d.warnings.join("\n")}`;
     if (d.library_file) msg += `
 
-Gespeichert in: ${d.library_file}`;
-    await askChoice("PCB-I-Bibliothek übernommen", msg, [{ label: "OK", value: "ok", cls: "btn-primary" }]);
+Saved to: ${d.library_file}`;
+    await askChoice("PCB-I library applied", msg, [{ label: "OK", value: "ok", cls: "btn-primary" }]);
     if (d.missing_paste > 0) await offerMissingPaste(false);
 }
 
@@ -5878,11 +6284,11 @@ function askChoice(title, text, choices) {
 async function guardUnsaved(actionText) {
     await refreshHistory();
     if (!projectState.history.dirty) return true;
-    const r = await askChoice("Ungespeicherte Änderungen",
-        `Das Projekt enthält ungespeicherte Änderungen.\nMöchten Sie speichern, bevor Sie ${actionText}?`,
-        [{ label: "Abbrechen", value: "cancel", cls: "btn-ghost" },
-         { label: "Verwerfen", value: "discard", cls: "btn-danger" },
-         { label: "Speichern", value: "save", cls: "btn-primary" }]);
+    const r = await askChoice("Unsaved Changes",
+        `The project has unsaved changes.\nSave before ${actionText}?`,
+        [{ label: "Cancel", value: "cancel", cls: "btn-ghost" },
+         { label: "Discard", value: "discard", cls: "btn-danger" },
+         { label: "Save", value: "save", cls: "btn-primary" }]);
     if (r === "cancel") return false;
     if (r === "save") return saveProject(false);
     return true;
@@ -5895,8 +6301,8 @@ async function saveProject(saveAs = false) {
         body: JSON.stringify({ save_as: saveAs })
     });
     const d = await res.json();
-    if (d.status === "ok") { showToast(`Projekt gespeichert: ${d.path}`); return true; }
-    if (d.status !== "cancelled") showToast(`Speichern fehlgeschlagen: ${d.message}`);
+    if (d.status === "ok") { showToast(`Project saved: ${d.path}`); return true; }
+    if (d.status !== "cancelled") showToast(`Save failed: ${d.message}`);
     return false;
 }
 window.saveProject = saveProject;
@@ -5920,36 +6326,36 @@ async function reloadAllViews(full = false) {
 
 async function doUndo() {
     const d = await (await fetch("/api/undo", { method: "POST" })).json();
-    if (d.status === "ok") { showToast(`↶ Rückgängig: ${d.label}`, 2000); await reloadAllViews(); }
+    if (d.status === "ok") { showToast(`↶ Undo: ${d.label}`, 2000); await reloadAllViews(); }
 }
 
 async function doRedo() {
     const d = await (await fetch("/api/redo", { method: "POST" })).json();
-    if (d.status === "ok") { showToast(`↷ Wiederholt: ${d.label}`, 2000); await reloadAllViews(); }
+    if (d.status === "ok") { showToast(`↷ Redo: ${d.label}`, 2000); await reloadAllViews(); }
 }
 
 async function openProject(path = null, extra = {}) {
-    if (!extra.relocate && !extra.recovered && !(await guardUnsaved("ein anderes Projekt öffnen"))) return;
+    if (!extra.relocate && !extra.recovered && !(await guardUnsaved("opening another project"))) return;
     const res = await fetch("/api/project/open", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path, ...extra })
     });
     const d = await res.json();
     if (d.status === "missing_dataset") {
-        const r = await askChoice("Datensatz nicht gefunden",
-            `Der Datensatz des Projekts liegt nicht mehr am gespeicherten Ort:\n${(d.dataset_paths || []).join("\n")}\n\nBitte den Datensatz (ODB++ / Gerber) neu auswählen.`,
-            [{ label: "Abbrechen", value: "cancel", cls: "btn-ghost" }, { label: "Datensatz auswählen…", value: "relocate", cls: "btn-primary" }]);
+        const r = await askChoice("Dataset Not Found",
+            `The project dataset is no longer at the saved location:\n${(d.dataset_paths || []).join("\n")}\n\nPlease select the dataset (ODB++ / Gerber) again.`,
+            [{ label: "Cancel", value: "cancel", cls: "btn-ghost" }, { label: "Select Dataset…", value: "relocate", cls: "btn-primary" }]);
         // "recovered" mitgeben, damit die wiederhergestellte Sitzung nicht als gespeichert gilt
         if (r === "relocate") return openProject(d.path, { ...extra, relocate: true });
         return false;
     }
     if (d.status === "ok") {
         await reloadAllViews(true);
-        showToast(extra.recovered ? "Sitzung wiederhergestellt" : `Projekt geöffnet: ${d.path}`);
+        showToast(extra.recovered ? "Session restored" : `Project opened: ${d.path}`);
         if (d.warnings?.length) setTimeout(() => showToast(`${d.warnings.join(" ")}`, 6000), 1200);
         return true;
     } else if (d.status !== "cancelled") {
-        showToast(`Projekt konnte nicht geöffnet werden: ${d.message}`, 6000);
+        showToast(`Could not open project: ${d.message}`, 6000);
     }
     return false;
 }
@@ -5959,7 +6365,7 @@ async function renderRecentProjects() {
     if (!box) return;
     const d = await (await fetch("/api/project/recent")).json();
     box.innerHTML = "";
-    if (!d.projects?.length) { box.innerHTML = '<div class="dropdown-empty">Noch keine Projekte</div>'; return; }
+    if (!d.projects?.length) { box.innerHTML = '<div class="dropdown-empty">No projects yet</div>'; return; }
     for (const p of d.projects) {
         const b = document.createElement("button");
         b.textContent = p.split(/[\\/]/).pop();
@@ -5995,9 +6401,9 @@ async function offerRecovery() {
     try {
         const info = await (await fetch("/api/project/recovery")).json();
         if (!info.exists) return;
-        const r = await askChoice("Sitzung wiederherstellen?",
-            `Es gibt eine automatische Sicherung mit ungespeicherten Änderungen:\n${info.dataset || "Unbenannt"}\n\nMöchten Sie diese wiederherstellen?`,
-            [{ label: "Verwerfen", value: "discard", cls: "btn-ghost" }, { label: "Wiederherstellen", value: "restore", cls: "btn-primary" }]);
+        const r = await askChoice("Restore Session?",
+            `An automatic backup with unsaved changes exists:\n${info.dataset || "Untitled"}\n\nRestore it?`,
+            [{ label: "Discard", value: "discard", cls: "btn-ghost" }, { label: "Restore", value: "restore", cls: "btn-primary" }]);
         if (r === "restore") {
             // Sicherung nur verwerfen, wenn die Wiederherstellung geklappt hat (sonst ginge sie verloren)
             if (!(await openProject(info.path, { recovered: true }))) return;
@@ -6011,7 +6417,7 @@ async function offerRecovery() {
 
 // Desktop: Fenster schließen mit ungespeicherten Änderungen
 window.scHandleCloseRequest = async () => {
-    if (await guardUnsaved("die Anwendung beenden")) {
+    if (await guardUnsaved("exiting the application")) {
         await fetch("/api/project/discard_recovery", { method: "POST" });
         window.__TAURI__?.core.invoke("confirm_close");
     }
@@ -6033,9 +6439,9 @@ async function refreshSides() {
                 btn.disabled = !usable && !sd.active;
                 const cnt = btn.querySelector(".side-count");
                 if (cnt) cnt.textContent = usable ? `(${sd.apertures})` : "";
-                btn.title = sd.loaded ? `${sd.side.toUpperCase()}: ${sd.apertures} Pastenöffnungen`
-                    : sd.available ? `${sd.side.toUpperCase()}: keine Kundenpaste – Öffnungen können aus dem Kupfer ergänzt werden`
-                    : `${sd.side.toUpperCase()}: keine Daten für diese Seite`;
+                btn.title = sd.loaded ? `${sd.side.toUpperCase()}: ${sd.apertures} paste apertures`
+                    : sd.available ? `${sd.side.toUpperCase()}: no customer paste – apertures can be added from copper`
+                    : `${sd.side.toUpperCase()}: no data for this side`;
             }
         }
         state.side = d.active;
@@ -6104,7 +6510,7 @@ function updateExportPreview() {
     const lines = [];
     for (const sd of sides) {
         lines.push(`${name(sd)}.gbr`);
-        if (o.zones) lines.push(`${name(sd)}_zonen.gbr (falls Zonen vorhanden)`);
+        if (o.zones) lines.push(`${name(sd)}_zonen.gbr (if zones exist)`);
     }
     if (o.outline) lines.push(`${name("Kontur")}.gbr`);
     if (o.report) lines.push(`${exportState.job}_Pruefbericht_${today}.html`);
@@ -6164,7 +6570,7 @@ function setupExportDialog() {
         try {
             const res = await fetch("/api/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ options: exportOptionsFromForm() }) });
             const d = await res.json();
-            if (d.status !== "ok") { showToast(`Export fehlgeschlagen: ${d.message}`, 6000); return; }
+            if (d.status !== "ok") { showToast(`Export failed: ${d.message}`, 6000); return; }
             exportState.lastDir = d.export_dir;
             exportState.lastReport = d.report_file;
             const icon = { stencil: "", zones: "", outline: "", report: "" };
@@ -6176,7 +6582,7 @@ function setupExportDialog() {
             const desktop = Boolean(window.__TAURI__);
             document.getElementById("btnExpOpenDir").classList.toggle("hidden", !desktop);
             document.getElementById("btnExpOpenReport").classList.toggle("hidden", !desktop || !d.report_file);
-            showToast("Export abgeschlossen");
+            showToast("Export complete");
         } finally {
             btn.disabled = false;
         }
@@ -6187,7 +6593,7 @@ function setupExportDialog() {
 // -------------------------------------------------------------
 // Regelziele: Gruppe / Zone / Bauteil (PCB Investigator: Package-, Zone-, Component-Rules)
 // -------------------------------------------------------------
-const GROUP_LABELS = { SMD: "SMD Packages", THT: "THT Packages", Other: "Other Packages", Fiducial: "Fiducials", Library: "Bibliothek" };
+const GROUP_LABELS = { SMD: "SMD Packages", THT: "THT Packages", Other: "Other Packages", Fiducial: "Fiducials", Library: "Library" };
 
 function updateRuleSourceBanner() {
     const banner = document.getElementById("ruleSourceBanner");
@@ -6203,15 +6609,15 @@ function updateRuleSourceBanner() {
         // Wie PCB-I: "Inherit    SMD Packages -> Handle Stencil Creation by Package Group"
         const d = pkgState.activePackageData;
         const effLabel = document.querySelector(`#selectPkgRule option[value="${d?.effective_rule?.rule_type}"]`)?.textContent;
-        inheritOpt.textContent = (t.kind === "pin" || t.kind === "pins") ? "Wie Package (keine eigene Pin-Regel)"
+        inheritOpt.textContent = (t.kind === "pin" || t.kind === "pins") ? "Like Package (no own pin rule)"
             : (t.kind === "package" && d?.rule?.rule_type === "inherit" && effLabel) ? `Inherit    ${GROUP_LABELS[d.group] || d.group || "SMD Packages"} -> ${effLabel}`
-            : "Inherit – Regel der Gruppe übernehmen";
+            : "Inherit – use group rule";
     }
     banner.classList.toggle("pin-target", t.kind === "pin" || t.kind === "pins");
     if (t.kind === "pins") {
         const own = (t.pins || []).filter(p => { const o = pinOverrideOf(p); return o && o.rule_type && o.rule_type !== "inherit"; }).length;
         banner.classList.add(own ? "own" : "inherited");
-        text.textContent = `● Auswahl: ${t.pins.length} Pins – Änderungen hier gelten nur für diese Pins (${own} mit eigener Regel). „Wie Package“ setzt die Auswahl zurück.`;
+        text.textContent = `● Selection: ${t.pins.length} pins – changes here apply only to these pins (${own} with own rule). "Like Package" resets the selection.`;
         if (own) btn.classList.remove("hidden");
         return;
     }
@@ -6219,11 +6625,11 @@ function updateRuleSourceBanner() {
         const ov = pinOverrideOf(t.pin);
         if (ov && ov.rule_type && ov.rule_type !== "inherit") {
             banner.classList.add("own");
-            text.textContent = `● Nur Pin ${t.pin}: eigene Regel (${ov.manual ? "manuell" : ov.rule_type}) – andere Pins bleiben unverändert. „Wie Package“ wählen setzt den Pin zurück.`;
+            text.textContent = `● Pin ${t.pin} only: own rule (${ov.manual ? "manual" : ov.rule_type}) – other pins unchanged. Select "Like Package" to reset the pin.`;
             btn.classList.remove("hidden");
         } else {
             banner.classList.add("inherited");
-            text.textContent = `↳ Pin ${t.pin} folgt der Package-Regel – Änderungen hier gelten nur für diesen Pin. Für alle Pins oben „Alle Pins“ wählen.`;
+            text.textContent = `↳ Pin ${t.pin} follows the package rule – changes here apply only to this pin. For all pins select "All Pins" above.`;
         }
         return;
     }
@@ -6231,32 +6637,32 @@ function updateRuleSourceBanner() {
         const d = pkgState.activePackageData;
         if (d?.rule?.rule_type === "inherit") {
             banner.classList.add("inherited");
-            text.textContent = `↳ Regel geerbt von ${d.rule_source} – Parameter ändern erzeugt eine eigene Package-Regel`;
+            text.textContent = `↳ Rule inherited from ${d.rule_source} – changing a parameter creates an own package rule`;
         } else {
             banner.classList.add("own");
-            text.textContent = `● Eigene Package-Regel (${d?.rule?.rule_type || "-"}) – „Inherit“ wählen, um die Gruppenregel zu verwenden`;
+            text.textContent = `● Own package rule (${d?.rule?.rule_type || "-"}) – select "Inherit" to use the group rule`;
         }
     } else if (t.kind === "group") {
-        text.textContent = `Gruppenregel „${GROUP_LABELS[t.id] || t.id}“ – gilt für alle Packages dieser Gruppe mit „Inherit“`;
+        text.textContent = `Group rule "${GROUP_LABELS[t.id] || t.id}" – applies to all packages of this group set to "Inherit"`;
     } else if (t.kind === "component") {
         const c = pkgState.activeComponent;
         if (c?.has_rule) {
             banner.classList.add("own");
-            text.textContent = `● Bauteilregel ${t.id} (überschreibt Zone, Package und Gruppe)`;
+            text.textContent = `● Component rule ${t.id} (overrides zone, package and group)`;
             btn.classList.remove("hidden");
         } else {
             banner.classList.add("inherited");
-            text.textContent = `↳ ${t.id} nutzt ${c?.rule_source || "-"} – Parameter ändern erzeugt eine Bauteilregel`;
+            text.textContent = `↳ ${t.id} uses ${c?.rule_source || "-"} – changing a parameter creates a component rule`;
         }
     } else if (t.kind === "zone") {
         const z = (state.zones || []).find(x => x.id === t.id);
         if (z?.rule) {
             banner.classList.add("own");
-            text.textContent = `● Zonenregel „${z.name}“ (gilt für Öffnungen in der Zone, außer Bauteilregeln)`;
+            text.textContent = `● Zone rule "${z.name}" (applies to apertures in the zone, except component rules)`;
             btn.classList.remove("hidden");
         } else {
             banner.classList.add("inherited");
-            text.textContent = `Zone „${z?.name || t.id}“ hat noch keine Regel – Parameter ändern legt sie an`;
+            text.textContent = `Zone "${z?.name || t.id}" has no rule yet – changing a parameter creates it`;
         }
     }
 }
@@ -6281,9 +6687,9 @@ function drawPkgMessage(lines) {
 
 function groupMessage(key) {
     const g = (pkgState.groups || []).find(x => x.key === key);
-    return [`Gruppenregel: ${GROUP_LABELS[key] || key}`,
-            g ? `${g.inheriting} von ${g.packages} Packages erben diese Regel · ${g.pads} Pads auf der aktiven Seite` : "",
-            "„Generate Stencil Pads“ wendet sie auf alle erbenden Pads an."];
+    return [`Group rule: ${GROUP_LABELS[key] || key}`,
+            g ? `${g.inheriting} of ${g.packages} packages inherit this rule · ${g.pads} pads on the active side` : "",
+            "\"Generate Stencil Pads\" applies it to all inheriting pads."];
 }
 
 async function selectGroupRule(key) {
@@ -6317,14 +6723,14 @@ function renderZoneRuleList() {
     const box = document.getElementById("zoneRuleList");
     if (!box) return;
     const zones = state.zones || [];
-    box.innerHTML = zones.length ? "" : '<div class="dropdown-empty" style="padding:12px">Keine Zonen auf dieser Seite. Regelzone im Board aufziehen oder Stufenzone anlegen.</div>';
+    box.innerHTML = zones.length ? "" : '<div class="dropdown-empty" style="padding:12px">No zones on this side. Draw a rule zone on the board or create a step zone.</div>';
     for (const z of zones) {
         const el = document.createElement("div");
         const active = pkgState.ruleTarget?.kind === "zone" && pkgState.ruleTarget.id === z.id;
         el.className = `list-item ${active ? "active" : ""}`;
         el.innerHTML = `<div class="li-main">${escapeHtml(z.name)}<div class="li-sub">${z.width.toFixed(1)} × ${z.height.toFixed(1)} mm</div></div>` +
             (z.step ? `<span class="li-badge step">${Math.round(z.thickness * 1000)} µm</span>` : "") +
-            (z.rule ? `<span class="li-badge rule">${z.rule.rule_type}</span>` : '<span class="li-badge">keine Regel</span>');
+            (z.rule ? `<span class="li-badge rule">${z.rule.rule_type}</span>` : '<span class="li-badge">no rule</span>');
         el.addEventListener("click", () => selectZoneRule(z.id));
         box.appendChild(el);
     }
@@ -6347,7 +6753,7 @@ async function selectZoneRule(id) {
     updateRuleSourceBanner();
     renderZoneRuleList();
     const n = (state.apertures || []).filter(a => a.cx >= z.x0 && a.cx <= z.x1 && a.cy >= z.y0 && a.cy <= z.y1).length;
-    drawPkgMessage([`Zone: ${z.name}`, `${n} Pads liegen in der Zone${z.step ? ` · Stufe ${Math.round(z.thickness * 1000)} µm` : " · reine Regelzone"}`, "„Generate Stencil Pads“ wendet die Zonenregel an."]);
+    drawPkgMessage([`Zone: ${z.name}`, `${n} pads in the zone${z.step ? ` · step ${Math.round(z.thickness * 1000)} µm` : " · rule zone only"}`, "\"Generate Stencil Pads\" applies the zone rule."]);
     // Im Board-Fenster die Zone zeigen
     if (window.scBroadcast) window.scBroadcast("pkg-focus", { pkg: null, pin: null });
 }
@@ -6365,12 +6771,12 @@ function renderComponentList() {
     const onlyRule = pkgState.compFilter === "rule";
     const list = (pkgState.components || []).filter(c =>
         (!q || c.refdes.toLowerCase().includes(q) || c.package.toLowerCase().includes(q)) && (!onlyRule || c.has_rule));
-    box.innerHTML = list.length ? "" : '<div class="dropdown-empty" style="padding:12px">Keine Bauteile (nur bei ODB++ mit Bauteildaten).</div>';
+    box.innerHTML = list.length ? "" : '<div class="dropdown-empty" style="padding:12px">No components (only for ODB++ with component data).</div>';
     for (const c of list.slice(0, 800)) {
         const el = document.createElement("div");
         const active = pkgState.ruleTarget?.kind === "component" && pkgState.ruleTarget.id === c.refdes;
         el.className = `list-item ${active ? "active" : ""}`;
-        el.innerHTML = `<div class="li-main"><b>${escapeHtml(c.refdes)}</b> <span class="li-sub">${escapeHtml(c.package)}</span></div><span class="li-badge">${c.pads} Pads</span>${c.has_rule ? '<span class="li-badge rule">eigene Regel</span>' : ""}`;
+        el.innerHTML = `<div class="li-main"><b>${escapeHtml(c.refdes)}</b> <span class="li-sub">${escapeHtml(c.package)}</span></div><span class="li-badge">${c.pads} Pads</span>${c.has_rule ? '<span class="li-badge rule">own rule</span>' : ""}`;
         el.addEventListener("click", () => selectComponentRule(c.refdes));
         box.appendChild(el);
     }
@@ -6406,13 +6812,13 @@ function setupRuleTargets() {
     }));
     document.getElementById("btnNewRuleZone")?.addEventListener("click", () => {
         if (document.body.classList.contains("view-package-only")) {
-            showToast("Regelzone im Board-Fenster aufziehen (Werkzeug „Zone“, Häkchen „Stufenzone“ entfernen).", 5000);
+            showToast("Draw a rule zone in the board window (tool \"Zone\", uncheck \"Step Zone\").", 5000);
             return;
         }
         state.drawRuleZone = true;
         switchWorkspace("board");
         startDrawingZone();
-        showToast("Rechteck für die Regelzone im Board aufziehen", 3000);
+        showToast("Draw rectangle for the rule zone on the board", 3000);
     });
     document.getElementById("btnRemoveTargetRule")?.addEventListener("click", async () => {
         const t = pkgState.ruleTarget;
@@ -6424,7 +6830,7 @@ function setupRuleTargets() {
         await refreshApertureData();
         if (t.kind === "component") { await loadComponentList(); await selectComponentRule(t.id); }
         else { renderZoneRuleList(); await selectZoneRule(t.id); }
-        showToast("Eigene Regel entfernt – Öffnungen neu berechnet");
+        showToast("Own rule removed – apertures recalculated");
     });
 }
 
@@ -6543,7 +6949,7 @@ function selectSimilar(kind) {
     for (const ap of state.apertures) if (keys.has(key(ap))) selState.ids.add(ap.id);
     updateSelBar();
     render();
-    showToast(`${selState.ids.size} Öffnungen gewählt`, 1500);
+    showToast(`${selState.ids.size} apertures selected`, 1500);
 }
 
 function updateSelBar() {
@@ -6562,7 +6968,7 @@ async function editSelection(op, extra = {}) {
         body: JSON.stringify({ ids, ...extra })
     });
     const d = await res.json();
-    if (d.status !== "ok") { showToast(d.message || "Bearbeitung fehlgeschlagen"); return; }
+    if (d.status !== "ok") { showToast(d.message || "Edit failed"); return; }
     if (op === "duplicate" && d.new_ids?.length) selState.ids = new Set(d.new_ids);
     await refreshApertureData();
     updateSelBar();
@@ -6583,7 +6989,7 @@ async function placeNewOpening(w) {
         body: JSON.stringify({ shape: "rectangle", cx: w.x, cy: w.y, w: s.w || 0.5, h: s.h || s.w || 0.5 })
     });
     const d = await res.json();
-    if (d.status !== "ok") { showToast(d.message || "Öffnung nicht angelegt"); return; }
+    if (d.status !== "ok") { showToast(d.message || "Aperture not created"); return; }
     selState.ids = new Set([d.id]);
     await refreshApertureData();
     updateSelBar();
@@ -6654,14 +7060,14 @@ function renderHistoryMenu() {
     };
     // Wiederholbare Schritte oben (der späteste ganz oben), dann der aktuelle Stand, dann die Rückgängig-Schritte
     [...redo].reverse().forEach((l, i) => add(`↷ ${l}`, "redo", () => jumpHistory("redo", redo.length - i)));
-    add("● Aktueller Stand", "current");
+    add("● Current State", "current");
     undo.forEach((l, i) => add(`↶ ${l}`, "", () => jumpHistory("undo", i + 1)));
 }
 
 async function jumpHistory(dir, steps) {
     document.getElementById("historyMenuList").classList.add("hidden");
     const d = await (await fetch(`/api/${dir}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ steps }) })).json();
-    if (d.status === "ok") { showToast(`${dir === "undo" ? "↶" : "↷"} ${steps} Schritt(e): ${d.label}`, 2000); await reloadAllViews(); }
+    if (d.status === "ok") { showToast(`${dir === "undo" ? "↶" : "↷"} ${steps} step(s): ${d.label}`, 2000); await reloadAllViews(); }
     refreshHistory();
 }
 
@@ -6672,7 +7078,7 @@ window.addEventListener("DOMContentLoaded", () => {
         if (op === "reduce") editSelection("reduce", { percent: parseFloat(document.getElementById("selReducePct").value) || 10 });
         else if (op === "resize") {
             const s = selectionSizeArgs();
-            if (!s.w && !s.h) { showToast("Breite und/oder Höhe eingeben"); return; }
+            if (!s.w && !s.h) { showToast("Enter width and/or height"); return; }
             editSelection("resize", s);
         }
         else if (op === "rotate") editSelection("rotate", { deg: 90 });
@@ -6735,16 +7141,16 @@ function renderAnalysis() {
     const rows = filteredAnalysisRows();
     const counts = anState.rows.reduce((c, r) => (c[r.status]++, c), { OK: 0, WARN: 0, CRIT: 0 });
     document.getElementById("anSummary").textContent =
-        `${anState.rows.length} Öffnungen · ${counts.CRIT} kritisch · ${counts.WARN} Warnung · ${rows.length} angezeigt`;
+        `${anState.rows.length} apertures · ${counts.CRIT} critical · ${counts.WARN} warning · ${rows.length} shown`;
     const f = (v, n) => v == null ? "–" : v.toFixed(n);
     // shortcut: höchstens 2000 Zeilen im DOM, Filter einschränken; virtuelle Liste, falls das nicht reicht
     document.getElementById("anBody").innerHTML = rows.slice(0, 2000).map(r => `
         <tr data-id="${r.id}" class="an-${r.status.toLowerCase()}">
-            <td><span class="badge ${r.status === "CRIT" ? "crit" : r.status === "WARN" ? "warn" : "ok"}">${r.status === "CRIT" ? "Kritisch" : r.status === "WARN" ? "Warnung" : "OK"}</span></td>
+            <td><span class="badge ${r.status === "CRIT" ? "crit" : r.status === "WARN" ? "warn" : "ok"}">${r.status === "CRIT" ? "Critical" : r.status === "WARN" ? "Warning" : "OK"}</span></td>
             <td>${escapeHtml(r.comp || "–")}</td><td>${r.pin}</td><td>${escapeHtml(r.pkg || "–")}</td>
             <td>${f(r.ar, 2)}</td><td>${f(r.aspect, 2)}</td><td>${f(r.min_w, 3)}</td>
             <td>${f(r.area, 4)}</td><td>${f(r.volume, 4)}</td><td>${r.coverage == null ? "–" : r.coverage.toFixed(0) + " %"}</td>
-            <td>${escapeHtml(r.issues.join(", "))}${r.manual ? ' <span class="an-manual" title="Von Hand bearbeitet">✎</span>' : ""}</td>
+            <td>${escapeHtml(r.issues.join(", "))}${r.manual ? ' <span class="an-manual" title="Edited manually">✎</span>' : ""}</td>
         </tr>`).join("");
     document.querySelectorAll("#analysisModal th[data-k]").forEach(th => th.classList.toggle("sorted", th.dataset.k === anState.sortKey));
 }
@@ -6782,10 +7188,10 @@ window.addEventListener("DOMContentLoaded", () => {
         const ids = filteredAnalysisRows().map(r => r.id);
         close();
         setSelection(ids);
-        showToast(`${ids.length} Öffnungen gewählt – jetzt gemeinsam bearbeiten`, 2500);
+        showToast(`${ids.length} apertures selected – now edit together`, 2500);
     });
     document.getElementById("btnAnCsv").addEventListener("click", async () => {
         const d = await (await fetch("/api/analysis/csv", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(analysisLimits()) })).json();
-        showToast(d.status === "ok" ? `CSV gespeichert: ${d.path}` : `CSV-Export fehlgeschlagen: ${d.message}`, 5000);
+        showToast(d.status === "ok" ? `CSV saved: ${d.path}` : `CSV export failed: ${d.message}`, 5000);
     });
 });
