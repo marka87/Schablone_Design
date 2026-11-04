@@ -2495,3 +2495,9 @@ html[data-theme="light"] ::-webkit-scrollbar-thumb { background: #c4cad4; }
 html[data-theme="light"] .mode-tab-btn, html[data-theme="light"] .mode-tab-btn.active { color: var(--text-primary); }
 html[data-theme="light"] .mode-tab-btn.active { background: #ffffff; border-color: var(--accent); }
 html[data-theme="light"] .pkg-tree-item.active .pkg-item-name, html[data-theme="light"] .pkg-tree-item.active .pkg-badge-pitch, html[data-theme="light"] .pkg-tree-item.active .pkg-badge-count, html[data-theme="light"] .pkg-tree-item.active .pkg-badge-side { color: #ffffff; }
+
+/* TOP/BOT-Schnellschalter in der Lagenleiste */
+.layer-filter-chips .side-switch { display: inline-flex; margin-left: auto; }
+.layer-filter-chips .side-switch button { border-radius: 0; font-weight: 600; }
+.layer-filter-chips .side-switch button:first-child { border-radius: 10px 0 0 10px; }
+.layer-filter-chips .side-switch button:last-child { border-radius: 0 10px 10px 0; border-left: none; }
