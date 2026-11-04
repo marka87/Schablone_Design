@@ -895,7 +895,30 @@ impl StencilEngine {
         for (id, slices) in updates {
             self.apertures[id].custom_slices = slices;
         }
+        self.clip_overlapping_pads(&ids);
         n
+    }
+
+    /// Paste von Pads, die teilweise auf einem größeren Pad desselben Bauteils liegen, außerhalb davon abschneiden.
+    pub(crate) fn clip_overlapping_pads(&mut self, ids: &[usize]) {
+        let mut by_comp: std::collections::HashMap<&str, Vec<(f64, f64, f64, f64)>> = std::collections::HashMap::new();
+        for a in self.apertures.iter().filter(|a| !a.component_id.is_empty()) {
+            by_comp.entry(a.component_id.as_str()).or_default().push((a.cx, a.cy, a.width, a.height));
+        }
+        let mut updates = Vec::new();
+        for &id in ids {
+            let ap = &self.apertures[id];
+            let (Some(sl), Some(others)) = (ap.custom_slices.as_ref(), by_comp.get(ap.component_id.as_str())) else { continue };
+            if ap.is_manually_overridden {
+                continue;
+            }
+            let mut s = sl.clone();
+            rules::clip_to_bigger_pads(&mut s, (ap.cx, ap.cy, ap.width, ap.height), others, self.min_bridge_width);
+            updates.push((id, s));
+        }
+        for (id, s) in updates {
+            self.apertures[id].custom_slices = Some(s);
+        }
     }
 
     pub fn override_package_pin(&mut self, pkg_name: &str, pin: i64, data: Map<String, Value>) -> bool {
@@ -1154,6 +1177,7 @@ impl StencilEngine {
                 for s in g.iter_mut() {
                     s.pin = Some(p.pin);
                 }
+                rules::clip_to_bigger_pads(&mut g, rel[i], &rel, self.min_bridge_width);
                 paste.extend(g);
             }
         }

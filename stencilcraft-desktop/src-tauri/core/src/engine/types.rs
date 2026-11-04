@@ -533,6 +533,18 @@ impl PackageRule {
                 "rotate_bridges_45" => { if let Some(b) = val_bool(v) { self.rotate_bridges_45 = b } }
                 "try_find_direction" => { if let Some(b) = val_bool(v) { self.try_find_direction = b } }
                 "pin_minus_mask" => { if let Some(b) = val_bool(v) { self.pin_minus_mask = b } }
+                "ignore_mask" => { if let Some(b) = val_bool(v) { self.ignore_mask = b } }
+                "array_round" => { if let Some(b) = val_bool(v) { self.array_round = b } }
+                "array_size_w" => { if let Some(f) = val_f64(v) { self.array_size_w = f.max(0.0) } }
+                "array_size_h" => { if let Some(f) = val_f64(v) { self.array_size_h = f.max(0.0) } }
+                "array_count_x" => { if let Some(f) = val_f64(v) { self.array_count_x = f.round().max(1.0) as i64 } }
+                "array_count_y" => { if let Some(f) = val_f64(v) { self.array_count_y = f.round().max(1.0) as i64 } }
+                "donut_bridges" => { if let Some(f) = val_f64(v) { self.donut_bridges = f.round().max(0.0) as i64 } }
+                "donut_rotation" => { if let Some(f) = val_f64(v) { self.donut_rotation = f } }
+                "donut_inner_pct" => { if let Some(f) = val_f64(v) { self.donut_inner_pct = f.clamp(0.0, 100.0) } }
+                "donut_outer_pct" => { if let Some(f) = val_f64(v) { self.donut_outer_pct = f.clamp(0.0, 200.0) } }
+                "max_element_size" => { if let Some(f) = val_f64(v) { self.max_element_size = f.max(0.0) } }
+                "steg_big_elements" => { if let Some(f) = val_f64(v) { self.steg_big_elements = f.max(0.0) } }
                 _ => {}
             }
         }

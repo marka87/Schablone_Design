@@ -140,6 +140,7 @@ impl StencilEngine {
         for (id, s) in updates {
             self.apertures[id].custom_slices = s;
         }
+        self.clip_overlapping_pads(&ids);
         n
     }
 

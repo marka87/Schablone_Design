@@ -711,9 +711,84 @@ fn diagonal_slices(cx: f64, cy: f64, w: f64, h: f64, rule: &PackageRule) -> Vec<
     out
 }
 
+/// Paste eines Pads, das teilweise auf einem größeren Pad desselben Bauteils liegt (Finger am
+/// Thermal-Pad, z. B. TPSM365R6): nur den Teil außerhalb des größeren Pads behalten, mit `gap` Steg.
+/// `me` = Kupferbox des Pads, `others` = Kupferboxen der anderen Pads (cx, cy, w, h).
+pub fn clip_to_bigger_pads(slices: &mut Vec<Slice>, me: (f64, f64, f64, f64), others: &[(f64, f64, f64, f64)], gap: f64) {
+    let area = me.2 * me.3;
+    let ov = |a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)| (a.0 - b.0).abs() * 2.0 < a.2 + b.2 - 1e-6 && (a.1 - b.1).abs() * 2.0 < a.3 + b.3 - 1e-6;
+    let bigger: Vec<_> = others.iter().copied().filter(|&b| b.2 * b.3 > area * 1.2 && ov(me, b)).collect();
+    if bigger.is_empty() {
+        return;
+    }
+    let mut out = Vec::with_capacity(slices.len());
+    for s in slices.drain(..) {
+        // nur achsparallele Öffnungen (Bogenecken erlaubt); gedrehte bleiben unverändert
+        let axis = s.pts.as_ref().is_none_or(|p| {
+            let (x0, y0, x1, y1) = p.iter().fold((f64::MAX, f64::MAX, f64::MIN, f64::MIN), |b, q| (b.0.min(q.0), b.1.min(q.1), b.2.max(q.0), b.3.max(q.1)));
+            ((x1 - x0) - s.w).abs() < 0.01 && ((y1 - y0) - s.h).abs() < 0.01
+        });
+        if !axis || s.is_circle() {
+            out.push(s);
+            continue;
+        }
+        let (mut x0, mut x1, mut y0, mut y1) = (s.cx - s.w / 2.0, s.cx + s.w / 2.0, s.cy - s.h / 2.0, s.cy + s.h / 2.0);
+        for b in &bigger {
+            let (bx0, bx1, by0, by1) = (b.0 - b.2 / 2.0 - gap, b.0 + b.2 / 2.0 + gap, b.1 - b.3 / 2.0 - gap, b.1 + b.3 / 2.0 + gap);
+            if x1 <= bx0 || x0 >= bx1 || y1 <= by0 || y0 >= by1 {
+                continue;
+            }
+            // längeren freien Rest behalten, quer zur Seite, über die das große Pad den Finger ganz überdeckt
+            if by0 <= y0 && by1 >= y1 {
+                if bx0 - x0 >= x1 - bx1 { x1 = x1.min(bx0) } else { x0 = x0.max(bx1) }
+            } else if bx0 <= x0 && bx1 >= x1 {
+                if by0 - y0 >= y1 - by1 { y1 = y1.min(by0) } else { y0 = y0.max(by1) }
+            }
+        }
+        let (w, h) = (x1 - x0, y1 - y0);
+        if w < 0.05 || h < 0.05 {
+            continue; // nichts Druckbares übrig
+        }
+        if (w - s.w).abs() < 1e-6 && (h - s.h).abs() < 1e-6 {
+            out.push(s);
+            continue;
+        }
+        let mut n = rounded_slice((x0 + x1) / 2.0, (y0 + y1) / 2.0, w, h, s.radius.unwrap_or(0.0), s.kind.as_deref().unwrap_or("clipped"));
+        n.pin = s.pin;
+        out.push(n);
+    }
+    *slices = out;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editor_saves_split_array_and_donut_fields() {
+        let mut r = rule0("undersize");
+        let m = serde_json::json!({"max_element_size": 1.2, "steg_big_elements": 0.2, "array_count_x": 3, "donut_bridges": 6, "ignore_mask": true});
+        r.apply_map(m.as_object().unwrap());
+        assert_eq!((r.max_element_size, r.steg_big_elements, r.array_count_x, r.donut_bridges, r.ignore_mask), (1.2, 0.2, 3, 6, true));
+        // 1,1 × 2,05 mm Pad wird bei max. 1,2 mm in zwei Teile geteilt
+        assert_eq!(generate_rule_aperture_geometry(&PadCtx::new(1.1, 2.05, 0.0, 0.0, "center"), &r).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn finger_paste_is_clipped_outside_big_pad() {
+        // TPSM365R6 Pin 4: Finger 1,1 × 0,25 ragt 0,375 mm über das große Pad 1,1 × 2,05 hinaus
+        let big = (-0.999, -1.1, 1.1, 2.05);
+        let finger = (-1.374, -0.4, 1.1, 0.25);
+        let mut s = vec![rounded_slice(-1.374, -0.4, 1.05, 0.2, 0.075, "x")];
+        clip_to_bigger_pads(&mut s, finger, &[big, finger], 0.1);
+        assert_eq!(s.len(), 1);
+        assert!((s[0].cx + s[0].w / 2.0 - (-1.549 - 0.1)).abs() < 1e-3, "endet vor dem großen Pad: {:?}", s[0]);
+        assert!((s[0].w - 0.25).abs() < 1e-3);
+        // das große Pad selbst bleibt unverändert
+        let mut b = vec![rounded_slice(-0.999, -1.1, 1.05, 2.0, 0.075, "x")];
+        clip_to_bigger_pads(&mut b, big, &[finger], 0.1);
+        assert!((b[0].w - 1.05).abs() < 1e-6);
+    }
 
     #[test]
     fn diagonal_slicing_removes_web_area() {

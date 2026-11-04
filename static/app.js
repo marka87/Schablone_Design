@@ -1920,11 +1920,28 @@ function setupLayerFilters() {
     try { layerUi.collapsed = JSON.parse(localStorage.getItem("sc.layerGroups") || "null"); } catch (e) { layerUi.collapsed = null; }
     if (!layerUi.collapsed) layerUi.collapsed = Object.fromEntries(LAYER_GROUPS.map(g => [g.key, Boolean(g.collapsed)]));
     document.getElementById("layerSearch")?.addEventListener("input", (e) => { layerUi.search = e.target.value; renderLayerTable(); });
-    document.querySelectorAll("#layerFilterChips button").forEach(btn => btn.addEventListener("click", () => {
+    document.querySelectorAll("#layerFilterChips button[data-f]").forEach(btn => btn.addEventListener("click", () => {
         layerUi.filter = btn.dataset.f;
-        document.querySelectorAll("#layerFilterChips button").forEach(b => b.classList.toggle("active", b === btn));
+        document.querySelectorAll("#layerFilterChips button[data-f]").forEach(b => b.classList.toggle("active", b === btn));
         renderLayerTable();
     }));
+    document.querySelectorAll("#layerFilterChips button[data-side]").forEach(btn => btn.addEventListener("click", () => switchLayerSide(btn.dataset.side)));
+}
+
+// TOP/BOT-Schnellschalter: nur Sichtbarkeit von COMP, Stencil (unsere Paste) und Solder; keine Ansicht, kein Spiegeln
+const isSideSwitchLayer = l => l.type === "paste" || l.type === "mask" || (l.type === "component" && /^comp/i.test(l.name));
+function switchLayerSide(side) {
+    for (const l of state.layers) {
+        if (isSideSwitchLayer(l) && (l.side === "top" || l.side === "bot")) setLayerVisible(l, l.side === side);
+    }
+    renderLayerTable();
+    render();
+}
+function updateSideSwitch() {
+    const set = state.layers.filter(l => isSideSwitchLayer(l) && (l.side === "top" || l.side === "bot"));
+    for (const b of document.querySelectorAll("#layerFilterChips button[data-side]")) {
+        b.classList.toggle("active", set.length > 0 && set.every(l => (l.visible !== false) === (l.side === b.dataset.side)));
+    }
 }
 
 function setLayerVisible(layer, checked) {
@@ -1945,6 +1962,7 @@ function renderLayerTable() {
 
     const countBadge = document.getElementById("layerCountBadge");
     if (countBadge) countBadge.innerText = state.layers.length;
+    updateSideSwitch();
 
     // Bei Suche/Filter alle passenden Gruppen aufgeklappt zeigen
     const filtering = layerUi.search.trim() !== "" || layerUi.filter !== "all";
